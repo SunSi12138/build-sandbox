@@ -42,6 +42,25 @@ if (args.Contains("--self-test", StringComparer.Ordinal))
         if (!reader.Read() || reader.GetString(0) != expectedName || reader.GetString(1) != date)
             throw new InvalidOperationException("SQLite 参数化写入/读取失败");
     }
+    var expectedCountIndex = Array.IndexOf(args, "--expected-count");
+    if (expectedCountIndex >= 0)
+    {
+        if (expectedCountIndex + 1 >= args.Length || !int.TryParse(args[expectedCountIndex + 1], NumberStyles.None, CultureInfo.InvariantCulture, out var expectedCount))
+            throw new InvalidOperationException("--expected-count 需要非负整数");
+        using var persisted = connection.CreateCommand();
+        persisted.CommandText = "SELECT p.name,i.inspection_date FROM point p JOIN inspection i ON i.point_id=p.id WHERE p.name=$name;";
+        persisted.Parameters.AddWithValue("$name", expectedName);
+        using var rows = persisted.ExecuteReader();
+        var count = 0;
+        while (rows.Read())
+        {
+            if (rows.GetString(0) != expectedName || !DateOnly.TryParseExact(rows.GetString(1), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                throw new InvalidOperationException("上一次进程保存的行无效");
+            count++;
+        }
+        if (count != expectedCount)
+            throw new InvalidOperationException($"跨进程持久化失败：预期 {expectedCount} 条，实际 {count} 条");
+    }
     using (var fk = connection.CreateCommand())
     {
         fk.CommandText = "INSERT INTO inspection(id,point_id,inspection_date) VALUES($id,$missing,$date);";
@@ -106,7 +125,7 @@ app.MapPost("/api/probe", async (HttpContext context) =>
     command.Parameters.AddWithValue("$id", id);
     command.Parameters.AddWithValue("$name", request.Name);
     command.ExecuteNonQuery();
-    await context.Response.WriteAsJsonAsync(new ProbeSaved(id, request.Name), SpikeJsonContext.Default.ProbeSaved, context.RequestAborted);
+    await context.Response.WriteAsJsonAsync(new ProbeSaved(id, request.Name), SpikeJsonContext.Default.ProbeSaved, contentType: null, cancellationToken: context.RequestAborted);
 });
 await app.RunAsync();
 

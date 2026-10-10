@@ -18,10 +18,14 @@ jobs:
             rid: win-x86
           - os: ubuntu-24.04-arm
             rid: linux-arm64
+          - os: ubuntu-22.04
+            rid: linux-x64
+          - os: ubuntu-22.04
+            rid: linux-x64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - name: Install Linux native dependencies
@@ -40,9 +44,9 @@ jobs:
           $dynamic = @(Get-ChildItem publish -Recurse -File | Where-Object { $_.Name -match '^(lib)?e_sqlite3\.(dll|so|dylib)$' })
           if ($dynamic.Count -ne 0) { throw 'SQLite was not statically linked' }
           $executable = if ($IsWindows) { './publish/AotSqliteSpike.exe' } else { './publish/AotSqliteSpike' }
-          & $executable --self-test
+          & $executable --self-test --expected-count 1
           if ($LASTEXITCODE -ne 0) { throw 'AOT SQLite self-test failed' }
-          & $executable --self-test
+          & $executable --self-test --expected-count 2
           if ($LASTEXITCODE -ne 0) { throw 'Second-process persistence test failed' }
           $server = Start-Process -FilePath $executable -ArgumentList '--urls', 'http://127.0.0.1:5189' -PassThru -RedirectStandardOutput spike-server.log -RedirectStandardError spike-server.err
           try {
