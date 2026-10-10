@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+**/node_modules/
+**/.nuxt/
+**/.output/
+**/data/
+**/publish/
+**/test-results/
+**/playwright-report/
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.err
+dist/
+artifacts/
+.DS_Store

@@ -1,0 +1,69 @@
+name: AOT SQLite spike
+on:
+  workflow_dispatch:
+  push:
+    branches: [hbtool]
+    paths:
+      - 'spikes/aot-sqlite/**'
+      - '.github/workflows/aot-spike.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            rid: win-x86
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Enable x86 MSVC tools
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+      - name: Publish AOT with zero warnings
+        run: dotnet publish spikes/aot-sqlite/AotSqliteSpike.csproj -c Release -r ${{ matrix.rid }} -o publish -p:PublishAot=true -p:SelfContained=true -warnaserror
+      - name: Verify static SQLite and exercise storage
+        shell: pwsh
+        run: |
+          $dynamic = @(Get-ChildItem publish -Recurse -File | Where-Object { $_.Name -match '^(lib)?e_sqlite3\.(dll|so|dylib)$' })
+          if ($dynamic.Count -ne 0) { throw 'SQLite was not statically linked' }
+          $executable = if ($IsWindows) { './publish/AotSqliteSpike.exe' } else { './publish/AotSqliteSpike' }
+          & $executable --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'AOT SQLite self-test failed' }
+          & $executable --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Second-process persistence test failed' }
+          $server = Start-Process -FilePath $executable -ArgumentList '--urls', 'http://127.0.0.1:5189' -PassThru -RedirectStandardOutput spike-server.log -RedirectStandardError spike-server.err
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 250
+              try { $probe = Invoke-RestMethod 'http://127.0.0.1:5189/api/probe'; $ready = $probe.ok; break } catch { }
+            }
+            if (-not $ready) { throw 'AOT Kestrel did not become ready' }
+            $saved = Invoke-RestMethod 'http://127.0.0.1:5189/api/probe' -Method Post -ContentType 'application/json; charset=utf-8' -Body '{"name":"社区 API 读写"}'
+            if (-not $saved.id -or $saved.name -ne '社区 API 读写') { throw 'Generated JSON API failed' }
+            Write-Host 'PASS: AOT Kestrel HTTP GET/POST and source-generated JSON'
+          } finally {
+            if (-not $server.HasExited) { Stop-Process -Id $server.Id }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aot-sqlite-spike-${{ matrix.rid }}
+          path: |
+            publish/
+            spike-server.log
+            spike-server.err
+          retention-days: 7
