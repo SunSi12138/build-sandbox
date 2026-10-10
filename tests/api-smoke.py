@@ -60,7 +60,7 @@ def day(value: dt.date) -> str:
 
 
 def database_rows(path: Path) -> dict:
-    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
+    with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database:
         tables = [row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
         # Names come from this test application's schema; quote identifiers rather
         # than treating them as SQL fragments. Values elsewhere are parameterized.
@@ -177,7 +177,7 @@ class ApiSmoke:
         }
 
     def sql_rows(self, statement: str, parameters=()) -> list:
-        with sqlite3.connect(self.data / "app.db") as database:
+        with contextlib.closing(sqlite3.connect(self.data / "app.db")) as database:
             return database.execute(statement, parameters).fetchall()
 
     def point_body(self, name: str, frequency="irregular", disabled=False) -> dict:
@@ -392,6 +392,10 @@ class ApiSmoke:
             require(dashboard[group]["count"] >= len(dashboard[group]["items"]) and len(dashboard[group]["items"]) <= 8, "Reminder counts disagree with the eight-item homepage preview")
         require(dashboard["missedInspections"]["count"] == baseline["missedInspections"]["count"] + len(due_points), "Missing-record, disabled or irregular inspection reminders are incorrect")
         require(not satisfied_points.intersection(ids(dashboard["missedInspections"]["items"])), "Current-period, disabled or irregular points generated false reminders")
+        missed = self.json("GET", "/api/points?missed=true&pageSize=100")
+        require(missed["total"] == dashboard["missedInspections"]["count"], "The missed-inspection list and homepage disagree")
+        own_missed = self.json("GET", "/api/points?" + urllib.parse.urlencode({"missed": "true", "communityId": self.community["id"], "pageSize": 100}))
+        require(ids(own_missed["items"]) == due_points, "The full reminder list omitted a scheduled point or included an ineligible one")
         fixture_ids = set(self.deadline_issues.values())
         # Homepage previews are capped at eight entries; complete counts and
         # filtered lists remain authoritative even when demo rows precede ours.
@@ -418,7 +422,7 @@ class ApiSmoke:
             self.backup_entries = {entry.filename: archive.read(entry) for entry in archive.infolist() if not entry.is_dir()}
         snapshot_path = self.temp / "exported-snapshot.db"
         snapshot_path.write_bytes(self.backup_entries["app.db"])
-        with sqlite3.connect(snapshot_path) as database:
+        with contextlib.closing(sqlite3.connect(snapshot_path)) as database:
             require(database.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "VACUUM snapshot failed SQLite integrity checking")
             require(database.execute("PRAGMA foreign_key_check").fetchall() == [], "Backup contains broken foreign keys")
             photo_rows = database.execute("SELECT relative_path FROM photos").fetchall()
@@ -488,11 +492,12 @@ class ApiSmoke:
         self.stop()
         old_stamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=8)).isoformat(timespec="seconds")
         recent_stamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=6)).isoformat(timespec="seconds")
-        with sqlite3.connect(self.data / "app.db") as database:
+        with contextlib.closing(sqlite3.connect(self.data / "app.db")) as database:
             database.execute("UPDATE photos SET uploaded_at=? WHERE id=?", (old_stamp, old_orphan["id"]))
             database.execute("UPDATE photos SET uploaded_at=? WHERE id=?", (recent_stamp, recent_orphan["id"]))
             database.execute("UPDATE photos SET uploaded_at=? WHERE id=?", (old_stamp, self.normal_photo["id"]))
             database.execute("UPDATE inspections SET inspection_date=? WHERE id=?", (day(self.today + dt.timedelta(days=1)), self.future_inspection["inspection"]["id"]))
+            database.commit()
         self.start(seed=True)
         self.request("GET", "/photos/" + old_orphan["id"], expected=404)
         require(not photo_paths[old_orphan["id"]].exists(), "Startup cleanup removed the orphan row but left its JPEG file")
@@ -511,6 +516,47 @@ class ApiSmoke:
         require(self.fingerprint() == before, "Restart or repeated --seed-demo duplicated or changed existing data")
         self.stop()
 
+    def test_interrupted_restore(self) -> None:
+        require(self.process is None, "Restore-crash fixtures require the test server to be stopped")
+        for committed in (False, True):
+            before = self.fingerprint()
+            backup_name = "before-restore-smoke-" + ("committed" if committed else "uncommitted")
+            previous = self.data / "backup" / backup_name
+            previous.mkdir()
+            for suffix in ("", "-wal", "-shm"):
+                source = self.data / ("app.db" + suffix)
+                if source.exists():
+                    source.rename(previous / source.name)
+            (self.data / "photos").rename(previous / "photos")
+            (self.data / "photos").mkdir()
+            # These bytes came from the successful backup-download case above.
+            # Construct the state just after new data was moved into place.
+            for name, payload in self.backup_entries.items():
+                if name == "app.db" or name.startswith("photos/"):
+                    destination = self.data / name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    destination.write_bytes(payload)
+            marker = "恢复已提交的新数据" if committed else "尚未提交，不应覆盖旧数据"
+            with contextlib.closing(sqlite3.connect(self.data / "app.db")) as database:
+                database.execute("UPDATE settings SET street_name=? WHERE id=1", (marker,))
+                database.commit()
+            replacement = self.fingerprint()
+            journal = self.data / ".restore-journal.json"
+            journal.write_text(json.dumps({"backupName": backup_name, "committed": committed}), encoding="utf-8")
+            self.start(seed=True)
+            require(self.fingerprint() == (replacement if committed else before), "Startup recovered the wrong side of an interrupted restore transaction")
+            require(not journal.exists(), "Startup left a processed restore journal behind")
+            self.request("GET", "/photos/" + self.normal_photo["id"])
+            if committed:
+                require(self.json("GET", "/api/settings")["streetName"] == marker, "A committed restore was rolled back")
+                require(database_rows(previous / "app.db") == before["database"], "Crash recovery discarded the preserved old database")
+                preserved_photos = {path.relative_to(previous / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                                    for path in sorted((previous / "photos").rglob("*")) if path.is_file()}
+                require(preserved_photos == before["photos"], "Crash recovery discarded preserved old photos")
+            else:
+                require(self.json("GET", "/api/settings") == self.settings, "An uncommitted restore changed live settings")
+            self.stop()
+
     def run(self) -> None:
         self.start(seed=True)
         for name, action in (
@@ -521,6 +567,7 @@ class ApiSmoke:
             ("calendar periods, deadline boundaries and dashboard/list agreement", self.test_dashboard),
             ("consistent backup, restore confirmation, invalid ZIP and failed-preservation safety", self.test_backups),
             ("orphan cleanup, future-record reminders, graceful restart and idempotent demo seed", self.test_cleanup_and_restart),
+            ("restart recovery before and after restore commit, with old evidence retained", self.test_interrupted_restore),
         ):
             self.case(name, action)
         self.report["passed"] = True

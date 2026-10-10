@@ -300,6 +300,11 @@ internal static class Startup
                     await writer.WriteLineAsync(address.AsMemory(), cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
+                catch (Exception error) when (error is SocketException or UnauthorizedAccessException)
+                {
+                    Console.Error.WriteLine($"当前系统不允许发布已运行实例的访问地址：{error.Message}。主服务继续运行，请使用控制台显示的网址。");
+                    break;
+                }
                 catch (IOException)
                 {
                     try { await Task.Delay(200, cancellationToken); }
