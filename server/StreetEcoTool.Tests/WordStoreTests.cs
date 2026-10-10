@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Xml.Linq;
 using Xunit;
@@ -80,6 +81,43 @@ public sealed class WordStoreTests
         Assert.Empty(MediaDimensions(withoutPhotos.FilePath));
         var withPhotos = fixture.Store.ExportLedgerWord(Store.Today, Store.Today, includePhotos: true);
         Assert.Equal(new[] { "1000x800", "1200x800", "1600x800", "500x700", "800x1200" }, MediaDimensions(withPhotos.FilePath));
+    }
+
+    [Fact]
+    public void LedgerPreservesFeedbackReviewAndReturnHistoryAfterCurrentFieldsAreCleared()
+    {
+        using var fixture = new StoreFixture();
+        var today = DateOnly.ParseExact(Store.Today, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        string Day(int offset) => today.AddDays(offset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var inspection = fixture.Store.CreateInspection(new(fixture.Point.Id, Day(-3), "测试排查人", "issues", Issues:
+            [new("反复出现的环境问题", "清理现场并防止再次堆放", Day(0))]));
+        var issue = Assert.Single(inspection.Issues);
+        const string feedback = "第一次反馈：已完成垃圾清理并设置围挡。";
+        const string conclusion = "第一次复查：现场清理符合整改要求。";
+        const string reason = "再次发现新增堆放，退回继续整改并加强日常巡查。";
+        fixture.Store.RecordFeedback(issue.Id, new(Day(-2), feedback));
+        fixture.Store.ReviewAndClose(issue.Id, new(Day(-1), conclusion));
+        var returned = fixture.Store.ReturnIssue(issue.Id, new(reason));
+        Assert.Equal("pending", returned.Issue.Status);
+        Assert.Null(returned.Issue.FeedbackDate);
+        Assert.Empty(returned.Issue.FeedbackNotes);
+        Assert.Null(returned.Issue.ReviewDate);
+        Assert.Empty(returned.Issue.ReviewConclusion);
+        Assert.Null(returned.Issue.ClosedDate);
+
+        var ledger = fixture.Store.ExportLedgerWord(Day(-3), Day(0));
+        var text = DocumentText(ledger.FilePath);
+        Assert.Contains("待整改", text);
+        Assert.Contains("历次反馈", text);
+        Assert.Contains(Day(-2), text);
+        Assert.Contains(feedback, text);
+        Assert.Contains("复查 " + Day(-1), text);
+        Assert.Contains(conclusion, text);
+        Assert.Contains("退回 " + Day(0), text);
+        Assert.Contains(reason, text);
+        Assert.True(text.IndexOf(conclusion, StringComparison.Ordinal) < text.IndexOf(reason, StringComparison.Ordinal));
+        Assert.Contains("共 1 条，已闭环 0，未闭环 1，逾期 0。", text);
+        Assert.Empty(MediaDimensions(ledger.FilePath));
     }
 
     [Fact]

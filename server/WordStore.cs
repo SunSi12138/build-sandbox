@@ -48,10 +48,27 @@ public sealed partial class Store
                 photos = ResolveWordPhotos(gathered);
             }
             var name = community?.Name ?? "全部社区";
-            var ledger = new WordLedger(from, to, name, issues, photos, includePhotos);
+            var history = ReadWordIssueHistory(issues);
+            var ledger = new WordLedger(from, to, name, issues, photos, includePhotos, history);
             var settings = GetSettings();
             return WriteWordTemporary(WordExporter.FileName("整改台账", name, to), destination => WordExporter.WriteLedger(destination, ledger, settings));
         }
+    }
+
+    private WordIssueHistory[] ReadWordIssueHistory(IssueDto[] issues)
+    {
+        var history = new List<WordIssueHistory>(issues.Length);
+        foreach (var issue in issues)
+        {
+            var actions = new List<IssueActionDto>();
+            using var command = Command("SELECT id,kind,action_date,notes FROM issue_actions WHERE issue_id=$issue ORDER BY rowid;", null, ("$issue", issue.Id));
+            using var reader = command.ExecuteReader();
+            // The ledger's photo collection already contains historical action photos.
+            // Keep the text history even when the caller does not request photos.
+            while (reader.Read()) actions.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), []));
+            history.Add(new(issue.Id, actions.ToArray()));
+        }
+        return history.ToArray();
     }
 
     // This helper is called only while _gate is held, so the file paths and database

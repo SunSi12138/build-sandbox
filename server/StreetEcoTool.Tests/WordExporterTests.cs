@@ -67,7 +67,7 @@ public sealed class WordExporterTests
         Assert.Contains("仿宋", fonts);
         Assert.Contains("宋体", fonts);
         var fontTable = package.Xml("word/fontTable.xml");
-        var titleFont = Assert.Single(fontTable.Descendants(W + "font").Where(font => (string?)font.Attribute(W + "name") == "方正小标宋简体"));
+        var titleFont = Assert.Single(fontTable.Descendants(W + "font"), font => (string?)font.Attribute(W + "name") == "方正小标宋简体");
         Assert.Equal("宋体", (string?)titleFont.Element(W + "altName")?.Attribute(W + "val"));
         Assert.Contains(styles.Descendants(W + "sz"), size => (string?)size.Attribute(W + "val") == "44");
         Assert.Contains(styles.Descendants(W + "sz"), size => (string?)size.Attribute(W + "val") == "32");
@@ -123,7 +123,7 @@ public sealed class WordExporterTests
         Assert.Contains("<原样> & 引号\"测试\"。", text);
         Assert.Empty(document.Descendants("原样"));
         foreach (var issue in detail.Issues)
-            Assert.Equal(1, Regex.Matches(text, Regex.Escape(issue.Description)).Count);
+            Assert.Single(Regex.Matches(text, Regex.Escape(issue.Description)));
         foreach (var placeholder in new[] { "{日期}", "{点位}", "{问题}", "{期限}" }) Assert.DoesNotContain(placeholder, text);
         Assert.Contains(detail.Issues.Select(issue => issue.Deadline).Order(StringComparer.Ordinal).Last(), text);
         Assert.Contains("各项问题请按表列期限分别完成", text);

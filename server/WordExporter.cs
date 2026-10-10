@@ -6,7 +6,8 @@ using System.Xml;
 namespace StreetEcoTool;
 
 public sealed record WordPhoto(PhotoDto Photo, string FilePath);
-public sealed record WordLedger(string From, string To, string CommunityName, IssueDto[] Issues, WordPhoto[] Photos, bool IncludePhotos);
+public sealed record WordIssueHistory(string IssueId, IssueActionDto[] Actions);
+public sealed record WordLedger(string From, string To, string CommunityName, IssueDto[] Issues, WordPhoto[] Photos, bool IncludePhotos, WordIssueHistory[]? History = null);
 
 /// <summary>Writes an OPC/WordprocessingML package with BCL APIs only. No image or Office SDK is loaded.</summary>
 public static class WordExporter
@@ -80,11 +81,13 @@ public static class WordExporter
         if (settings.StreetName.Length > 0) document.Paragraph(settings.StreetName, "Meta", "center");
         document.Paragraph($"排查日期：{ledger.From} 至 {ledger.To}　　社区：{ledger.CommunityName}", "Meta");
         string[] headers = ["序号", "排查日期", "点位", "社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论"];
+        var histories = (ledger.History ?? []).ToDictionary(item => item.IssueId, item => item.Actions, StringComparer.Ordinal);
         var rows = ledger.Issues.Select((issue, index) => new[]
         {
             (index + 1).ToString(CultureInfo.InvariantCulture), issue.InspectionDate, issue.PointName, issue.CommunityName,
-            issue.Description, issue.Deadline, Status(issue.Status), WithDate(issue.FeedbackDate, issue.FeedbackNotes),
-            WithDate(issue.ReviewDate, issue.ReviewConclusion)
+            issue.Description, issue.Deadline, Status(issue.Status),
+            HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], true, WithDate(issue.FeedbackDate, issue.FeedbackNotes)),
+            HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], false, WithDate(issue.ReviewDate, issue.ReviewConclusion))
         });
         document.Table(headers, rows, [4, 9, 12, 9, 23, 9, 9, 13, 12], fontSize: 21);
         if (ledger.Issues.Length == 0) document.Paragraph("所选条件下暂无问题记录。", "Meta");
@@ -101,7 +104,8 @@ public static class WordExporter
             document.Paragraph(issue.Description);
             if (!string.IsNullOrWhiteSpace(issue.Requirement)) document.Paragraph("整改要求：" + issue.Requirement);
             var attached = ledger.Photos.Where(photo => photo.Photo.IssueId == issue.Id ||
-                (photo.Photo.InspectionId == issue.InspectionId && photo.Photo.Phase == "site")).ToArray();
+                (photo.Photo.InspectionId == issue.InspectionId && photo.Photo.Phase == "site"))
+                .OrderBy(photo => photo.Photo.UploadedAt, StringComparer.Ordinal).ThenBy(photo => photo.Photo.Id, StringComparer.Ordinal).ToArray();
             if (attached.Length == 0)
             {
                 document.Paragraph("本问题暂无照片。", "Meta");
@@ -140,6 +144,15 @@ public static class WordExporter
     }
 
     private static string WithDate(string? date, string text) => string.IsNullOrWhiteSpace(date) ? text : date + "\n" + text;
+    private static string HistoryText(IssueActionDto[] actions, bool feedback, string current)
+    {
+        var selected = actions.Where(action => feedback ? action.Kind == "feedback" : action.Kind is "review" or "return").ToArray();
+        if (selected.Length == 0) return current;
+        // The status column describes the current round; earlier feedback, reviews and returns remain traceable.
+        var prefix = feedback && (selected.Length > 1 || actions.Any(action => action.Kind == "return")) ? "历次反馈：\n" : "";
+        return prefix + string.Join("\n\n", selected.Select(action =>
+            (feedback ? "" : action.Kind == "return" ? "退回 " : "复查 ") + WithDate(action.Date, action.Notes)));
+    }
     private static string Status(string status) => status switch { "pending" => "待整改", "feedback" => "社区已反馈", "closed" => "已复查闭环", _ => status };
 
     private static void WriteIssues(Document document, IssueDto[] issues) => document.Table(
