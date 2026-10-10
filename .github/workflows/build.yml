@@ -29,8 +29,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  web:
+    name: Generate offline Nuxt SPA
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm run generate
+        working-directory: web
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-static
+          path: web/.output/public/
+          if-no-files-found: error
+          retention-days: 14
+
   native:
     name: AOT ${{ matrix.rid }}
+    needs: web
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +86,10 @@ jobs:
         run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror
       - name: Publish NativeAOT with zero warnings
         run: dotnet publish server/StreetEcoTool.csproj -c Release -r ${{ matrix.rid }} -o publish -p:PublishAot=true -p:SelfContained=true -warnaserror
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-static
+          path: publish/wwwroot
       - name: Verify static SQLite and run API integration tests
         shell: pwsh
         run: |
@@ -69,14 +98,51 @@ jobs:
           $executable = if ($IsWindows) { './publish/StreetEcoTool.exe' } else { './publish/StreetEcoTool' }
           python tests/api-smoke.py --executable $executable --report test-results/api-smoke-report.json
           if ($LASTEXITCODE -ne 0) { throw 'NativeAOT API integration tests failed' }
-      - name: Preserve native executable and test evidence
+      - name: Package executable and wwwroot
+        run: python scripts/package.py --rid ${{ matrix.rid }} --publish publish --output dist
+      - name: Upload portable package
+        uses: actions/upload-artifact@v7
+        with:
+          name: hbtool-${{ matrix.rid }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve test evidence
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: backend-stage-${{ matrix.rid }}
-          path: |
-            publish/StreetEcoTool
-            publish/StreetEcoTool.exe
-            test-results/
-          if-no-files-found: error
+          name: test-results-${{ matrix.rid }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser:
+    name: Browser workflows and offline resources
+    needs: [web, native]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/download-artifact@v8
+        with:
+          name: hbtool-linux-x64
+          path: browser-package
+      - run: tar -xzf browser-package/hbtool-linux-x64.tar.gz -C browser-package
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Run the packaged app in a real browser
+        run: node web/browser-test.mjs --executable browser-package/hbtool/StreetEcoTool
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-evidence
+          path: web/test-results/
+          if-no-files-found: warn
           retention-days: 14
