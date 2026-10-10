@@ -70,7 +70,7 @@ public static class WordExporter
             ["整改情况", "\n\n\n"],
             ["负责人签字", "　　　　　　　　　日期：　　　年　　月　　日"],
             ["责任单位盖章", "\n\n"]
-        ], [21, 79], labelColumn: true);
+        ], [21, 79], labelColumn: true, keepTogether: true);
         WriteSitePhotos(document, detail, photos, true);
     }
 
@@ -266,11 +266,18 @@ public static class WordExporter
             return text.ToString();
         }
 
-        public void Table(string[]? headers, IEnumerable<string[]> rows, int[] weights, int fontSize = 21, bool labelColumn = false)
+        public void Table(string[]? headers, IEnumerable<string[]> rows, int[] weights, int fontSize = 21, bool labelColumn = false, bool keepTogether = false)
         {
             var widths = TableStart(weights);
-            if (headers is not null) TableRow(headers, widths, fontSize, true, false);
-            foreach (var row in rows) TableRow(row, widths, fontSize, false, labelColumn);
+            if (headers is not null) TableRow(headers, widths, fontSize, true, false, keepTogether, keepTogether);
+            if (keepTogether)
+            {
+                // The short receipt is one writable block: its caption, signatures and seal must stay together.
+                var group = rows.ToArray();
+                for (var index = 0; index < group.Length; index++)
+                    TableRow(group[index], widths, fontSize, false, labelColumn, index + 1 < group.Length, true);
+            }
+            else foreach (var row in rows) TableRow(row, widths, fontSize, false, labelColumn);
             End();
             // A table must not be the final cell child; this also provides a small, predictable gap in the body.
             Paragraph("", "TableGap");
@@ -302,14 +309,22 @@ public static class WordExporter
             return widths;
         }
 
-        private void TableRow(string[] values, int[] widths, int fontSize, bool header, bool labelColumn)
+        private void TableRow(string[] values, int[] widths, int fontSize, bool header, bool labelColumn, bool keepWithNext = false, bool noSplit = false)
         {
             Start("tr");
-            if (header) { Start("trPr"); Value("tblHeader", "1"); End(); }
+            if (header || noSplit)
+            {
+                Start("trPr");
+                if (header) Value("tblHeader", "1");
+                if (noSplit) Value("cantSplit", "1");
+                End();
+            }
             for (var column = 0; column < widths.Length; column++)
             {
                 CellStart(widths[column], header || (labelColumn && column == 0));
-                Start("p"); Start("pPr"); Value("pStyle", "TableText"); End();
+                Start("p"); Start("pPr"); Value("pStyle", "TableText");
+                if (keepWithNext) Value("keepNext", "1");
+                End();
                 TextRun(column < values.Length ? values[column] : "", fontSize, header || (labelColumn && column == 0));
                 End(); End();
             }
@@ -489,6 +504,8 @@ public static class WordExporter
             <w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:font w:name="方正小标宋简体"><w:altName w:val="宋体"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font><w:font w:name="仿宋"><w:altName w:val="宋体"/><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font><w:font w:name="宋体"><w:family w:val="roman"/><w:pitch w:val="variable"/></w:font></w:fonts>
             """;
 
+        // Photo rows use cantSplit to keep their captions with the image. A caption-level keepNext
+        // can also keep adjacent rows together in LibreOffice, leaving large blank areas before a table.
         private const string Styles = """
             <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
             <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -499,7 +516,7 @@ public static class WordExporter
               <w:style w:type="paragraph" w:styleId="Meta"><w:name w:val="说明"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="140" w:line="280" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体"/><w:sz w:val="21"/><w:szCs w:val="21"/></w:rPr></w:style>
               <w:style w:type="paragraph" w:styleId="TableText"><w:name w:val="表格正文"/><w:basedOn w:val="Normal"/><w:pPr><w:widowControl w:val="0"/><w:spacing w:before="0" w:after="0" w:line="260" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体"/><w:sz w:val="21"/><w:szCs w:val="21"/></w:rPr></w:style>
               <w:style w:type="paragraph" w:styleId="TableGap"><w:name w:val="表格间距"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="100" w:line="20" w:lineRule="exact"/></w:pPr><w:rPr><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:style>
-              <w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="照片说明"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="0" w:after="80" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>
+              <w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="照片说明"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="80" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体"/><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>
               <w:style w:type="paragraph" w:styleId="Photo"><w:name w:val="照片"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="2"/></w:rPr></w:style>
               <w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:rFonts w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
             </w:styles>
