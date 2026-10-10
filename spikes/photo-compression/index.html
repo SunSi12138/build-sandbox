@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>街道环保工具 · 照片压缩验证</title>
+  <style>
+    body { max-width: 960px; margin: 32px auto; padding: 0 20px; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; color: #163b33; background: #f3f7f5; }
+    h1 { font-size: 26px; } button, input { margin: 8px 4px 8px 0; padding: 14px; }
+    button { background: #17634d; border: 0; color: white; border-radius: 8px; cursor: pointer; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: white; padding: 18px; border-radius: 10px; }
+    #photos { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    img { max-width: 100%; max-height: 400px; object-fit: contain; background: #fff; }
+  </style>
+</head>
+<body>
+  <h1>照片压缩验证</h1>
+  <p>本地 Worker / MozJPEG · 最长边 1600 px · 质量 75 · 最多并行 2 张</p>
+  <input id="files" type="file" accept="image/*" multiple>
+  <button id="test">验证 EXIF 方向和压缩</button>
+  <button id="fallback">验证 canvas 回退</button>
+  <pre id="status">请选择照片，或执行合成测试图验证。测试不代表真机验收。</pre>
+  <div id="photos"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

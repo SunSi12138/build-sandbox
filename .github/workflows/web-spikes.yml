@@ -1,0 +1,50 @@
+name: Offline frontend and photo spikes
+on:
+  workflow_dispatch:
+  push:
+    branches: [hbtool]
+    paths:
+      - 'spikes/nuxt-offline/**'
+      - 'spikes/photo-compression/**'
+      - '.github/workflows/web-spikes.yml'
+permissions:
+  contents: read
+concurrency:
+  group: web-spikes-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: nuxt-offline
+            build: npm run typecheck && npm run generate
+          - project: photo-compression
+            build: npm run build
+    defaults:
+      run:
+        working-directory: spikes/${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: spikes/${{ matrix.project }}/package-lock.json
+      - run: npm ci
+      - run: ${{ matrix.build }}
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: browser-spike-${{ matrix.project }}
+          path: |
+            spikes/${{ matrix.project }}/evidence/
+            spikes/${{ matrix.project }}/artifacts/
+            spikes/${{ matrix.project }}/test-*.json
+            spikes/${{ matrix.project }}/test-*.png
+            spikes/${{ matrix.project }}/test-*.jpg
+          retention-days: 14

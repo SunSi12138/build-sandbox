@@ -1,0 +1,22 @@
+{
+  "name": "hbtool-photo-compression-spike",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 5179",
+    "test": "node browser-test.mjs"
+  },
+  "dependencies": {
+    "@jsquash/jpeg": "1.6.0",
+    "@jsquash/resize": "2.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "playwright": "1.62.1",
+    "typescript": "~5.9.3",
+    "vite": "8.3.4"
+  }
+}

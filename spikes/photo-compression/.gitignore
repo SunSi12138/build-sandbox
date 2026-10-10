@@ -1,0 +1,6 @@
+node_modules/
+dist/
+test-screenshot.png
+test-fallback-screenshot.png
+test-input-exif6.jpg
+test-output-exif6.jpg
