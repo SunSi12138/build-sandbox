@@ -111,7 +111,7 @@ var app = builder.Build();
 app.MapGet("/api/probe", () => TypedResults.Json(
     new ProbeResult(true, SQLitePCL.raw.sqlite3_libversion().utf8_to_string(), DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), "中文 SQLite AOT"),
     SpikeJsonContext.Default.ProbeResult));
-app.MapPost("/api/probe", async (HttpContext context) =>
+RequestDelegate saveProbe = async (HttpContext context) =>
 {
     var request = await context.Request.ReadFromJsonAsync(SpikeJsonContext.Default.ProbeRequest, context.RequestAborted);
     if (request is null || string.IsNullOrWhiteSpace(request.Name))
@@ -126,7 +126,8 @@ app.MapPost("/api/probe", async (HttpContext context) =>
     command.Parameters.AddWithValue("$name", request.Name);
     command.ExecuteNonQuery();
     await context.Response.WriteAsJsonAsync(new ProbeSaved(id, request.Name), SpikeJsonContext.Default.ProbeSaved, contentType: null, cancellationToken: context.RequestAborted);
-});
+};
+app.MapPost("/api/probe", saveProbe);
 await app.RunAsync();
 
 internal sealed record ProbeRequest(string Name);
