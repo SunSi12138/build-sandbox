@@ -59,6 +59,10 @@ try {
   await page.screenshot({ path: resolve(output, 'mobile.png'), fullPage: true })
 
   await page.getByRole('link', { name: '设置', exact: true }).click()
+  // Hash navigation completes asynchronously after Vue Router loads the page
+  // chunk. A successful click does not mean that navigation has settled yet.
+  await page.waitForURL(url => url.hash === '#/settings')
+  await page.getByRole('heading', { name: '设置页面' }).waitFor()
   assert.equal(new URL(page.url()).hash, '#/settings')
   await page.reload({ waitUntil: 'networkidle' })
   await page.getByRole('heading', { name: '设置页面' }).waitFor()
