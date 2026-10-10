@@ -89,13 +89,14 @@ public static class WordExporter
             HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], true, WithDate(issue.FeedbackDate, issue.FeedbackNotes)),
             HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], false, WithDate(issue.ReviewDate, issue.ReviewConclusion))
         });
-        document.Table(headers, rows, [4, 9, 12, 9, 23, 9, 9, 13, 12], fontSize: 21);
+        document.Table(headers, rows, [5, 9, 12, 9, 22, 9, 9, 13, 12], fontSize: 21);
         if (ledger.Issues.Length == 0) document.Paragraph("所选条件下暂无问题记录。", "Meta");
         var closed = ledger.Issues.Count(issue => issue.Status == "closed");
         var overdue = ledger.Issues.Count(issue => issue.Status != "closed" && issue.Overdue);
         document.Paragraph($"共 {ledger.Issues.Length} 条，已闭环 {closed}，未闭环 {ledger.Issues.Length - closed}，逾期 {overdue}。", "Meta");
 
         if (!ledger.IncludePhotos) return;
+        if (ledger.Issues.Length > 0) document.Paragraph("附后照片按上传先后展示，包含历次反馈留痕；退回前的照片仍保留。", "Meta");
         for (var index = 0; index < ledger.Issues.Length; index++)
         {
             var issue = ledger.Issues[index];
@@ -111,8 +112,6 @@ public static class WordExporter
                 document.Paragraph("本问题暂无照片。", "Meta");
                 continue;
             }
-            document.Paragraph("现场与整改后对比", "Heading1");
-            document.Paragraph("照片按上传先后展示，包含历次反馈留痕；退回前的照片仍保留。", "Meta");
             document.Comparison(attached.Where(photo => photo.Photo.Phase == "site").ToArray(),
                 attached.Where(photo => photo.Photo.Phase == "after").ToArray());
             var review = attached.Where(photo => photo.Photo.Phase == "review").ToArray();
@@ -159,11 +158,13 @@ public static class WordExporter
         ["序号", "问题描述", "整改要求", "整改期限", "责任单位"],
         issues.Select((issue, index) => new[] { (index + 1).ToString(CultureInfo.InvariantCulture), issue.Description,
             string.IsNullOrWhiteSpace(issue.Requirement) ? "按上述问题完成整改。" : issue.Requirement, issue.Deadline, issue.ResponsibleUnit }),
-        [6, 31, 27, 17, 19]);
+        [8, 30, 26, 17, 19]);
 
     private static void WriteSitePhotos(Document document, InspectionDetailDto detail, WordPhoto[] photos, bool attachment)
     {
-        var selected = photos.Where(photo => photo.Photo.Phase == "site").ToArray();
+        var selected = photos.Where(photo => photo.Photo.Phase == "site")
+            .OrderBy(photo => Array.FindIndex(detail.Issues, issue => issue.Id == photo.Photo.IssueId))
+            .ThenBy(photo => photo.Photo.UploadedAt, StringComparer.Ordinal).ThenBy(photo => photo.Photo.Id, StringComparer.Ordinal).ToArray();
         if (attachment && selected.Length == 0) return;
         document.Paragraph(attachment ? "附件：现场问题照片" : "现场照片", "Heading1", pageBreak: attachment);
         if (selected.Length == 0)
@@ -320,7 +321,7 @@ public static class WordExporter
             Start("tc"); Start("tcPr");
             Start("tcW"); Attr("w", width.ToString(CultureInfo.InvariantCulture)); Attr("type", "dxa"); End();
             if (shaded) { Start("shd"); Attr("val", "clear"); Attr("fill", "F2F2F2"); End(); }
-            Value("vAlign", "center");
+            Value("vAlign", "top");
             End();
         }
 
