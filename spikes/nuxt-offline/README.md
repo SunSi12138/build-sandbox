@@ -11,7 +11,18 @@
 - 产物 HTML 的 `src` / `href` 没有外部域名，产物中没有 `.woff` / `.woff2` / `.ttf` / `.otf` 字体文件。
 - `npm run typecheck` 成功，TypeScript 严格模式开启。当前 `vue-tsc` 无法与 TypeScript 7 的导出结构配合，因此固定 **TypeScript 6.0.3**；无需改变 Nuxt 选型。
 
-本地执行环境中的 Chromium 启动立即收到 `SIGTRAP`，所以**以上构建检查不代表浏览器验收已通过**。浏览器结果由 CI 的 `evidence/offline-report.json` 和截图证明；不要把未运行的断网测试记作通过。
+## CI 浏览器验收已通过
+
+2026-10-10，[GitHub Actions 运行 38050309537](https://github.com/SunSi12138/build-sandbox/actions/runs/38050309537) 的 Nuxt job 全部通过，浏览器版本为 **Chromium 151.0.7922.34**。
+
+- 首次加载时已拦截全部外域，记录的外部请求、page error、console warning/error 均为 **0**。
+- 初始页面 **8 个实际 SVG 图标 mask** 全部正常；断开全部网络后，包含 Toast 的 **9 个图标**、页面样式与系统字体栈仍正常。
+- Nuxt UI 下拉、复选框、中文弹窗关闭按钮、Toast 交互全部通过。
+- `/#/settings` 导航及完整刷新通过，不需要服务端 history fallback。
+- 缺少必需浏览器特性时，ES5 脚本显示中文升级提示。
+- 已生成手机、桌面截图与 JSON 验收报告，见 [browser-spike-nuxt-offline 构建附件](https://github.com/SunSi12138/build-sandbox/actions/runs/38050309537/artifacts/11668818894)。
+
+本地执行环境的 Chromium 启动受限，曾收到 `SIGTRAP`；上述浏览器结论来自实际执行成功的 CI。首轮测试中点击后同步读取 hash 产生时序误判，已改为等待 Vue Router 导航完成后再断言；完整刷新验收保持不变。
 
 ## 复现
 

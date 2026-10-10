@@ -1,0 +1,82 @@
+name: Build and verify hbtool
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [hbtool]
+    paths:
+      - 'server/**'
+      - 'web/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'global.json'
+      - '.github/workflows/build.yml'
+      - 'README.md'
+  pull_request:
+    paths:
+      - 'server/**'
+      - 'web/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'global.json'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hbtool-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: AOT ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            rid: win-x86
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: ubuntu-22.04
+            rid: linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Enable x86 MSVC tools
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+      - name: Unit tests
+        if: matrix.rid == 'linux-x64'
+        run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror
+      - name: Publish NativeAOT with zero warnings
+        run: dotnet publish server/StreetEcoTool.csproj -c Release -r ${{ matrix.rid }} -o publish -p:PublishAot=true -p:SelfContained=true -warnaserror
+      - name: Verify static SQLite and run API integration tests
+        shell: pwsh
+        run: |
+          $dynamic = @(Get-ChildItem publish -Recurse -File | Where-Object { $_.Name -match '^(lib)?e_sqlite3\.(dll|so|dylib)$' })
+          if ($dynamic.Count -ne 0) { throw 'SQLite was not statically linked' }
+          $executable = if ($IsWindows) { './publish/StreetEcoTool.exe' } else { './publish/StreetEcoTool' }
+          python tests/api-smoke.py --executable $executable --report test-results/api-smoke-report.json
+          if ($LASTEXITCODE -ne 0) { throw 'NativeAOT API integration tests failed' }
+      - name: Preserve native executable and test evidence
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: backend-stage-${{ matrix.rid }}
+          path: |
+            publish/StreetEcoTool
+            publish/StreetEcoTool.exe
+            test-results/
+          if-no-files-found: error
+          retention-days: 14

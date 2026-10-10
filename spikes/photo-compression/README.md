@@ -44,7 +44,7 @@ npx playwright install --with-deps chromium
 npm test
 ```
 
-`browser-test.mjs` 自行启动静态服务器。使用 `http://hbtool-spike.test:5179`，Chromium 将该测试域名解析到本机；这是普通、不可信的 HTTP origin，可检查 `isSecureContext === false`，没有开启任何浏览器安全特性的绕过。
+`browser-test.mjs` 自行启动静态服务器。使用 `http://hbtool-spike.test:5179`，Chromium 将该测试域名解析到本机；这是普通、不可信的 HTTP origin，可检查 `isSecureContext === false`。未给该域名配置安全上下文豁免，未开启 SharedArrayBuffer 或关闭页面跨域安全限制。
 
 测试内容：
 
@@ -55,9 +55,18 @@ npm test
 
 生成 `test-results.json`、`test-screenshot.png`、`test-fallback-screenshot.png`、`test-input-exif6.jpg`、`test-output-exif6.jpg`，由 CI 保存为 artifacts。JPEG 体积取决于场景复杂度，不保证所有照片都固定为某个 KB 数值。
 
-## 当前本地结果与限制
+## 验证结果（2026-10-10）
 
 - `npm run build` 已通过：TypeScript strict 检查通过，Vite 生产构建通过。
 - 构建包含独立模块 Worker（约 29.9 KB）、MozJPEG WASM（251.5 KB）、Resize WASM（34.5 KB）。Resize 包还让 Vite 输出 HQX / Magic Kernel 资源；本流程只调用 Lanczos3，不加载这些附加算法。
-- 本环境没有预装 Chromium；标准 Playwright 下载得到截断 ZIP。通过 npm 准备 Chromium 后，其版本查询可运行，但浏览器启动立即 SIGTRAP；strace 也被执行环境禁止。这属于本环境限制，**本地浏览器压缩、方向和回退尚未验收通过**，以上测试由标准 GitHub Actions runner 执行后再更新结论。
-- 没有用户提供的实际手机照片。合成图用于可重复的方向、尺寸和编码验证；真实 iPhone / Android 相册照片以及 Safari / WPS 最终验收仍需在相应设备上完成。
+- **GitHub Actions 真实浏览器验真通过**：[run 38050177110 / job 114207546993](https://github.com/SunSi12138/build-sandbox/actions/runs/38050177110/job/114207546993)，测试提交 `7c1d6aefd142764a73391f392438294ea7e0345f`。
+- 4032×3024、附 EXIF Orientation=6 的纹理合成图，输入 **7,946,458 bytes**；MozJPEG 输出 **301,622 bytes（301.6 KB / 294.6 KiB）**，缩到 **1200×1600**，体积减少 **96.20%**，EXIF 清除。
+- 阻断真实 WASM 请求后，canvas 回退输出 **425,867 bytes（425.9 KB / 415.9 KiB）**，仍为 1200×1600，方向与 EXIF 清除检查通过。
+- 两条路径的 **8 种 EXIF 方向均通过**；峰值并发为 2，完成后没有活动任务或排队任务。测试在普通 HTTP origin 上运行，`secureContext=false`、`crossOriginIsolated=false`、SharedArrayBuffer 不可用；正常路径记录的外部域名请求和页面异常均为 0，实际只请求 Resize 与 MozJPEG 两个同源 WASM。
+- 已下载 CI 原图、压缩图及截图做目视检查，四角标记和纹理方向一致，无误旋转、镜像或裁切。详细环境、方向表和产物校验信息见 [RESULTS.md](RESULTS.md)。
+
+## 验证范围
+
+本次运行环境为 Ubuntu 24.04.5 / Chromium 151.0.7922.34。当前本地容器中的 Chromium 启动受到执行限制，故浏览器验真在标准 GitHub Actions runner 上完成。
+
+没有用户提供的实际手机照片。合成图用于可重复的方向、尺寸和编码验证，不能代替真实 iPhone / Android 相册、Safari 最低版本及照片文字细节的真机验收。Word / WPS 打开与版式验收属于后续 Word 导出阶段。
