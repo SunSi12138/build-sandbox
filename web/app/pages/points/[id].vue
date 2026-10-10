@@ -7,7 +7,7 @@ const toast = useToast()
 const detail = ref<PointDetailDto | null>(null)
 const loading = ref(true), error = ref(''), editorOpen = ref(false), deleteOpen = ref(false), deleting = ref(false), deleteError = ref(''), changing = ref(false)
 const id = computed(() => queryText(route.params.id))
-const back = computed(() => { const value = queryText(route.query.returnTo); return value.startsWith('/points?') ? value : '/points' })
+const back = computed(() => { const value = queryText(route.query.returnTo); return /^\/points\/?(?:\?|$)/.test(value) ? value : '/points' })
 useHead({ title: computed(() => `${detail.value?.point.name || '点位详情'} · 街道生态环保`) })
 async function load() {
   if (!id.value) return
@@ -61,6 +61,6 @@ async function remove() {
       </template>
     </PageState>
     <PointEditor v-model:open="editorOpen" :point="detail?.point" @saved="saved" />
-    <UModal v-model:open="deleteOpen" title="确认删除这个点位？" :description="`即将删除「${detail?.point.name || ''}」。已有排查记录的点位不能删除，请改用停用。`" :dismissible="!deleting"><template #body><UAlert v-if="deleteError" :description="deleteError" color="error" variant="subtle" /><p v-else class="text-sm leading-6 text-muted">删除后无法直接撤销，请再次核对点位名称。</p></template><template #footer><div class="flex w-full justify-end gap-3"><UButton label="取消" color="neutral" variant="outline" :disabled="deleting" @click="deleteOpen = false" /><UButton label="确认删除" color="error" :loading="deleting" @click="remove" /></div></template></UModal>
+    <UModal v-model:open="deleteOpen" title="确认删除这个点位？" :description="`即将删除「${detail?.point.name || ''}」。已有排查记录的点位不能删除，请改用停用。`" :dismissible="!deleting" :close="!deleting"><template #body><UAlert v-if="deleteError" :description="deleteError" color="error" variant="subtle" /><p v-else class="text-sm leading-6 text-muted">删除后无法直接撤销，请再次核对点位名称。</p></template><template #footer><div class="flex w-full justify-end gap-3"><UButton label="取消" color="neutral" variant="outline" :disabled="deleting" @click="deleteOpen = false" /><UButton label="确认删除" color="error" :loading="deleting" @click="remove" /></div></template></UModal>
   </div>
 </template>

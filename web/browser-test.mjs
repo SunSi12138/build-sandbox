@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import { verifyWordDownloads } from './word-browser-test.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const executableArgument = process.argv.indexOf('--executable')
@@ -80,7 +81,53 @@ async function waitForText(text) {
 }
 
 async function screenshot(name) {
-  await page.screenshot({ path: path.join(evidence, name + '.png'), fullPage: true })
+  await page.screenshot({ path: path.join(evidence, name + '.png'), fullPage: true, animations: 'disabled' })
+}
+
+async function waitForDialogsClosed() {
+  // Role locators exclude aria-hidden content before its exit animation finishes.
+  // Inspect the rendered layers as well, including dialogs retained for photo drafts.
+  await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"], [data-slot="overlay"]')].every((element) => {
+    const style = getComputedStyle(element)
+    return style.display === 'none' || style.visibility === 'hidden' || element.getClientRects().length === 0
+  }), null, { timeout: 10000 })
+  // Allow the close/after-leave focus restoration to complete without changing focus in the test.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+}
+
+async function assertMobileActionLayout(toastTitle) {
+  const toastSelector = '[data-swipe-direction][data-state="open"]'
+  await page.locator(toastSelector).filter({ hasText: toastTitle }).first().waitFor({ state: 'visible' })
+  // Wait only for toast roots' entrance/stack transitions, never their dismissal timer or progress bar.
+  await page.waitForFunction((selector) => [...document.querySelectorAll(selector)].every((element) =>
+    element.getAnimations().every((animation) => !animation.pending && animation.playState !== 'running')
+  ), toastSelector, { timeout: 5000 })
+  const layout = await page.evaluate((selector) => {
+    function visibleBox(element) {
+      if (!element) return null
+      const style = getComputedStyle(element)
+      const box = element.getBoundingClientRect()
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0 ||
+        box.width <= 0 || box.height <= 0 || box.bottom <= 0 || box.top >= innerHeight || box.right <= 0 || box.left >= innerWidth) return null
+      return { left: box.left, top: box.top, right: box.right, bottom: box.bottom }
+    }
+    return {
+      navigation: visibleBox(document.querySelector('.mobile-tabs')),
+      skipLink: visibleBox(document.querySelector('.skip-link')),
+      skipLinkFocused: Boolean(document.activeElement?.closest('.skip-link')),
+      toasts: [...document.querySelectorAll(selector)].map((element) => ({ text: element.textContent, box: visibleBox(element) })).filter((toast) => toast.box)
+    }
+  }, toastSelector)
+  assert(layout.navigation, 'Mobile navigation is not visible after ' + toastTitle)
+  assert(!layout.skipLinkFocused && !layout.skipLink, 'Pointer action unexpectedly exposed or focused the skip link after ' + toastTitle)
+  assert(layout.toasts.some((toast) => toast.text.includes(toastTitle)), 'Expected success toast is no longer visible: ' + toastTitle)
+  for (const toast of layout.toasts) {
+    const intersects = toast.box.left < layout.navigation.right && toast.box.right > layout.navigation.left &&
+      toast.box.top < layout.navigation.bottom && toast.box.bottom > layout.navigation.top
+    assert(!intersects, `Success toast obscures mobile navigation: ${JSON.stringify({ toast, navigation: layout.navigation })}`)
+  }
+  report.mobileLayoutChecks ??= []
+  report.mobileLayoutChecks.push({ action: toastTitle, ...layout })
 }
 
 async function noHorizontalOverflow() {
@@ -224,6 +271,7 @@ try {
     await page.waitForURL('**/#/inspections/' + inspectionId)
     assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.inspection-draft.v1')), null)
     assert.equal((await api('/issues/' + issueId)).photos.length, 2)
+    await assertMobileActionLayout('排查已保存')
     await screenshot('mobile-inspection-saved')
   })
 
@@ -239,7 +287,9 @@ try {
     await page.getByTestId('feedback-save').click()
     await feedbackSaved
     await page.getByTestId('review-open').waitFor()
+    await waitForDialogsClosed()
     assert.equal((await api('/issues/' + issueId)).issue.status, 'feedback')
+    await assertMobileActionLayout('社区反馈已记录')
     await screenshot('mobile-before-after')
     await page.getByTestId('review-open').click()
     await page.getByTestId('review-date').fill(bootstrap.today)
@@ -247,19 +297,22 @@ try {
     const reviewed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/issues/' + issueId + '/review' && response.status() === 200)
     await page.getByTestId('review-save').click()
     await reviewed
-    await page.getByRole('dialog').waitFor({ state: 'hidden' })
+    await waitForDialogsClosed()
     assert.equal((await api('/issues/' + issueId)).issue.status, 'closed')
+    await assertMobileActionLayout('已复查闭环')
     await page.getByTestId('return-open').click()
     await page.getByTestId('return-reason').fill('补充整改要求后继续跟进。')
     const returned = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/issues/' + issueId + '/return' && response.status() === 200)
     await page.getByTestId('return-save').click()
     await returned
     await page.getByTestId('feedback-open').waitFor()
+    await waitForDialogsClosed()
     const detail = await api('/issues/' + issueId)
     assert.equal(detail.issue.status, 'pending')
     assert.equal(detail.actions.length, 3)
     assert.equal(detail.photos.length, 3)
     await noHorizontalOverflow()
+    await assertMobileActionLayout('已退回待整改')
     await screenshot('mobile-issue-history')
   })
 
@@ -274,6 +327,10 @@ try {
     assert.equal(result.inspection.result, 'normal')
     assert.equal(result.issues.length, 0)
     assert.equal((await api('/inspections/' + result.inspection.id)).inspection.pointId, point.id)
+  })
+
+  await test('Word record, notice and ledger download through the actual UI', async () => {
+    await verifyWordDownloads({ page, origin, evidence, inspectionId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
   })
 
   await test('Backup restore requires a visible second confirmation and preserves old data', async () => {
@@ -294,7 +351,7 @@ try {
     await restoreButton.click()
     const restoredResult = await (await restored).json()
     assert(restoredResult.preservedBackup.startsWith('backup/before-restore-'))
-    await dialog.waitFor({ state: 'hidden' })
+    await waitForDialogsClosed()
     assert(!(await api('/communities')).some((community) => community.id === extra.id))
     assert.equal((await api('/issues/' + issueId)).photos.length, 3)
   })
@@ -319,7 +376,7 @@ try {
     await legacy.goto(origin + '/', { waitUntil: 'networkidle' })
     assert(await legacy.locator('#unsupported-browser').isVisible())
     assert((await legacy.locator('#unsupported-browser').textContent()).includes('请升级浏览器'))
-    await legacy.screenshot({ path: path.join(evidence, 'unsupported-browser.png'), fullPage: true })
+    await legacy.screenshot({ path: path.join(evidence, 'unsupported-browser.png'), fullPage: true, animations: 'disabled' })
     await legacy.close()
   })
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')

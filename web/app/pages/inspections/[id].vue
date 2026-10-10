@@ -6,7 +6,7 @@ const route = useRoute()
 const detail = ref<InspectionDetailDto | null>(null)
 const loading = ref(true), error = ref('')
 const id = computed(() => queryText(route.params.id))
-const back = computed(() => { const value = queryText(route.query.returnTo); return value.startsWith('/points/') || value.startsWith('/inspections?') ? value : '/inspections' })
+const back = computed(() => { const value = queryText(route.query.returnTo); return value.startsWith('/points/') || /^\/inspections\/?(?:\?|$)/.test(value) ? value : '/inspections' })
 const sitePhotos = computed(() => detail.value?.photos.filter(photo => photo.phase === 'site') ?? [])
 useHead({ title: computed(() => `${detail.value?.inspection.pointName || '排查记录'} · 排查详情`) })
 async function load() {

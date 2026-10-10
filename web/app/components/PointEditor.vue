@@ -46,7 +46,7 @@ async function save() {
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="point ? '编辑点位' : '新增点位'" description="完善点位信息，后续排查时可以直接选择。" :dismissible="!saving" :ui="{ content: 'sm:max-w-2xl' }">
+  <UModal v-model:open="open" :title="point ? '编辑点位' : '新增点位'" description="完善点位信息，后续排查时可以直接选择。" :dismissible="!saving" :close="!saving" :ui="{ content: 'sm:max-w-2xl' }">
     <template #body>
       <UAlert v-if="error" :description="error" color="error" variant="subtle" icon="i-lucide-circle-alert" class="mb-5" />
       <UAlert v-if="!loading && (!communities.length || !types.length)" title="请先维护社区和点位类型" description="基础字典为空，完善后就可以新增点位。" color="warning" variant="subtle" class="mb-5"><template #actions><UButton to="/settings" label="前往设置" color="warning" variant="soft" @click="open = false" /></template></UAlert>

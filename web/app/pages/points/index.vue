@@ -20,7 +20,7 @@ const columns: TableColumn<PointDto>[] = [
   { accessorKey: 'lastInspectionDate', header: '最近排查' }, { accessorKey: 'openIssueCount', header: '未闭环问题' }, { id: 'actions', header: '' }
 ]
 async function load() {
-  if (route.path !== '/points') return
+  if (route.path.replace(/\/+$/, '') !== '/points') return
   const version = ++requestVersion
   loading.value = true; error.value = ''
   try {

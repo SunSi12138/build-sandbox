@@ -98,6 +98,8 @@ jobs:
           $executable = if ($IsWindows) { './publish/StreetEcoTool.exe' } else { './publish/StreetEcoTool' }
           python tests/api-smoke.py --executable $executable --report test-results/api-smoke-report.json
           if ($LASTEXITCODE -ne 0) { throw 'NativeAOT API integration tests failed' }
+          python tests/word-smoke.py --executable $executable --report test-results/word-smoke-report.json
+          if ($LASTEXITCODE -ne 0) { throw 'NativeAOT Word integration tests failed' }
       - name: Package executable and wwwroot
         run: python scripts/package.py --rid ${{ matrix.rid }} --publish publish --output dist
       - name: Upload portable package

@@ -32,7 +32,7 @@ function choose(value: 'month' | 'quarter') {
 }
 let requestVersion = 0
 async function load() {
-  if (route.path !== '/exports') return
+  if (route.path.replace(/\/+$/, '') !== '/exports') return
   const version = ++requestVersion
   error.value = ''
   if (!validRange.value) { loading.value = false; result.value = null; return }

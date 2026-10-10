@@ -18,7 +18,7 @@ const columns: TableColumn<InspectionDto>[] = [
   { accessorKey: 'noticeNumber', header: '通知单编号' }, { id: 'actions', header: '' }
 ]
 async function load() {
-  if (route.path !== '/inspections') return
+  if (route.path.replace(/\/+$/, '') !== '/inspections') return
   const current = ++version
   loading.value = true; error.value = ''
   try {

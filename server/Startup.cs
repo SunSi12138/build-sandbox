@@ -172,6 +172,7 @@ internal static class Startup
         Api.Map(app, store);
         PhotoApi.Map(app, store);
         store.MapBackupApi(app);
+        store.MapWordApi(app);
         RequestDelegate systemInfo = context => context.Response.WriteAsJsonAsync(
             new SystemInfoResponse(options.Port, $"http://localhost:{options.Port}", GetLanAddresses(options.Port), DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), "0.1.0"),
             StartupJsonContext.Default.SystemInfoResponse, contentType: null, cancellationToken: context.RequestAborted);

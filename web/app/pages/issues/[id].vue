@@ -31,11 +31,25 @@ const afterPhotos = computed(() => detail.value?.photos.filter(photo => photo.ph
 const reviewImages = computed(() => detail.value?.photos.filter(photo => photo.phase === 'review') ?? [])
 const returnTo = computed(() => {
   const target = queryText(route.query.returnTo)
-  return target === '/issues' || target.startsWith('/issues?') ? target : '/issues'
+  return /^\/issues\/?(?:\?|$)/.test(target) ? target : '/issues'
 })
 const actionLabels = { feedback: '社区反馈', review: '复查闭环', return: '退回待整改' }
+const pageElement = ref<HTMLElement | null>(null)
+const actionModalContent = { onCloseAutoFocus: (event: Event) => event.preventDefault() }
 let requestVersion = 0
+let disposed = false
 useHead({ title: computed(() => issue.value ? `${issue.value.pointName} · 整改跟踪` : '问题详情') })
+
+async function restoreActionFocus() {
+  // Persistent photo dialogs do not emit closeAutoFocus. Reka emits after-leave
+  // before changing presence, so wait for that update before restoring focus.
+  await nextTick()
+  await nextTick()
+  if (disposed || !issue.value || !pageElement.value?.isConnected || feedbackOpen.value || reviewOpen.value || returnOpen.value || editOpen.value) return
+  const action = { pending: 'feedback-open', feedback: 'review-open', closed: 'return-open' }[issue.value.status]
+  const target = pageElement.value.querySelector<HTMLElement>(`[data-testid="${action}"]`) ?? document.getElementById('main-content')
+  target?.focus({ preventScroll: true })
+}
 
 async function fetchDetail() {
   const version = ++requestVersion
@@ -145,11 +159,11 @@ watch(() => route.params.id, () => {
   reviewPhotos.value = []
   void fetchDetail()
 }, { immediate: true })
-onBeforeUnmount(() => { requestVersion++ })
+onBeforeUnmount(() => { disposed = true; requestVersion++ })
 </script>
 
 <template>
-  <div class="page-stack">
+  <div ref="pageElement" class="page-stack">
     <div><UButton :to="returnTo" icon="i-lucide-arrow-left" color="neutral" variant="ghost" class="min-h-12 -ml-2">返回问题清单</UButton></div>
     <PageHeader :title="issue?.pointName || '问题详情'" eyebrow="整改跟踪" :description="issue ? `${issue.communityName} · ${issue.inspectionDate} 排查发现` : '查看问题情况与办理记录。'">
       <template v-if="issue" #actions><UBadge :color="statusColor(issue.status)" size="lg" variant="subtle">{{ statusLabel(issue.status) }}</UBadge></template>
@@ -233,7 +247,7 @@ onBeforeUnmount(() => { requestVersion++ })
       </UCard>
     </template>
 
-    <UModal v-model:open="feedbackOpen" title="记录社区反馈" description="记录社区反馈的整改情况，保存后进入待复查阶段。" :dismissible="!saving && !feedbackBusy" :close="!saving && !feedbackBusy" :unmount-on-hide="false" :ui="{ content: 'sm:max-w-2xl' }">
+    <UModal v-model:open="feedbackOpen" title="记录社区反馈" description="记录社区反馈的整改情况，保存后进入待复查阶段。" :dismissible="!saving && !feedbackBusy" :close="!saving && !feedbackBusy" :unmount-on-hide="false" :content="actionModalContent" :ui="{ content: 'sm:max-w-2xl' }" @after:leave="restoreActionFocus">
       <template #body>
         <UForm id="issue-feedback-form" :state="feedback" :validate="validateFeedback" class="space-y-5" @submit="saveFeedback">
           <UAlert v-if="actionError" :description="actionError" color="error" variant="subtle" />
@@ -245,7 +259,7 @@ onBeforeUnmount(() => { requestVersion++ })
       <template #footer><div class="flex w-full justify-end gap-3"><UButton color="neutral" variant="outline" size="xl" class="min-h-12" :disabled="saving || feedbackBusy" @click="feedbackOpen = false">暂不提交</UButton><UButton form="issue-feedback-form" data-testid="feedback-save" type="submit" size="xl" class="min-h-12" :loading="saving" :disabled="feedbackBusy">保存反馈</UButton></div></template>
     </UModal>
 
-    <UModal v-model:open="reviewOpen" title="复查闭环" description="核实整改效果后，填写现场复查结论。照片可选。" :dismissible="!saving && !reviewBusy" :close="!saving && !reviewBusy" :unmount-on-hide="false" :ui="{ content: 'sm:max-w-2xl' }">
+    <UModal v-model:open="reviewOpen" title="复查闭环" description="核实整改效果后，填写现场复查结论。照片可选。" :dismissible="!saving && !reviewBusy" :close="!saving && !reviewBusy" :unmount-on-hide="false" :content="actionModalContent" :ui="{ content: 'sm:max-w-2xl' }" @after:leave="restoreActionFocus">
       <template #body>
         <UForm id="issue-review-form" :state="review" :validate="validateReview" class="space-y-5" @submit="saveReview">
           <UAlert v-if="actionError" :description="actionError" color="error" variant="subtle" />
@@ -257,7 +271,7 @@ onBeforeUnmount(() => { requestVersion++ })
       <template #footer><div class="flex w-full justify-end gap-3"><UButton color="neutral" variant="outline" size="xl" class="min-h-12" :disabled="saving || reviewBusy" @click="reviewOpen = false">暂不提交</UButton><UButton form="issue-review-form" data-testid="review-save" type="submit" size="xl" class="min-h-12" :loading="saving" :disabled="reviewBusy">确认复查闭环</UButton></div></template>
     </UModal>
 
-    <UModal v-model:open="returnOpen" title="退回待整改？" description="问题将重新进入待整改状态，原有办理记录和照片会继续保留。" :dismissible="!saving" :close="!saving">
+    <UModal v-model:open="returnOpen" title="退回待整改？" description="问题将重新进入待整改状态，原有办理记录和照片会继续保留。" :dismissible="!saving" :close="!saving" :content="actionModalContent" @after:leave="restoreActionFocus">
       <template #body><UForm id="issue-return-form" :state="returnForm" class="space-y-4" @submit="saveReturn"><UAlert v-if="actionError" :description="actionError" color="error" variant="subtle" /><UFormField label="退回原因（可选）" name="reason"><UTextarea v-model="returnForm.reason" data-testid="return-reason" :rows="4" :maxlength="8000" placeholder="说明还需整改的问题，便于下一次跟进。" size="xl" class="w-full" :disabled="saving" /></UFormField></UForm></template>
       <template #footer><div class="flex w-full justify-end gap-3"><UButton color="neutral" variant="outline" size="xl" class="min-h-12" :disabled="saving" @click="returnOpen = false">取消</UButton><UButton form="issue-return-form" data-testid="return-save" type="submit" color="warning" size="xl" class="min-h-12" :loading="saving">确认退回</UButton></div></template>
     </UModal>
