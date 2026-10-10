@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
@@ -14,6 +15,9 @@ public sealed partial class Store
         WHERE ($q='' OR p.name LIKE $like OR p.address LIKE $like OR p.contact LIKE $like)
         AND ($community='' OR p.community_id=$community) AND ($type='' OR p.type_id=$type)
         AND ($disabled='all' OR p.disabled=$inactive)
+        AND ($missed=0 OR (p.disabled=0 AND p.frequency<>'irregular' AND NOT EXISTS (
+            SELECT 1 FROM inspections n WHERE n.point_id=p.id AND n.inspection_date<=$today
+            AND n.inspection_date >= CASE p.frequency WHEN 'weekly' THEN $week WHEN 'monthly' THEN $month WHEN 'quarterly' THEN $quarter END)))
         """;
 
     private static PointDto ReadPoint(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
@@ -38,13 +42,18 @@ public sealed partial class Store
             if (query.Disabled is not ("all" or "true" or "false")) throw new ApiException(400, "停用筛选必须是 all、true 或 false。");
             var q = Text(query.Q, "搜索内容", 200);
             var (page, pageSize) = Paging(query.Page, query.PageSize);
+            var today = DateOnly.FromDateTime(DateTime.Today);
             (string Name, object? Value)[] parameters = [("$q", q), ("$like", "%" + q + "%"), ("$community", query.CommunityId ?? ""),
-                ("$type", query.TypeId ?? ""), ("$disabled", query.Disabled), ("$inactive", query.Disabled == "true" ? 1 : 0)];
+                ("$type", query.TypeId ?? ""), ("$disabled", query.Disabled), ("$inactive", query.Disabled == "true" ? 1 : 0),
+                ("$missed", query.Missed ? 1 : 0), ("$today", today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                ("$week", ReminderRules.PeriodStart("weekly", today)!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                ("$month", ReminderRules.PeriodStart("monthly", today)!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                ("$quarter", ReminderRules.PeriodStart("quarterly", today)!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))];
             int total;
             using (var count = Command("SELECT COUNT(*) FROM points p " + PointWhere, null, parameters)) total = Convert.ToInt32(count.ExecuteScalar());
             var ordering = query.Recent ? " ORDER BY 13 DESC,p.rowid DESC " : " ORDER BY p.name COLLATE NOCASE,p.rowid ";
             using var command = Command(PointSelect + " " + PointWhere + ordering + " LIMIT $limit OFFSET $offset;", null,
-                [.. parameters, ("$today", Today), ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]);
+                [.. parameters, ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]);
             using var rows = command.ExecuteReader();
             var items = new List<PointDto>();
             while (rows.Read()) items.Add(ReadPoint(rows));

@@ -12,6 +12,7 @@ import base64
 import contextlib
 import datetime as dt
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -171,7 +172,7 @@ class ApiSmoke:
     def fingerprint(self) -> dict:
         return {
             "database": database_rows(self.data / "app.db"),
-            "photos": {str(path.relative_to(self.data / "photos")): hashlib.sha256(path.read_bytes()).hexdigest()
+            "photos": {path.relative_to(self.data / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                        for path in sorted((self.data / "photos").rglob("*")) if path.is_file()},
         }
 
@@ -204,6 +205,24 @@ class ApiSmoke:
         headers, payload = self.request("GET", "/photos/" + photo["id"])
         require(headers.get("Content-Type", "").startswith("image/jpeg") and payload == JPEG, "Photo response changed the stored JPEG bytes or media type")
         return photo
+
+    def reject_oversized_photo(self) -> None:
+        # Kestrel correctly rejects a declared oversized body before reading it.
+        # urllib would still transmit 10 MB and can hit BrokenPipe before seeing
+        # the 413 response. Expect/continue lets us inspect the rejection itself.
+        origin = urllib.parse.urlsplit(self.origin)
+        started = time.monotonic()
+        with contextlib.closing(http.client.HTTPConnection(origin.hostname, origin.port, timeout=20)) as connection:
+            connection.putrequest("PUT", "/api/photos?phase=site")
+            connection.putheader("Content-Type", "image/jpeg")
+            connection.putheader("Content-Length", str(10 * 1024 * 1024 + 1))
+            connection.putheader("Expect", "100-continue")
+            connection.endheaders()
+            response = connection.getresponse()
+            payload = response.read()
+            self.report["requests"].append({"method": "PUT", "path": "/api/photos?phase=site", "status": response.status,
+                                            "declaredBytes": 10 * 1024 * 1024 + 1, "ms": round((time.monotonic() - started) * 1000)})
+            require(response.status == 413, "Oversized photo must be rejected before its body is transmitted: " + payload[:500].decode("utf-8", errors="replace"))
 
     def test_startup_and_settings(self) -> None:
         require((self.data / "app.db").is_file(), "Database was not created next to the copied executable")
@@ -267,7 +286,7 @@ class ApiSmoke:
         self.json("DELETE", "/api/points/" + self.point["id"] + "?confirm=true", expected=409)
         self.json("PUT", "/api/photos?phase=site", raw=b"not-a-jpeg", content_type="image/jpeg", expected=400)
         self.json("PUT", "/api/photos?phase=unknown", raw=JPEG, content_type="image/jpeg", expected=400)
-        self.request("PUT", "/api/photos?phase=site", raw=JPEG + bytes(10 * 1024 * 1024 + 1), content_type="image/jpeg", expected=413)
+        self.reject_oversized_photo()
         before = self.fingerprint()
         self.json("POST", "/api/inspections", self.inspection_body(self.point["id"], date=self.today + dt.timedelta(days=1)), expected=400)
         empty_issues = {**self.inspection_body(self.point["id"]), "result": "issues"}
@@ -337,6 +356,7 @@ class ApiSmoke:
         require(closed2["issue"]["status"] == "closed" and review_photo["id"] in ids(closed2["photos"]), "Review photo was not retained on closure")
 
     def test_dashboard(self) -> None:
+        baseline = self.json("GET", "/api/dashboard")
         starts = {"weekly": self.today - dt.timedelta(days=self.today.weekday()), "monthly": self.today.replace(day=1),
                   "quarterly": self.today.replace(month=((self.today.month - 1) // 3) * 3 + 1, day=1)}
         due_points, satisfied_points = set(), set()
@@ -347,6 +367,8 @@ class ApiSmoke:
             self.create_inspection(current["id"], date=start)
             due_points.add(missed["id"])
             satisfied_points.add(current["id"])
+            count = self.json("GET", "/api/dashboard")["missedInspections"]["count"]
+            require(count == baseline["missedInspections"]["count"] + len(due_points), frequency + " reminder did not distinguish previous and current calendar periods")
         never = self.create_point("测试从未排查", "weekly")
         disabled = self.create_point("测试停用提醒", "weekly", disabled=True)
         irregular = self.create_point("测试不定期提醒")
@@ -354,6 +376,7 @@ class ApiSmoke:
         satisfied_points.update((disabled["id"], irregular["id"]))
         self.future_point = self.create_point("测试未来记录不充抵周期", "weekly")
         self.future_inspection = self.create_inspection(self.future_point["id"])
+        satisfied_points.add(self.future_point["id"])
         deadline_point = self.create_point("测试期限边界")
         self.deadline_issues = {}
         for key, offset, status in (("overdue", -1, "pending"), ("today", 0, "pending"), ("third", 3, "pending"), ("fourth", 4, "pending"), ("feedback", -1, "feedback"), ("closed", -1, "closed")):
@@ -366,13 +389,17 @@ class ApiSmoke:
         dashboard = self.json("GET", "/api/dashboard")
         require(dashboard["today"] == day(self.today), "Dashboard changed the local calendar date")
         for group in ("overdue", "dueSoon", "awaitingReview", "missedInspections"):
-            require(dashboard[group]["count"] >= len(dashboard[group]["items"]), "Reminder counts disagree with returned items")
-        require(due_points.issubset(ids(dashboard["missedInspections"]["items"])), "Weekly/monthly/quarterly/missing-record reminders are incomplete")
+            require(dashboard[group]["count"] >= len(dashboard[group]["items"]) and len(dashboard[group]["items"]) <= 8, "Reminder counts disagree with the eight-item homepage preview")
+        require(dashboard["missedInspections"]["count"] == baseline["missedInspections"]["count"] + len(due_points), "Missing-record, disabled or irregular inspection reminders are incorrect")
         require(not satisfied_points.intersection(ids(dashboard["missedInspections"]["items"])), "Current-period, disabled or irregular points generated false reminders")
         fixture_ids = set(self.deadline_issues.values())
-        require(ids(dashboard["overdue"]["items"]) & fixture_ids == {self.deadline_issues["overdue"], self.deadline_issues["feedback"]}, "Overdue reminders must include unclosed feedback and exclude closed issues")
-        require(ids(dashboard["dueSoon"]["items"]) & fixture_ids == {self.deadline_issues["today"], self.deadline_issues["third"]}, "Due-soon window must include today and +3, and exclude overdue and +4")
-        require(ids(dashboard["awaitingReview"]["items"]) & fixture_ids == {self.deadline_issues["feedback"]}, "Awaiting-review group is not restricted to feedback status")
+        # Homepage previews are capped at eight entries; complete counts and
+        # filtered lists remain authoritative even when demo rows precede ours.
+        for group, expected in (("overdue", {self.deadline_issues["overdue"], self.deadline_issues["feedback"]}),
+                                ("dueSoon", {self.deadline_issues["today"], self.deadline_issues["third"]}),
+                                ("awaitingReview", {self.deadline_issues["feedback"]})):
+            require(dashboard[group]["count"] == baseline[group]["count"] + len(expected), group + " reminder count does not match deadline/status boundaries")
+            require((ids(dashboard[group]["items"]) & fixture_ids).issubset(expected), group + " preview contains an ineligible issue")
         for query, expected in (({"overdue": "true"}, {self.deadline_issues["overdue"], self.deadline_issues["feedback"]}), ({"dueSoon": "true"}, {self.deadline_issues["today"], self.deadline_issues["third"]}), ({"status": "feedback"}, {self.deadline_issues["feedback"]})):
             query["communityId"] = self.community["id"]
             query["pageSize"] = 100
@@ -442,7 +469,7 @@ class ApiSmoke:
         preserved = (self.data / restored["preservedBackup"]).resolve()
         require(preserved.is_relative_to((self.data / "backup").resolve()), "Preserved backup path escaped the backup directory")
         require(database_rows(preserved / "app.db") == current["database"], "Pre-restore database was not preserved intact")
-        preserved_photos = {str(path.relative_to(preserved / "photos")): hashlib.sha256(path.read_bytes()).hexdigest()
+        preserved_photos = {path.relative_to(preserved / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in sorted((preserved / "photos").rglob("*")) if path.is_file()}
         require(preserved_photos == current["photos"], "Pre-restore photos were not preserved intact")
 
@@ -456,6 +483,7 @@ class ApiSmoke:
 
     def test_cleanup_and_restart(self) -> None:
         old_orphan, recent_orphan = self.upload(), self.upload()
+        missed_before = self.json("GET", "/api/dashboard")["missedInspections"]["count"]
         photo_paths = {row[0]: self.data / "photos" / row[1] for row in self.sql_rows("SELECT id,relative_path FROM photos WHERE id IN (?, ?, ?)", (old_orphan["id"], recent_orphan["id"], self.normal_photo["id"]))}
         self.stop()
         old_stamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=8)).isoformat(timespec="seconds")
@@ -474,8 +502,9 @@ class ApiSmoke:
         require(photo_paths[recent_orphan["id"]].exists(), "Cleanup removed an orphan younger than seven days")
         require(photo_paths[self.normal_photo["id"]].exists(), "Cleanup removed an old associated evidence photo")
         require(self.json("GET", "/api/settings") == self.settings, "Restart lost persisted settings or --seed-demo overwrote them")
-        missed = ids(self.json("GET", "/api/dashboard")["missedInspections"]["items"])
-        require(self.future_point["id"] in missed, "A future-dated imported record incorrectly satisfied this week's inspection")
+        missed_after = self.json("GET", "/api/dashboard")["missedInspections"]["count"]
+        require(missed_after == missed_before + 1, "A future-dated imported record incorrectly satisfied this week's inspection")
+        require(self.json("GET", "/api/points/" + self.future_point["id"])["point"]["lastInspectionDate"] is None, "Point history incorrectly uses a future record as the latest completed inspection")
         before = self.fingerprint()
         self.stop()
         self.start(seed=True)

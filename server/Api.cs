@@ -73,7 +73,7 @@ public static class Api
         app.MapDelete("/api/point-types/{id}", deleteType);
 
         RequestDelegate points = context => Write(context, store.ListPoints(new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"),
-            Query(context, "disabled") ?? "false", Number(context, "page", 1), Number(context, "pageSize", 30), Flag(context, "recent"))), AppJsonContext.Default.PointPage);
+            Query(context, "disabled") ?? "false", Number(context, "page", 1), Number(context, "pageSize", 30), Flag(context, "recent"), Flag(context, "missed"))), AppJsonContext.Default.PointPage);
         RequestDelegate point = context => Write(context, store.GetPointDetail(Id(context)), AppJsonContext.Default.PointDetailDto);
         RequestDelegate createPoint = async context => await Write(context, store.SavePoint(null, await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto, 201);
         RequestDelegate updatePoint = async context => await Write(context, store.SavePoint(Id(context), await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto);
