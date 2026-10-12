@@ -248,6 +248,81 @@ public sealed class StoreV2Tests
     }
 
     [Fact]
+    public void AwaitingReviewIncludesMixedInspectionsAndMatchesDashboardProblemCounts()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var point = environment.CreatePoint(store);
+        var yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var mixed = store.CreateInspection(new(point.Id, yesterday, "检查人", "issues", Issues:
+            [new("逾期待整改", "整改", yesterday), new("今日待复查", "整改", Store.Today), new("已闭环", "整改", yesterday)]));
+        store.RecordFeedback(mixed.Issues[1].Id, new(Store.Today, "已整改"));
+        store.RecordFeedback(mixed.Issues[2].Id, new(Store.Today, "已整改"));
+        store.ReviewAndClose(mixed.Issues[2].Id, new(Store.Today, "通过"));
+        var feedback = store.CreateInspection(new(point.Id, yesterday, "检查人", "issues", Issues: [new("逾期待复查", "整改", yesterday)]));
+        store.RecordFeedback(feedback.Issues[0].Id, new(Store.Today, "已整改"));
+
+        var result = store.ListInspections(new(AwaitingReview: true));
+        Assert.Equal(2, result.Total);
+        Assert.Equal(store.GetDashboard().AwaitingReview.Count, result.MatchingIssueCount);
+        Assert.Equal(2, result.MatchingIssueCount);
+        Assert.Equal("pending", Assert.Single(result.Items, item => item.Id == mixed.Inspection.Id).RectifyStatus);
+        Assert.Equal("feedback", Assert.Single(result.Items, item => item.Id == feedback.Inspection.Id).RectifyStatus);
+        var page = store.ListInspections(new(PageSize: 1, AwaitingReview: true));
+        Assert.Single(page.Items);
+        Assert.Equal(2, page.MatchingIssueCount);
+        var counts = store.GetInspectionCounts(new(Rectify: "closed", AwaitingReview: true));
+        Assert.Equal(new InspectionCountsDto(2, 0, 1, 1, 0, 2), counts);
+
+        // All problem filters must apply to the same problem, not different
+        // problems in an inspection that happens to contain both states.
+        var overdue = store.ListInspections(new(Overdue: true, AwaitingReview: true, OpenOnly: true));
+        Assert.Equal(feedback.Inspection.Id, Assert.Single(overdue.Items).Id);
+        Assert.Equal(1, overdue.MatchingIssueCount);
+        var soon = store.ListInspections(new(DueSoon: true, AwaitingReview: true));
+        Assert.Equal(mixed.Inspection.Id, Assert.Single(soon.Items).Id);
+        Assert.Equal(1, soon.MatchingIssueCount);
+        Assert.Equal(new InspectionCountsDto(1, 0, 1, 0, 0, 1), store.GetInspectionCounts(new(DueSoon: true, AwaitingReview: true)));
+    }
+
+    [Fact]
+    public void OpenOnlyIncludesPendingAndFeedbackWithoutNormalOrFullyClosedInspections()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var point = environment.CreatePoint(store);
+        var pending = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待整改", "整改", Store.Today)]));
+        var feedback = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待复查", "整改", Store.Today)]));
+        store.RecordFeedback(feedback.Issues[0].Id, new(Store.Today, "已整改"));
+        var mixed = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues:
+            [new("待整改", "整改", Store.Today), new("待复查", "整改", Store.Today), new("已闭环", "整改", Store.Today)]));
+        store.RecordFeedback(mixed.Issues[1].Id, new(Store.Today, "已整改"));
+        store.RecordFeedback(mixed.Issues[2].Id, new(Store.Today, "已整改"));
+        store.ReviewAndClose(mixed.Issues[2].Id, new(Store.Today, "通过"));
+        var closed = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("全部闭环", "整改", Store.Today)]));
+        store.RecordFeedback(closed.Issues[0].Id, new(Store.Today, "已整改"));
+        store.ReviewAndClose(closed.Issues[0].Id, new(Store.Today, "通过"));
+        var normal = store.CreateInspection(new(point.Id, Store.Today, "检查人", "normal"));
+
+        var result = store.ListInspections(new(OpenOnly: true));
+        Assert.Equal(3, result.Total);
+        Assert.Equal(4, result.MatchingIssueCount);
+        Assert.Contains(result.Items, item => item.Id == pending.Inspection.Id);
+        Assert.Contains(result.Items, item => item.Id == feedback.Inspection.Id);
+        Assert.Contains(result.Items, item => item.Id == mixed.Inspection.Id);
+        Assert.DoesNotContain(result.Items, item => item.Id == closed.Inspection.Id || item.Id == normal.Inspection.Id);
+        Assert.Equal(new InspectionCountsDto(3, 0, 2, 1, 0, 4), store.GetInspectionCounts(new(Rectify: "closed", OpenOnly: true)));
+        Assert.Equal(4, store.ListInspections(new(PageSize: 1, OpenOnly: true)).MatchingIssueCount);
+        var all = store.ListInspections(new());
+        Assert.Equal(5, all.Total);
+        Assert.Equal(6, all.MatchingIssueCount);
+        var awaiting = store.ListInspections(new(AwaitingReview: true, OpenOnly: true));
+        Assert.Equal(2, awaiting.Total);
+        Assert.Equal(store.GetDashboard().AwaitingReview.Count, awaiting.MatchingIssueCount);
+        Assert.Equal(2, awaiting.MatchingIssueCount);
+    }
+
+    [Fact]
     public void PointPhotosAreCappedAndAssociatedOldPhotosAreNeverOrphanCleaned()
     {
         using var environment = new V2Environment();

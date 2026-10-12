@@ -155,8 +155,12 @@ class WordSmoke(api_smoke.ApiSmoke):
     def long_text(self):
         description = "逐段核验：围挡内堆放材料，需覆盖裸露区域并清运垃圾。" * 140
         self.create_inspection(self.point["id"], issues=[self.issue_body(description, self.today - dt.timedelta(days=1))])
-        text, _, _ = self.download(self.ledger_route, "ledger-long-text.docx")
-        require(description in text, "Long issue description was truncated in Word export")
+        text, _, document = self.download(self.ledger_route, "ledger-long-text.docx")
+        table = next(table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 9)
+        continued = [row for row in table.findall(W + "tr") if len(row.findall(W + "tc")) == 9 and "".join(row.findall(W + "tc")[0].itertext()) == "3"]
+        require(len(continued) > 1, "An oversized Word row must continue as separately bounded rows")
+        combined = "".join("".join(row.findall(W + "tc")[4].itertext()) for row in continued)
+        require(combined == description, "Long issue description was truncated in Word export")
         require("共 3 条，已闭环 1，待复查 0，待整改 2，其中逾期 1" in text, "Long ledger summary is wrong")
         require(not list((self.data.parent / "temp").glob("*.docx")), "Completed downloads left temporary DOCX files")
 

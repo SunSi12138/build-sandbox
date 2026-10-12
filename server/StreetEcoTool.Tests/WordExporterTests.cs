@@ -225,6 +225,51 @@ public sealed class WordExporterTests
     }
 
     [Fact]
+    public void OversizedLedgerRowsContinueWithTheSameNumberAndPreserveEveryCharacterAndLineBreak()
+    {
+        var description = string.Concat(Enumerable.Repeat("逐段核验🌿：围挡内堆放材料，需覆盖裸露区域并清运垃圾。\r\n", 150));
+        var feedback = "反馈首行\n" + new string('核', 3400) + "\n反馈末行🌿";
+        var issue = Issue("long", description, "完整保留整改要求", "2026-10-12", "feedback") with
+            { FeedbackDate = "2026-10-11", FeedbackNotes = feedback };
+        using var package = new Package(Render(stream => WordExporter.WriteLedger(stream,
+            new("2026-10-01", "2026-10-31", "东苑社区", [issue, Issue("short", "普通问题保持一行", "清理", "2026-10-12")], [], false), Settings())));
+        ValidatePackage(package);
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 9);
+        var rows = table.Elements(W + "tr").ToArray();
+        var continued = rows.Where(row => row.Elements(W + "tc").Count() == 9 && Text(row.Elements(W + "tc").First()) == "1").ToArray();
+        Assert.True(continued.Length > 1);
+        Assert.Equal(description.Replace("\r\n", "\n", StringComparison.Ordinal), string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(4)))));
+        Assert.Equal("2026-10-11\n" + feedback, string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(7)))));
+        Assert.All(continued, row =>
+        {
+            Assert.Equal("1", Text(row.Elements(W + "tc").First()));
+            Assert.NotNull(row.Element(W + "trPr")?.Element(W + "cantSplit"));
+            Assert.True(CellLines(row.Elements(W + "tc").ElementAt(4)).EnumerateRunes().Count() < 600);
+        });
+        Assert.Single(rows, row => row.Elements(W + "tc").Count() == 9 && Text(row.Elements(W + "tc").First()) == "2");
+        Assert.NotNull(rows[0].Element(W + "trPr")?.Element(W + "tblHeader"));
+        Assert.Single(rows[^1].Elements(W + "tc"));
+        Assert.Equal("共 2 条，已闭环 0，待复查 1，待整改 1，其中逾期 0", Text(rows[^1]));
+    }
+
+    [Fact]
+    public void OversizedRecordIssueRowsPreserveDescriptionAndRequirementInIndependentColumns()
+    {
+        var description = new string('查', 3400) + "🌿末行\n";
+        var requirement = "首行\n" + new string('整', 3600) + "\n最后要求";
+        var detail = Inspection();
+        detail = detail with { Issues = [detail.Issues[0] with { Description = description, Requirement = requirement }] };
+        using var package = new Package(Render(stream => WordExporter.WriteRecord(stream, detail, Settings(), [])));
+        ValidatePackage(package);
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 5);
+        var rows = table.Elements(W + "tr").Skip(1).ToArray();
+        Assert.True(rows.Length > 1);
+        Assert.Equal(description, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(1)))));
+        Assert.Equal(requirement, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(2)))));
+        Assert.All(rows, row => Assert.Equal("1", Text(row.Elements(W + "tc").First())));
+    }
+
+    [Fact]
     public void LedgerPhotoAppendixUsesSharedSitePhotosPerIssueAndIncludesFeedbackAndReview()
     {
         using var files = new TemporaryFiles();
@@ -496,6 +541,8 @@ public sealed class WordExporterTests
     }
 
     private static string Text(XContainer element) => string.Concat(element.Descendants(W + "t").Select(text => text.Value));
+    private static string CellLines(XContainer element) => string.Concat(element.Descendants()
+        .Where(node => node.Name == W + "t" || node.Name == W + "br").Select(node => node.Name == W + "br" ? "\n" : node.Value));
     private static long Number(XElement element, XName attribute) => long.Parse((string?)element.Attribute(attribute) ?? throw new InvalidDataException("Required numeric attribute missing."), CultureInfo.InvariantCulture);
     private static string Alignment(XElement paragraph, XDocument styles)
     {

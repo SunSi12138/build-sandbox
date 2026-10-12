@@ -35,7 +35,7 @@ public sealed record PointReminderGroupDto(int Count, PointDto[] Items);
 public sealed record DashboardDto(string Today, IssueReminderGroupDto Overdue, IssueReminderGroupDto DueSoon, IssueReminderGroupDto AwaitingReview, PointReminderGroupDto MissedInspections, InspectionDto[]? Todos = null, InspectionDto[]? RecentInspections = null);
 
 public sealed record PointQuery(string? Q = null, string? CommunityId = null, string? TypeId = null, string Disabled = "false", int Page = 1, int PageSize = 30, bool Recent = false, bool Missed = false, string Temporary = "false");
-public sealed record InspectionQuery(string? PointId = null, string? CommunityId = null, string? From = null, string? To = null, string? Q = null, int Page = 1, int PageSize = 30, string? Rectify = null, bool Overdue = false, bool DueSoon = false, string? TypeId = null, bool Temporary = false);
+public sealed record InspectionQuery(string? PointId = null, string? CommunityId = null, string? From = null, string? To = null, string? Q = null, int Page = 1, int PageSize = 30, string? Rectify = null, bool Overdue = false, bool DueSoon = false, string? TypeId = null, bool Temporary = false, bool AwaitingReview = false, bool OpenOnly = false);
 public sealed record IssueQuery(string? Status = null, string? CommunityId = null, string? PointId = null, string? InspectionId = null, bool Overdue = false, bool DueSoon = false, string? From = null, string? To = null, string? Q = null, int Page = 1, int PageSize = 30);
 
 

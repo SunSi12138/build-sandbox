@@ -483,6 +483,75 @@ public static class WordExporter
         private void CellRow(Cell[] cells, int[] widths, bool header = false, bool keepWithNext = false, int fontSize = 21)
         {
             if (cells.Sum(cell => cell.Span) != widths.Length) throw new InvalidDataException("表格列宽不正确。");
+            if (!header && cells.Length > 1)
+            {
+                var column = 0;
+                var fragments = cells.Select(cell =>
+                {
+                    var width = widths.Skip(column).Take(cell.Span).Sum();
+                    column += cell.Span;
+                    return CellTextFragments(cell.Text, width, fontSize);
+                }).ToArray();
+                var count = fragments.Max(parts => parts.Length);
+                if (count > 1)
+                {
+                    // Word clips a cantSplit row which is taller than a page (MS-OI29500, 17.4.6).
+                    // Continue oversized logical rows as bounded physical rows, retaining their labels/number.
+                    for (var part = 0; part < count; part++)
+                    {
+                        var continued = cells.Select((cell, index) => cell with
+                        {
+                            Text = part < fragments[index].Length ? fragments[index][part] :
+                                fragments[index].Length == 1 && (cell.Header || index == 0 &&
+                                    int.TryParse(cell.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _)) ? cell.Text : ""
+                        }).ToArray();
+                        WriteCellRow(continued, widths, fontSize: fontSize);
+                    }
+                    return;
+                }
+            }
+            WriteCellRow(cells, widths, header, keepWithNext, fontSize);
+        }
+
+        private string[] CellTextFragments(string text, int width, int fontSize)
+        {
+            var value = XmlText(text).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+            // Count every Unicode scalar as a full-width character; this deliberately overestimates Latin text.
+            // A two-font-height line allowance leaves room for repeated headings and CJK fallback font metrics.
+            var columns = Math.Max(1, (width - 200) / (fontSize * 10));
+            var maximumLines = _landscape ? 18 : 28;
+            var fragments = new List<string>();
+            var start = 0;
+            var offset = 0;
+            var line = 1;
+            var occupied = 0;
+            foreach (var rune in value.EnumerateRunes())
+            {
+                var newline = rune.Value == '\n';
+                var units = rune.Value == '\t' ? 4 : 1;
+                var wraps = occupied > 0 && occupied + units > columns;
+                if ((newline || wraps) && line == maximumLines && offset > start)
+                {
+                    fragments.Add(value[start..offset]);
+                    start = offset;
+                    line = 1;
+                    occupied = 0;
+                    wraps = false;
+                }
+                if (newline) { line++; occupied = 0; }
+                else
+                {
+                    if (wraps) { line++; occupied = 0; }
+                    occupied += units;
+                }
+                offset += rune.Utf16SequenceLength;
+            }
+            fragments.Add(value[start..]);
+            return fragments.ToArray();
+        }
+
+        private void WriteCellRow(Cell[] cells, int[] widths, bool header = false, bool keepWithNext = false, int fontSize = 21)
+        {
             Start("tr"); Start("trPr"); Value("cantSplit", "1");
             if (header) Value("tblHeader", "1");
             End();

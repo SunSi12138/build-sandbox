@@ -1,140 +1,281 @@
-# 街道生态环保「排查—整改」留痕工具
+# 街道生态环保工具
 
-开发分支：`hbtool`。在办公室电脑或小主机运行，手机现场录入，电脑跟踪整改，导出 Word 留痕。数据保存在运行程序的电脑上，可整体备份。本工具面向一人使用、偶尔共用同一网址的可信局域网或蒲公英组网环境，不设登录、访问口令、权限体系，不做定位、地图、小程序、统计图表或自动编号，不使用云服务。**构建需要下载依赖；部署后的页面、图标、字体和图片压缩均不依赖外网。** 手机仍须能够连接运行工具的电脑。
+开发分支：`hbtool`，本轮版本 **v2**。在办公室电脑或小主机运行，手机现场录入，电脑处理问题和整治记录，按需导出 Word。导航为 **首页、点位、排查、整治、设置**；问题反馈、复查与退回都在排查详情内完成。
+
+本工具面向一人使用、偶尔共用同一网址的可信局域网或蒲公英组网环境，不设登录、访问口令或权限体系，数据保存在运行程序的电脑上。**构建需要下载依赖；部署后的业务页面、图标、字体与图片压缩均不依赖外网。** 手工打开高德地图或导航链接时需要相应服务，工具不自动定位、不加载地图 SDK、不转换坐标，也不调用云端业务接口。手机须能连接运行工具的电脑。
 
 ## 1. 下载与快速开始
 
-打开 [hbtool 分支构建列表](https://github.com/SunSi12138/build-sandbox/actions/workflows/build.yml?query=branch%3Ahbtool)，选择最新成功运行，在 **Artifacts** 下载对应附件。GitHub 下载的附件 ZIP 内还有实际发布包和同名 `.sha256` 文件，请再解压实际发布包。
+打开 [hbtool 分支构建列表](https://github.com/SunSi12138/build-sandbox/actions/workflows/build.yml?query=branch%3Ahbtool)，选择通过全部验收的运行，在 **Artifacts** 下载附件 **`hbtool`**。GitHub 附件内包含实际发布包 **`hbtool.zip`** 和 **`hbtool.zip.sha256`**；再解压实际发布包。
 
-| 附件 / 发布包 | 用途与实际验证环境 |
-| --- | --- |
-| `hbtool-win-x86` / `hbtool-win-x86.zip` | Windows x86 程序；在 Windows Server 2022 x64 的 WOW64 环境构建并实测 |
-| `hbtool-linux-arm64` / `hbtool-linux-arm64.tar.gz` | ARM64 Linux；在 Ubuntu 24.04 arm64 原生构建并实测 |
-| `hbtool-linux-x64` / `hbtool-linux-x64.tar.gz` | 额外的 Linux x64 验证包；CI 在 Ubuntu 22.04 上运行完整浏览器验收 |
+v2 只分发一个包，同时包含两个平台的可执行文件和一份前端：
 
-解压到可写目录，例如 Windows 的 `D:\hbtool` 或 Linux 的 `~/hbtool`。不要在压缩包内部直接运行，也不要只复制可执行文件而漏掉 `wwwroot`。
+```text
+hbtool/
+  StreetEcoTool-win-x86.exe
+  StreetEcoTool-linux-arm64
+  wwwroot/
+```
 
-| 解压后路径 | 内容 |
-| --- | --- |
-| `hbtool/StreetEcoTool.exe` 或 `hbtool/StreetEcoTool` | 唯一的程序可执行文件，无需安装 .NET Runtime、Node.js 或 SQLite |
-| `hbtool/wwwroot/` | 完整的离线前端，包含本地图标及 WASM |
-| `hbtool/data/` | 首次启动自动创建，包含数据库、照片与备份 |
+解压到可写目录，例如 Windows 的 `D:\hbtool` 或 Linux 的 `~/hbtool`。不要在压缩包内部运行，也不要漏掉 `wwwroot`。按当前系统选择程序，另一个可执行文件可以保留：
 
-Windows 双击 `StreetEcoTool.exe`；Linux 在解压目录执行 `./StreetEcoTool`（如执行权限丢失，先运行 `chmod +x StreetEcoTool`）。程序自动打开 `http://localhost:5180`，并在控制台打印手机可用的 IPv4 地址。没有桌面环境的 Linux 不会尝试打开浏览器。
+| 系统 | 启动方式 | 构建与验收宿主 |
+| --- | --- | --- |
+| Windows | 双击 `StreetEcoTool-win-x86.exe` | Windows Server 2022 x64 的 WOW64 环境 |
+| ARM64 Linux | `./StreetEcoTool-linux-arm64` | Ubuntu 24.04 arm64 原生环境 |
 
-首次使用先进入「设置」填写街道全称、落款单位、默认排查人，添加社区及通知单抬头，再进入「点位」建立点位。手机连接同一局域网，输入控制台或「设置 → 手机访问地址」显示的地址，例如 `http://192.168.1.100:5180`。手机上的 `localhost` 指手机自身，不能用它访问办公室电脑。
+Linux 解压工具如未保留执行权限，先运行 `chmod +x StreetEcoTool-linux-arm64`。部署无需安装 .NET Runtime、Node.js 或 SQLite；Linux 的系统库仍须符合产物构建基线。`linux-x64` 仅用于 CI 单元测试与浏览器验收，不放入发布包。
 
-### 运行与浏览器兼容性
+默认端口为 **5180**，默认**仅本机访问**。有桌面环境时程序自动打开 `http://localhost:5180`。首次使用先进入「设置」填写街道全称、落款单位、默认排查人，添加社区及通知单抬头，然后建立常态点位或直接新增临时点位排查。
 
-- Windows 应使用仍在 [.NET 10 官方支持列表](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md)中的版本。客户端优先使用 Windows 11；Windows 10 仅限官方仍支持的 LTSC / Enterprise 分支。**不支持 Windows 7 / 8.1，也没有验证老旧 32 位 Windows 系统。** `win-x86` 表示程序架构，不代表兼容所有旧系统。
-- 本项目 Windows 发布包只依赖系统 DLL / UCRT，没有 `vcruntime*`、`msvcp*` 或独立 SQLite DLL 依赖。支持范围内的现代 Windows 自带 [Universal CRT](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment)，常规部署无需额外安装 VC++ Redistributable；C++ 工具链只在构建时需要。
-- ARM64 发布包以 **Ubuntu 24.04 arm64** 为验收基线。NativeAOT 的 Linux 系统依赖受构建宿主影响；当前产物需要的符号包括 `GLIBC_2.38`，不能据此承诺兼容 Ubuntu 22.04、Debian 12、任意树莓派系统或 Alpine / musl。其他环境应在受支持的目标系统上原生重建并验证，见 [NativeAOT 部署约束](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)。
-- 浏览器最低基线：**Chrome / Edge 111+、Safari / iOS 16.4+、Firefox 128+**，依据 [Tailwind CSS v4 官方要求](https://tailwindcss.com/docs/compatibility)，构建目标与此一致。建议用系统浏览器打开；旧浏览器缺少所需特性时会显示中文升级提示。
+手机使用前，在运行程序的电脑上通过 `localhost` 打开首页，点击右上角「仅本机」，选择所需网卡或「所有网卡」并应用。把浮层中可访问的 IPv4 网址发给手机，例如 `http://192.168.1.100:5180`；手机与该网卡须能互通。手机上的 `localhost` 指手机自身。
 
-## 2. 启动、端口与数据目录
+没有桌面的 ARM64 Linux 应明确开放监听，例如：
 
-程序始终监听 `http://0.0.0.0:{port}`，默认端口 `5180`。在程序同目录创建 `appsettings.json` 即可修改，例如：
+```sh
+./StreetEcoTool-linux-arm64 --no-browser --listen 0.0.0.0
+```
+
+### 系统与浏览器兼容性
+
+- Windows 系统支持范围以 [.NET 10 官方支持列表](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md)为准。`win-x86` 是程序架构，不代表支持所有旧版系统；不支持 Windows 7 / 8.1，未验收老旧 32 位 Windows。
+- v1 Windows 产物核验为系统 DLL / UCRT 依赖，没有独立 SQLite、`vcruntime*` 或 `msvcp*` DLL；v2 的最终依赖核验结果见本文末尾。现代 Windows 的 UCRT 说明见 [Universal CRT 部署文档](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment)。C++ 工具链用于构建，用户部署不需要编译工具链。
+- ARM64 构建基线为 **Ubuntu 24.04 arm64**。NativeAOT 的 Linux 系统依赖受构建宿主影响；v1 产物曾检出 `GLIBC_2.38`，v2 以本轮产物检查为准。不能据构建架构承诺兼容 Ubuntu 22.04、Debian 12、任意树莓派系统或 Alpine / musl；其他环境应按 [NativeAOT 部署约束](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)在目标系统重建并验收。
+- 前端兼容基线为 **Chrome / Edge 111+、Safari / iOS 16.4+、Firefox 128+**，依据 [Tailwind CSS v4 的浏览器要求](https://tailwindcss.com/docs/compatibility)。缺少必要特性的浏览器会显示中文升级提示。自动化使用 CI 的 Chromium，最低版本及真实 iOS 设备没有逐一实测。
+
+## 2. 监听设置、端口与单实例
+
+启动配置的优先级是 **命令行 > 程序同目录 `appsettings.json` > 默认值**。发布包不包含 `appsettings.json`；在界面应用监听设置时会创建或更新它，也可以手工创建：
 
 ```json
-{ "port": 5181 }
+{
+  "port": 5180,
+  "listen": ["127.0.0.1", "192.168.1.100"]
+}
 ```
 
-也可用命令行参数，优先级为 **命令行 > appsettings.json > 5180**：
+`listen` 可包含 `127.0.0.1` 和一个或多个本机 IPv4；`0.0.0.0` 表示所有网卡，必须单独选择。程序枚举当前可用网卡，Docker、VMware、Hyper-V 等接口归在「其他网卡」中。
+
+首页监听浮层显示当前生效的监听、网卡与可访问地址。**只有请求来源为回环地址时可修改监听**：须在运行程序的电脑上使用 `http://localhost:端口` 或 `http://127.0.0.1:端口` 打开；即使在这台电脑上，使用它的局域网 IP 访问也不能修改，其他访问者只能查看地址，接口返回 403。保留「仅本机」选项可继续通过回环地址修改配置。
+
+监听应用后会短暂中断 HTTP 连接，页面检查新监听是否生效；如移除了当前地址，应打开应用结果中的新网址。只选择一个指定网卡前会提示 `localhost` 将不可用。若已经移除回环监听，需在本机编辑配置或使用命令行后重启，恢复本机配置入口。
+
+已保存的 IP 因 DHCP 或网卡变化而失效时，启动会跳过该地址并打印中文警告，浮层提示其当前不可用；没有可用地址时回退到 `127.0.0.1`。端口确实被其他程序占用时仍会提示并退出。
 
 ```powershell
-.\StreetEcoTool.exe --port 5181
-.\StreetEcoTool.exe --no-browser
-.\StreetEcoTool.exe --seed-demo
-.\StreetEcoTool.exe --help
+.\StreetEcoTool-win-x86.exe --port 5181
+.\StreetEcoTool-win-x86.exe --listen 127.0.0.1 --listen 192.168.1.100
+.\StreetEcoTool-win-x86.exe --listen 0.0.0.0 --no-browser
+.\StreetEcoTool-win-x86.exe --seed-demo
+.\StreetEcoTool-win-x86.exe --help
 ```
 
-Linux 将上面的程序名换成 `./StreetEcoTool`。参数可以组合；`--port=5181` 也可用。`--seed-demo` 仅在社区、点位、排查均为空时灌入试用数据，不向已有业务数据重复追加；正式使用时直接不加此参数。
+Linux 使用 `./StreetEcoTool-linux-arm64`。`--port=5181`、`--listen=0.0.0.0` 也可用；`--listen` 可重复，但「所有网卡」不能与其他地址混用。命令行覆盖会在控制台提示；使用带 `--listen` 的快捷方式或服务启动时，下次启动仍以该参数为准，界面保存的配置不会覆盖启动命令。
 
-程序用 `Global\StreetEcoTool` Mutex 保证单实例。再次启动会打开已运行实例的真实端口后退出；加 `--no-browser` 则不打开浏览器。**更换端口前先关闭原实例。** 端口被其他程序占用时会用中文提示并退出。按 `Ctrl+C` 正常结束；SQLite 连接随服务关闭。
+**修改端口须正常关闭程序再启动**，并同步修改手机书签与防火墙规则；监听地址可以在界面应用。`--seed-demo` 仅在社区、点位和排查均为空时写入示例，包括临时点位排查、反馈、已闭环问题和整治记录，不重复追加到已有业务数据。
 
-`wwwroot` 与 `data` 均相对于可执行文件目录解析，与启动时的工作目录无关。`data/app.db` 是数据库，`data/photos/yyyyMM/` 存 JPEG，`data/backup/` 存备份；运行时可能出现 SQLite 的 `-wal` / `-shm` 配套文件。不要将 `data` 放到只读目录，也不要同时用多个程序直接改数据库。业务日期均按**服务器本地日期**处理，请将电脑时区与时钟设为业务所在地时间。
+程序用 `Global\StreetEcoTool` Mutex 保证单实例。再次启动会打开已有实例的真实访问地址后退出；`--no-browser` 可禁止打开浏览器。按 `Ctrl+C`、正常关闭控制台或停止系统服务结束程序。所有运行路径都相对于可执行文件目录，与启动时的工作目录无关。
 
-## 3. 日常工作与提醒规则
+## 3. 点位、排查与整改
 
-1. **排查**：选点位（支持搜索、最近使用）→ 核对日期与排查人 → 选择正常 / 发现问题并登记问题、照片 → 保存。正常排查也生成记录。
-2. **整改**：在「整改跟踪」筛选问题，登记社区反馈的日期、说明与照片，再记录复查结论。复查照片可选，不会因无照片而无法闭环。
-3. **退回**：可退回待整改，原来的反馈、复查、退回说明与照片继续保留在办理历史中；当前轮状态、反馈及闭环字段重置。
-4. **留痕**：在排查详情导出记录单 / 通知单，在「台账导出」按排查日期和社区导出整改台账。列表筛选保存在网址 query 中，刷新、返回可保留。
+### 常态点位与临时点位
 
-首页提醒按自然日计算：「已逾期」为期限早于今天且未闭环；「3 天内到期」包含今天至今天后第 3 天；「待复查」为社区已反馈。周期提醒按**周一开始的本周、自然月、自然季度**判断本期是否有排查，未来日期记录不抵扣。停用、不定期点位不参与周期提醒；停用点位已有的未闭环问题仍须处理。
+「点位」默认显示常态点位，支持社区、类型、停用状态和本期未排查筛选。常态点位可设置每周、每月、每季或不定期，登记地址、联系人、电话、备注和最多 **9 张**点位照片；最早的一张作为封面。
 
-合理默认值：新问题期限预填排查日期后 **7 天**，可以修改；责任单位默认所属社区；通知单编号始终手填、可空。单次排查最多 50 条问题，每次关联最多 100 张照片。已有历史记录的点位 / 字典不能直接删除，点位可停用；所有删除均需再次确认。排查保存时快照点位与社区信息，后续改名不会改变历史排查基本信息。
+新增排查可以选择已有常态点位，也可选择「临时点位」，填写名称、社区、类型、地址等后与排查一起保存。临时点位固定为不定期，不参与周期提醒，默认不混入常态点位列表；排查列表可筛选临时记录。排查、问题或照片校验失败时，临时点位与本次记录一起回滚。
 
-## 4. 照片与手机草稿
+临时点位可以从详情「转为常态」，选择排查频次后进入常态管理，原排查记录与照片仍关联同一地点。删除临时点位的最后一次排查时，会同时清理这个临时点位及其点位照片；常态点位不会因删除最后一条排查而消失。
 
-选图允许拍照或相册、多选，不强制打开相机。前端先按 EXIF 方向解码，长边缩至不超过 **1600 px**，以默认质量 **75** 重新编码 JPEG，再上传；原照片不上传，EXIF（包括位置）不会写入新 JPEG。质量可在设置中调整为 1–100。全局最多并行压缩 2 张，有处理及上传进度；WASM / Worker 失败会自动回退到 canvas JPEG。
+### 经纬度与外部地图
 
-单张**压缩后**照片上限为 10 MiB；复杂场景体积会更大，不保证每张都固定在几百 KB。失败的照片可逐张重试或确认移除；全部上传完成后再保存。浏览器不能解码某些 HEIC / 特殊格式时，请先转为 JPEG / PNG，或使用能解码该图片的浏览器。
+点位可选填**经度、纬度**，必须同时填写或同时留空。输入顺序为经度在前、纬度在后，支持英文逗号、中文逗号、空格或制表符分隔；校验经度 `-180～180`、纬度 `-90～90`，疑似经纬顺序颠倒时给出提示，保存到小数点后 6 位。
 
-新建排查草稿自动写入当前浏览器 `localStorage`，包括文字和**已经上传成功的照片 ID**；尚未上传完的原图在刷新后须重新选择。草稿只属于当前浏览器及网址的协议、主机、端口：从内网 IP 换成蒲公英 IP、改端口、换浏览器 / 手机、清理站点数据，都不会自动带走原草稿。已经保存到服务器的排查仍可从这些网址查看。
+坐标按高德使用的 **GCJ-02** 保存；工具不自动获取 GPS，不在不同坐标系之间转换。已有坐标时可复制坐标，或手工打开地图 / 导航链接；没有坐标时不显示这些入口。照片 EXIF 中的位置不用于填充点位坐标。
 
-超过 **7 天仍未关联**的照片会在启动及每日维护时清理，旧草稿中的此类照片需重新选择。草稿不是正式留痕，也不包含在服务器备份内。部署不使用 Service Worker；断开外网可正常工作，断开与办公室电脑的连接则不能上传、保存或重新拉取业务数据。
+### 排查与问题办理
 
-## 5. Word 导出
+1. **新增排查**：选择点位方式，核对日期与排查人，选择正常或发现问题，填写问题、期限和照片后保存。正常排查同样生成记录。
+2. **反馈**：排查详情按问题显示当前状态；可一次勾选多项待整改问题，统一反馈日期，分别填写说明与整改照片。
+3. **复查**：可勾选多项已反馈问题，统一复查日期，分别填写结论与可选复查照片，保存后闭环。
+4. **退回**：逐项退回待整改，填写退回说明；以往反馈、退回、复查文字与照片继续保留，当前轮反馈及闭环字段重置。
+5. **编辑与删除**：可修改排查日期、排查人、通知单编号和备注。日期不能晚于今天或已有办理日期。删除排查须确认，并级联删除本次问题、办理记录及对应照片和缩略图。
 
-- **排查记录单**：单次基本信息、问题及期限、现场照片、备注。正常记录也可导出。
-- **整改通知单**：该次全部问题、社区抬头、可选手填编号、正文、落款、回执与附后照片；正常排查不生成整改通知单。
-- **整改台账**：横向 A4，选择本月 / 本季 / 自定义排查日期及社区，可附整改前后照片；包含闭环 / 未闭环 / 逾期汇总。反馈、复查、退回的历史文字与照片保留，状态栏反映当前状态。
+一次批量反馈或复查中的所有条目在同一事务内保存。重复问题、错误归属、不符状态、无效日期或任意一张照片关联失败，会使整批撤销；不会只保存前半批。
 
-「设置 → 正文模板」支持 `{日期}`、`{点位}`、`{问题}`、`{期限}`，也支持 `{街道全称}`、`{社区}`。`{日期}` 使用排查日期；`{问题}` 插入该次问题表，省略此占位符也会在正文后补上问题清单。**`{期限}` 为本次全部问题中最晚的期限**，各问题的实际期限仍逐条列明；期限不同时另有说明。街道、落款与正文使用导出时的当前设置，社区抬头与点位基本信息使用排查快照。
+排查列表以**每次排查**为一行，显示问题数、闭环数与最近期限。整改状态按以下规则汇总：正常为「无问题」；有待整改问题为「待整改」；没有待整改但有已反馈问题为「待复查」；全部问题复查完成为「已闭环」。列表支持状态、社区、类型、日期、逾期、临近到期和临时点位筛选，筛选写入网址 query。状态数量依据其他筛选条件计算，切换状态不会把其他状态的计数压成零；「次排查」与「项问题」分开统计。
 
-文档为标准 `.docx`，全部 JPEG 嵌入文件，不依赖外部图片。标题指定方正小标宋简体二号，正文仿宋三号，表格宋体；字体表为标题字体和仿宋声明宋体替代。程序不下载或打包这些字体，查看电脑未安装时由 Word / WPS 使用可用替代字体，分页可能有差异。文件名如 `整改通知单_建设路改造工地_20261010.docx`；台账文件名使用社区及结束日期。
+新问题期限默认排查日期后 **7 天**，可修改；责任单位默认所属社区；通知单编号手填、可空。单次排查最多 50 项问题，关联照片总数最多 100 张。已有引用的点位或字典不能直接删除，可停用点位。排查保存时快照点位名称、类型、社区、抬头、地址和联系人，后续改名不改写历史基本信息。
 
-## 6. 备份、恢复与升级
+### 首页与提醒
 
-**日常请用「设置 → 备份与恢复 → 下载备份 ZIP」保存完整备份**，另存到 U 盘或其他电脑。ZIP 包含通过 `VACUUM INTO` 生成的一致性 `app.db` 快照、登记的照片与备份清单；运行中可以下载。
+首页显示逾期、3 天内到期、待复查和本期未排查数量，待办合并为排查记录，最多显示 5 条，优先展示逾期，其次临近到期和待复查；另有最近 5 次排查。
 
-| 方式 | 包含内容与保留规则 |
+提醒按**服务器本地自然日**计算：期限早于今天且未闭环为逾期；3 天内到期包含今天至今天后第 3 天。周期按周一开始的本周、自然月、自然季度检查是否已有本期排查，未来日期记录不抵扣。停用、不定期及临时点位不参与周期提醒；它们已有的未闭环问题仍参与问题提醒。
+
+## 4. 整治记录
+
+「整治」用于登记卫生清扫、垃圾清运、河道清理等工作，可新建、编辑、删除、查看详情和导出台账。记录包含名称、类型、社区、地点、开始日期与可选结束日期、组织单位、参加单位及人员、整治内容、成效、备注，以及以下可选数量：
+
+| 字段 | 保存规则 |
 | --- | --- |
-| 完整 ZIP | 数据库 + 照片；手动下载，保存多久由你决定 |
-| 每日自动备份 | 仅数据库，`data/backup/auto-yyyy-MM-dd.db`，保留最近 **14 份**，不等于保留全部照片 |
-| 恢复前旧数据 | `data/backup/before-restore-日期时间-标识/` 下的数据库与照片；不会按 14 份规则自动清理 |
+| 参加人数、出动车辆 | 非负整数，可空 |
+| 清运垃圾（吨）、清理面积（㎡） | 非负数，可空，四舍五入保留 2 位小数 |
+| 整治结束日期 | 不得早于开始日期 |
+| 整治前、整治中、整治后照片 | 三组分别最多 20 张 |
 
-每天首次启动自动备份数据库；持续运行时每分钟检查日期，跨日后执行当天维护。维护失败会记录中文日志并重试。数据库快照不能替代完整 ZIP，尤其不能单靠它找回已经删除的照片。
+组织单位默认当前落款单位。整治类型可在设置中管理，预置卫生大扫除、垃圾清运、河道清理、乱堆乱放清理、小广告清除、绿化补种、其他。被引用的类型和社区不能删除；记录保存类型与社区名称快照，字典改名后原记录仍显示保存时的名称。删除整治须确认，并清理其三阶段照片与缩略图。
 
-恢复步骤：选择完整 ZIP → 等待校验并核对时间、点位 / 排查 / 问题 / 照片数量 → 勾选覆盖确认 → 点击「确认覆盖并恢复」。确认有效期 30 分钟；上传包上限 4 GiB、解压总量上限 16 GiB、最多 50,000 个条目。无效数据库、危险路径或缺失照片会被拒绝。覆盖前自动保留原数据，恢复中断后下次启动按恢复日志回滚或完成收尾。
+## 5. 照片与浏览器草稿
 
-手工搬迁或升级时：先下载完整备份，正常停程序，再复制**整个 `data` 文件夹**；更新可执行文件和 `wwwroot` 时保留 `data`。**不要在运行中只热拷 `app.db`，也不要自行删掉 `-wal` 文件**，未检查点的数据可能仍在 WAL 中。恢复前保留的整套旧数据库与照片如需手工回退，也应停机后成套恢复，避免混用不同时间的数据库与照片。
+选图允许拍照或相册、多选，不强制打开相机。前端按 EXIF 方向解码，把主图长边缩至不超过 **1600 px**，默认质量 **75** 重新编码为 JPEG 后上传；原文件不上传，新 JPEG 不写入 EXIF。主图质量可在设置中调整为 1～100。压缩全局最多并行 2 张，有处理和传输进度；WASM / Worker 失败时回退到 canvas JPEG。
 
-## 7. 手机连通、防火墙与固定地址
+同一张图另生成长边不超过 **360 px**、质量 **70** 的 JPEG 缩略图，保存为同目录的 `{id}.thumb.jpg`。列表及画廊预览使用缩略图，查看大图和 Word 使用主图；旧照片没有缩略图时自动回退主图，缩略图失败不阻断主图保存。
 
-手机与电脑须在能互通的局域网，或已加入能互通的蒲公英网络；使用相应网卡的 IPv4 地址和实际端口。工具不负责建立蒲公英连接，也不会调用蒲公英云接口。办公室电脑须保持开机，睡眠会使手机访问中断；访客 Wi-Fi 的设备隔离也可能阻止互访。
+主图压缩后上限为 **10 MiB**，缩略图上限为 **200 KiB**。图片体积随场景变化，不保证固定大小。主图失败可逐张重试或确认移除，主图全部完成后才可保存业务记录。部分浏览器无法解码 HEIC 或其他特殊格式时，请先转换为 JPEG / PNG。
 
-Windows 在管理员 PowerShell 放行实际端口，以下示例覆盖专用 / 域网络，依据 [New-NetFirewallRule 官方参数](https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule)：
+新增排查和新增整治会把文字及已上传成功的照片 ID 写入当前浏览器 `localStorage`；尚未成功的原图，刷新后需要重新选择。草稿只属于当前浏览器及当前网址的协议、主机和端口，换 IP、端口、浏览器或手机不会同步。v2 使用新的草稿格式；旧 v1 排查草稿会清除，服务器中已经保存的业务记录不受影响。
+
+上传后尚未关联业务的照片可暂时没有归属，业务保存时只允许关联一个排查、问题、点位或整治。超过 **7 天仍未关联**的照片在启动和每日维护时清理，旧草稿引用的此类照片需重选。浏览器草稿不包含在服务器备份中。部署不使用 Service Worker；断开外网仍可使用业务页面，断开与办公室电脑的连接则不能上传、保存或重新读取业务数据。
+
+## 6. 七种 Word 导出
+
+详情页导出单份记录，排查列表与整治列表的「导出台账」打开弹窗，移动端使用底部抽屉。台账支持本月、本季、本年、自定义日期和社区筛选；统计覆盖整个所选范围，不受列表分页限制。
+
+| 导出 | 入口与内容 |
+| --- | --- |
+| 排查记录单 | 排查详情；基本情况、问题与期限、现场照片、非空备注，正常排查也可导出 |
+| 整改通知单 | 有问题的排查详情；可选编号、社区抬头、正文、问题表、落款、回执、附后现场照片 |
+| 整改记录单 | 有问题且全部复查闭环的排查详情；逐项反馈、复查、前后及复查照片，有退回时列办理过程，完成日期为最后闭环日期 |
+| 整治记录单 | 整治详情；基本情况、内容、数量、成效、前后与过程照片、非空备注 |
+| 排查台账 | 排查列表选择台账类型；每次排查一行，汇总正常 / 发现问题次数和问题 / 闭环项数 |
+| 整改台账 | 排查列表选择台账类型；每个问题一行，汇总闭环、待复查、待整改和逾期数，可附照片 |
+| 整治台账 | 整治列表；每次整治一行，汇总人数、车辆、垃圾吨数和面积，可附照片 |
+
+仍有问题未闭环时，整改记录单接口返回 400 并说明「尚有 N 项问题未闭环」；正常排查使用排查记录单。台账汇总是主表的最后一行，附照在新页输出。整治台账长内容及成效会截断，全文见整治记录单。
+
+「设置 → 正文模板」支持 `{日期}`、`{点位}`、`{问题}`、`{期限}`、`{街道全称}`、`{社区}`。`{日期}` 是排查日期；`{问题}` 插入问题表，省略时在正文后补问题表；`{期限}` 使用该次最晚的整改期限，每项实际期限仍逐条列明。街道、落款和正文采用导出时当前设置，点位与社区抬头采用排查快照。正文与落款日期写为「2026年10月12日」，表格日期为 `2026-10-12`。
+
+### 统一样式
+
+单据为纵向 A4、四边 2.5 cm；台账为横向 A4、四边 2.0 cm。页脚居中 `— 1 —`，宋体小五。样式约定如下：
+
+| 内容 | 字体与字号 | 排版 |
+| --- | --- | --- |
+| 主标题 | 方正小标宋简体，二号 22 pt | 居中、不加粗，段后 12 pt |
+| 一级标题 | 黑体，三号 16 pt | 左对齐、不加粗，段前 12 pt、段后 6 pt |
+| 二级标题 | 仿宋，三号 16 pt | 左对齐、加粗，段前 6 pt、段后 3 pt |
+| 正文 | 仿宋，三号 16 pt | 首行缩进 2 字符，段间距为 0；抬头及落款按用途对齐 |
+| 表头 | 黑体，五号 10.5 pt | 居中，浅灰 `F2F2F2` 底色，跨页重复 |
+| 表格内容 | 仿宋，五号 10.5 pt | 文本左对齐，日期、状态和数量等按列居中或右对齐 |
+
+所有段落，包括图片、表格、页脚及间隔段落，都使用 `w:line="240"`、`w:lineRule="auto"` 的单倍行距，避免图片被固定行高裁切。表格为 0.5 pt 黑色边框，单元格上下内边距 50、左右 100 twips，行不拆分，每张表声明列网格。表格后间隔段落使用 1 pt 字号。
+
+字体声明的 `ascii`、`hAnsi`、`eastAsia`、`cs` 一致，并设置 `hint="eastAsia"`；字体表声明方正小标宋简体、仿宋回退宋体，黑体回退微软雅黑。程序不下载、不打包字体，实际替代字体仍由打开文档的软件决定，分页可能随安装字体变化。
+
+DOCX 内嵌全部照片，照片下方不显示上传时间；空章节不输出。文档作者取街道全称，`settings.xml` 不设置 `updateFields`，页码保留正常 PAGE 域。标准 OOXML 校验与实际 Word / WPS 打开体验属于不同验收项，当前人工验收边界见第 13 节。
+
+## 7. 数据目录、备份与升级
+
+首次启动后的目录如下，所有路径相对于可执行文件：
+
+```text
+hbtool/
+  StreetEcoTool-win-x86.exe
+  StreetEcoTool-linux-arm64
+  wwwroot/
+  appsettings.json                    用户保存监听或手工配置后出现
+  data/
+    app.db                            数据库
+    app.db-wal / app.db-shm            SQLite 运行时可能存在
+  photos/
+    yyyyMM/{id}.jpg
+    yyyyMM/{id}.thumb.jpg
+  backup/
+    auto-yyyy-MM-dd.db
+    before-migrate-v1-日期时间-标识.db
+    before-restore-日期时间-标识/
+  temp/                               运行临时文件与恢复暂存
+```
+
+**`data` 只放数据库，`photos`、`backup`、`temp` 与它同级。** 安装目录须对运行账户可写。不要同时用多个程序修改数据库；不要在运行中只复制 `app.db`，也不要自行删除 `-wal`，尚未检查点的数据可能仍在 WAL 中。
+
+### 完整备份与恢复
+
+在「设置 → 备份与恢复」下载完整 ZIP，另存到 U 盘或其他电脑。ZIP 内保持 `app.db`、`manifest.json`、`photos/` 的结构，数据库通过 `VACUUM INTO` 生成一致性快照，包含已登记的主图与缩略图；可以在程序运行中下载。照片数量只统计主图。
+
+| 备份方式 | 内容与保留规则 |
+| --- | --- |
+| 下载的完整 ZIP | 数据库、主图、缩略图及清单；由用户保管，不包含程序配置或浏览器草稿 |
+| `backup/auto-yyyy-MM-dd.db` | 每日数据库快照，不含照片，保留最近 14 份 |
+| `backup/before-migrate-v1-*.db` | v1 迁移前的原数据库；不按每日快照规则删除 |
+| `backup/before-restore-*/` | 覆盖恢复前的数据库与照片；不按每日快照规则删除 |
+
+恢复步骤：选完整 ZIP → 校验并核对摘要数量 → 勾选覆盖确认 → 确认恢复。确认标识有效 30 分钟；包上限 4 GiB、解压总量上限 16 GiB、最多 50,000 个条目。危险路径、非预期数据库结构、外键问题、缺失或不符尺寸的照片等会被拒绝。
+
+恢复前保留当前数据库与照片，保存位置显示为程序目录下的 `backup/before-restore-…`。目录切换和中断日志均在同一程序根目录内；恢复中断后下次启动根据日志回滚或完成收尾。v1 ZIP 仍可恢复，恢复后自动迁移数据库为 v2；备份来自更高版本时会拒绝。
+
+### 每日 00:00 保存前一天快照
+
+**每天 00:00 保存前一天的数据库快照，保留最近 14 份，不含照片。** 例如 2026-10-13 00:00 生成 `backup/auto-2026-10-12.db`。文件名日期是快照所属日期，同日已有快照不覆盖。
+
+程序按本地时间计算下一次 00:00，使用可测试时钟调度，每次唤醒重新检查日期。启动时在接受 HTTP 请求和写入示例数据前，如果缺前一天快照就补做；连续多天未运行也只补前一天这一份。业务写入在存储锁内再次检查前一天快照，避免跨午夜请求或延迟定时回调把当天新写入混入前一天快照。
+
+孤立照片和超过 1 天的临时文件在启动与每日维护时清理，不再每分钟轮询。只按日期清理命名符合规则的 `auto-????-??-??.db`，保留最新 14 份，不清理 `before-*`。数据库快照无法找回已删除的照片，请同时保存完整 ZIP。
+
+日期、提醒和午夜调度都采用**服务器本地时区**。启动会打印时区；Linux 缺少时区数据可能按 UTC 运行，控制台在检测到与 `TZ` 不一致时提示安装 `tzdata` 或设置 `TZ=Asia/Shanghai`。请核对系统时钟和业务所在地时区。
+
+### v1 → v2 自动迁移
+
+旧安装直接使用新程序启动时，先恢复可能中断的旧恢复操作，再迁移旧目录：`data/photos` → `photos`、`data/backup` → `backup`，旧临时与恢复暂存移入 `temp`。旧、新布局均可重复启动；目标已有内容时逐项合并，同名文件不覆盖，控制台记录冲突，源目录清空后才删除。**有同名冲突时，为保留原文件，旧非空目录可能暂时仍在 `data` 下**，应在保留副本后人工核对。移动失败会中文报错并停止启动，不继续使用不完整目录。
+
+数据库识别为 v1 时，先完成 WAL 检查点并保留原 v1 数据库，然后在单个事务内增加点位经纬度和临时标记、建立整治类型及整治表、扩充照片归属和缩略图字段。照片表重建保留原 `action_id`、路径、时间及已有归属，已上传但未关联的照片也保留。外键检查通过后才提交版本号 2；迁移失败回滚结构及版本，并保留迁移前副本供排查。迁移本身不要求为旧照片补缩略图。
+
+仓库提供固定的真实 v1 二进制夹具 [schema-v1](server/StreetEcoTool.Tests/Fixtures/schema-v1/README.txt)，包含数据库、排查、问题、办理历史、不同归属和未关联照片。新增测试比较迁移前后记录及文件、检查外键、反复启动、故障回滚，并覆盖新旧目录同时存在和 v1 ZIP 恢复。本轮实际执行结果见第 13 节，不能只凭代码覆盖声明验收完成。
+
+### 搬迁与版本升级
+
+1. 先下载完整 ZIP，正常停止程序或系统服务。
+2. 复制**整个程序根目录 `hbtool`**作为迁移或升级前副本，保留数据库、照片、备份、配置及其相对路径；v2 不能只复制 `data`。
+3. 从新包只替换两个可执行文件及整个 `wwwroot`，保留 `data`、`photos`、`backup`、`temp` 和 `appsettings.json`；旧 v1 未带 RID 后缀的程序不要继续使用，更新快捷方式与服务路径。
+4. 启动新程序，核对控制台迁移结果、监听地址、点位 / 排查 / 整治数量和照片，再恢复日常使用。
+
+如需回退到 v1，应停机恢复升级前的整套程序根目录副本，或成套恢复原数据库和对应照片；不要用 v1 程序打开已经升级到 v2 的数据库，也不要混用不同时间的数据库和照片。
+
+## 8. 手机连通、防火墙与固定地址
+
+手机与电脑应在能互通的局域网或蒲公英网络。先确认首页监听包含所需网卡，再使用对应 IPv4 和实际端口；仅开放防火墙不会改变「仅本机」监听。电脑睡眠、访客 Wi-Fi 设备隔离或网卡地址变化都会中断访问。工具不负责建立蒲公英连接，也不调用其云接口。
+
+Windows 可在管理员 PowerShell 放行实际端口，以下规则覆盖专用 / 域网络，参数见 [New-NetFirewallRule 文档](https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule)：
 
 ```powershell
 New-NetFirewallRule -DisplayName "街道环保工具 TCP 5180" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5180 -Profile Private,Domain
 Get-NetConnectionProfile
 ```
 
-也可在「Windows Defender 防火墙 → 高级设置 → 入站规则 → 新建规则 → 端口」添加 TCP 5180。更换端口后同步更新规则。蒲公英虚拟网卡可能被识别为 Public：先查看它的实际网络配置文件，再只为需要的虚拟接口 / 地址范围配置相应规则；仅添加 Private 规则不会自动放行 Public 接口，不必关闭整个防火墙。
+也可在「Windows Defender 防火墙 → 高级设置 → 入站规则 → 新建规则 → 端口」添加 TCP 5180。改端口后同步修改规则。蒲公英虚拟网卡可能属于 Public 配置文件；先确认实际配置，再只为所需虚拟接口或地址范围添加相应规则，不必关闭整个防火墙。
 
-固定内网地址优先在办公室路由器上为电脑网卡 MAC 设置 **DHCP 地址保留 / 静态租约**。随后确认控制台显示的地址并给手机加入书签；蒲公英访问则保存其虚拟地址。不能配置路由器时，可由网络维护人员分配不冲突的固定 IPv4、掩码、网关和 DNS，避免随意占用 DHCP 地址池中的地址。
+固定地址优先在路由器中为电脑网卡设置 DHCP 地址保留 / 静态租约。无法配置路由器时，由网络维护人员分配不冲突的 IPv4、掩码、网关和 DNS。变更地址后从本机监听浮层重新选择有效网卡，并更新手机书签。
 
-## 8. 开机自启
+## 9. 开机自启
 
 ### Windows
 
-简便方式：为 `StreetEcoTool.exe` 创建快捷方式，`Win+R` 输入 `shell:startup`，将快捷方式放入启动文件夹。快捷方式目标可写为 `"D:\hbtool\StreetEcoTool.exe" --no-browser`；这会在**当前用户登录后**启动，移除快捷方式即可取消。
+为 `StreetEcoTool-win-x86.exe` 创建快捷方式，`Win+R` 输入 `shell:startup`，把快捷方式放入启动文件夹。例如目标为 `"D:\hbtool\StreetEcoTool-win-x86.exe" --no-browser`，会在当前用户登录后启动，移除快捷方式即可取消。局域网监听可事先在界面保存；需要命令行固定监听时在快捷方式后加 `--listen 0.0.0.0` 或所需网卡。
 
-需要无人登录也运行时，在「任务计划程序」创建任务，触发器选「启动时」，操作指向完整可执行路径，参数填 `--no-browser`，起始于填程序目录。选择对该目录有写权限的运行账户，并按需要选「不管用户是否登录都运行」；多实例策略选「不启动新实例」。不要设置运行若干小时后自动停止。创建后手动运行任务，确认手机能打开网址；「起始于」只是便于维护，程序不依赖它定位数据。
+无人登录时运行可用「任务计划程序」：触发器选启动时，操作指向完整程序路径，参数填 `--no-browser`，选择对目录有写权限的账户，按需要设为不管用户是否登录都运行；多实例策略选不启动新实例，不要设为运行若干小时后停止。建立后手动运行并确认手机可访问。
 
-### Linux systemd（Ubuntu 示例）
+### Linux systemd（Ubuntu ARM64 示例）
 
-先停止手工启动的实例。将发布包解压为 `/opt/hbtool/`，创建专用系统账户并赋予该目录写权限（账户已存在时跳过创建）：
+先停止手工实例，把发布包放在 `/opt/hbtool`；以下命令在账户不存在时创建专用运行账户，并配置目录权限和时区数据：
 
 ```sh
 sudo useradd --system --user-group --home-dir /opt/hbtool --shell /usr/sbin/nologin hbtool
 sudo chown -R hbtool:hbtool /opt/hbtool
-sudo chmod +x /opt/hbtool/StreetEcoTool
+sudo chmod +x /opt/hbtool/StreetEcoTool-linux-arm64
+sudo apt-get install -y tzdata
 ```
 
-把以下内容保存为 `/etc/systemd/system/street-eco-tool.service`：
+把以下内容保存为 `/etc/systemd/system/street-eco-tool.service`。示例明确监听所有网卡，时区采用中国标准时间：
 
 ```ini
 [Unit]
@@ -147,7 +288,8 @@ Type=simple
 User=hbtool
 Group=hbtool
 WorkingDirectory=/opt/hbtool
-ExecStart=/opt/hbtool/StreetEcoTool --no-browser
+Environment=TZ=Asia/Shanghai
+ExecStart=/opt/hbtool/StreetEcoTool-linux-arm64 --no-browser --listen 0.0.0.0
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=45
@@ -161,90 +303,181 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now street-eco-tool
 sudo systemctl status street-eco-tool
 journalctl -u street-eco-tool -n 80 --no-pager
-# 正常停止：sudo systemctl stop street-eco-tool
 ```
 
-默认 `SIGTERM` 会交给 ASP.NET Core 正常关闭。更改路径时同步修改 `User` / `Group` 的文件权限、`WorkingDirectory` 与 `ExecStart`；运行前检查服务器本地时区。需要自定义端口可改同目录 `appsettings.json`，然后重启服务。
+正常停止用 `sudo systemctl stop street-eco-tool`，SIGTERM 会触发正常关闭。修改程序路径、端口或服务文件后重启；修改服务文件还需 `daemon-reload`。如要由 `appsettings.json` 管理监听，删除 ExecStart 的 `--listen` 覆盖参数，并先在配置中明确要使用的监听地址。
 
-## 9. 项目与本地开发
+## 10. 接口与项目结构
 
-`server/` 为 Minimal API、手写参数化 SQLite SQL、迁移和 OOXML 导出，`server/StreetEcoTool.Tests/` 为单元测试；`web/` 为 Nuxt SPA；`tests/` 为实际进程 API / Word 测试；`scripts/` 为打包脚本；`.github/workflows/` 为构建验收；`spikes/` 保留三个先行技术验证。
+接口使用 JSON，删除业务对象须带 `?confirm=true`。主要新增与调整如下，精确 DTO 见 [Contracts.cs](server/Contracts.cs)，监听 DTO 见 [Listening.cs](server/Listening.cs)：
 
-固定版本：**.NET SDK 10.0.401**（`global.json` 允许同特性带最新补丁）、Microsoft.Data.Sqlite 10.0.12、SQLitePCLRaw.bundle_e_sqlite3 2.1.12、StaticLink.e_sqlite3 2.1.10.1；AOT 静态 SQLite 实测 **3.46.1**。前端 Nuxt **4.6.1**、Nuxt UI **4.11.3**、Tailwind **4.3.3**、TypeScript **6.0.3**，jSquash JPEG 1.6.0 / Resize 2.1.1。TS 6 与当前 `vue-tsc` 验证配套，依赖以锁文件为准。
+| 方法与路径 | v2 行为 |
+| --- | --- |
+| `GET /api/bootstrap` | 增加整治类型字典 |
+| `GET /api/dashboard` | 保留问题提醒数量，增加排查待办与最近记录 |
+| `GET /api/points` | `temporary=false/true/all`，默认常态；返回坐标、性质、封面和照片数 |
+| `POST /api/points`、`PUT /api/points/{id}` | 坐标及点位照片；临时点位只能随新增排查创建 |
+| `POST /api/points/{id}/promote` | 临时点位转常态并设置频次 |
+| `GET /api/inspections` | 整改汇总、闭环 / 逾期数、最近期限，支持待复查问题 `awaitingReview`、未闭环问题 `openOnly` 等筛选，返回匹配问题数 |
+| `GET /api/inspections/counts` | 按其他筛选条件统计各整改状态与问题数，不受当前 `rectify` 限制 |
+| `POST /api/inspections` | `pointId` 与 `newPoint` 二选一，临时点位与排查原子创建 |
+| `GET /api/inspections/{id}` | 逐项问题详情、照片和办理过程 |
+| `PUT /api/inspections/{id}`、`DELETE /api/inspections/{id}` | 编辑基本信息；删除关联问题、办理、主图、缩略图及无剩余排查的临时点位 |
+| `POST /api/inspections/{id}/feedback`、`POST /api/inspections/{id}/review` | 批量反馈 / 复查，整批校验和事务回滚 |
+| `GET /api/campaign-types`、`POST /api/campaign-types`、`PUT/DELETE /api/campaign-types/{id}` | 整治类型字典与引用保护 |
+| `GET/POST /api/campaigns`、`GET/PUT/DELETE /api/campaigns/{id}` | 整治查询及增删改，类型 / 社区快照，三阶段照片 |
+| `PUT /api/photos/{id}/thumb` | JPEG 原始请求体，最多 200 KiB、长边 360 px |
+| `GET /photos/{id}?size=thumb` | 有缩略图返回缩略图，否则返回主图 |
+| `GET /api/system` | 当前端口、监听、网卡、可访问地址、失效已保存地址及 `canConfigure` |
+| `PUT /api/system/listen` | `{ "listen": [...] }`，只允许回环请求，保存配置并应用监听 |
 
-安装 .NET SDK、Node.js **24**（CI 使用此版本）；Python 3 仅供测试和打包。两个终端分别运行：
+点位和整治编辑提交的照片 ID 可追加或保留已经属于该对象的照片，省略某张照片不会隐式删除它；移除已有照片使用独立删除接口。原单问题查询、编辑、反馈、复查、退回及备份接口保留兼容。
+
+Word 接口均为 GET：
+
+| 路径 | 文档 |
+| --- | --- |
+| `/api/inspections/{id}/export/record` | 排查记录单 |
+| `/api/inspections/{id}/export/notice` | 整改通知单 |
+| `/api/inspections/{id}/export/rectification` | 整改记录单，`rectification-record` 为别名 |
+| `/api/campaigns/{id}/export/record` | 整治记录单 |
+| `/api/exports/inspection-ledger` | 排查台账 |
+| `/api/exports/rectification-ledger` | 整改台账，原 `/api/exports/ledger` 为别名 |
+| `/api/exports/campaign-ledger` | 整治台账 |
+
+台账参数 `from`、`to` 为日期范围，`communityId` 可空；整改 / 整治支持 `photos=true`，整治另支持 `typeId`。不带分页限制。
+
+`server` 为 Minimal API、参数化 SQLite SQL、迁移和 OOXML 生成；`server/StreetEcoTool.Tests` 为单元测试与夹具；`web` 为 Nuxt SPA；`tests` 为实际进程 API / Word 验收；`scripts` 为打包；`.github/workflows` 为 CI；`spikes` 保存先行技术验证。
+
+## 11. 本地开发与原生构建
+
+依赖以 [global.json](global.json)、[后端项目](server/StreetEcoTool.csproj)、[前端 package.json](web/package.json) 和锁文件为准：.NET SDK **10.0.401**（同特性带 latestPatch）、Microsoft.Data.Sqlite **10.0.12**、SQLitePCLRaw.bundle_e_sqlite3 **2.1.12**、StaticLink.e_sqlite3 **2.1.10.1**；Nuxt **4.6.1**、Nuxt UI **4.11.3**、Tailwind **4.3.3**、TypeScript **6.0.3**、jSquash JPEG **1.6.0** / Resize **2.1.1**。CI 使用 Node.js **24**；测试和打包使用 Python **3.10+**。
+
+两个终端分别运行：
 
 ```sh
-# 终端 1：仓库根目录；dotnet run 使用 JIT
+# 终端 1，仓库根目录，使用 JIT
 dotnet run --project server/StreetEcoTool.csproj -p:PublishAot=false -- --no-browser
-# 终端 2：仓库根目录
+```
+
+```sh
+# 终端 2，仓库根目录
 cd web
 npm ci
 npm run dev
 ```
 
-开发访问 `http://localhost:3000`；`nuxt dev` 将 `/api` 与 `/photos` 代理到 `127.0.0.1:5180`。后端改端口时也需修改 `web/nuxt.config.ts` 的开发代理。JIT 的数据位于实际输出目录（通常 `server/bin/Debug/net10.0/data`），与发布包数据隔离；JIT 用 bundle 动态 SQLite，版本可能与 AOT 静态引擎不同。
+开发页面为 `http://localhost:3000`，`nuxt dev` 将 `/api` 和 `/photos` 代理到 `127.0.0.1:5180`；后端改端口时同步调整 `web/nuxt.config.ts`。JIT 数据位于实际输出目录（通常 `server/bin/Debug/net10.0/data`），照片 / 备份 / 临时目录与它同级，和发布包隔离。JIT 使用 bundle 动态 SQLite，AOT 使用静态 SQLite；v1 AOT 已实测 SQLite **3.46.1**，本轮最终产物仍需核验。
 
-生产配置为 `ssr:false`、hash 文件路由、中文浅色 Nuxt UI、系统字体、本地图标包与本地 WASM；`nuxt generate` 的 `.output/public` 可直接静态托管，见 [Nuxt 官方部署说明](https://nuxt.com/docs/4.x/getting-started/deployment#client-side-only-rendering)。生产不运行 Nitro 服务、不引入 Pinia，也不需要 HTTPS 专属浏览器能力。
+生产采用 `ssr:false`、hash 路由、中文浅色 Nuxt UI、系统字体、本地图标与本地 WASM；`nuxt generate` 输出 `.output/public`，由后端静态服务承载。无需部署 Nitro、Pinia 或 HTTPS 专属浏览器能力，背景见 [Nuxt 客户端渲染部署文档](https://nuxt.com/docs/4.x/getting-started/deployment#client-side-only-rendering)。
 
-## 10. 原生构建、打包与验收
+先生成一份前端：
 
 ```sh
-# 仓库根目录：先生成前端
 npm --prefix web ci
 npm --prefix web run typecheck
 npm --prefix web run generate
 ```
 
-**Windows x86 必须在 Windows 构建**：安装 .NET SDK 与 Visual Studio 2022 或更新版的「使用 C++ 的桌面开发」工具（含 x86 MSVC、Windows SDK），从 x86 Native Tools 命令环境运行以下 PowerShell 命令。使用的是 `dotnet` CLI，无需通过旧版 Visual Studio IDE 打开 .NET 10 项目。
+Windows x86 在 Windows 构建。安装 .NET SDK 和 Visual Studio 2022 或更新版的 C++ 桌面工具链（x86 MSVC、Windows SDK），从 x86 Native Tools 命令环境执行：
 
 ```powershell
 dotnet publish server/StreetEcoTool.csproj -c Release -r win-x86 -o publish/win-x86 -p:PublishAot=true -p:SelfContained=true -warnaserror
-New-Item -ItemType Directory -Force publish/win-x86/wwwroot | Out-Null
-Copy-Item web/.output/public/* publish/win-x86/wwwroot -Recurse -Force
-python scripts/package.py --rid win-x86 --publish publish/win-x86 --output dist
 ```
 
-**Linux ARM64 在 Ubuntu 24.04 arm64 原生构建**（`uname -m` 应为 `aarch64`）：
+Linux ARM64 在 Ubuntu 24.04 arm64 原生构建（`uname -m` 为 `aarch64`）：
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y clang zlib1g-dev
 dotnet publish server/StreetEcoTool.csproj -c Release -r linux-arm64 -o publish/linux-arm64 -p:PublishAot=true -p:SelfContained=true -warnaserror
-mkdir -p publish/linux-arm64/wwwroot
-cp -a web/.output/public/. publish/linux-arm64/wwwroot/
-python3 scripts/package.py --rid linux-arm64 --publish publish/linux-arm64 --output dist
 ```
 
-NativeAOT 不支持跨操作系统编译；本项目 CI 使用目标架构原生宿主，不依赖 ARM 交叉工具链。AOT / 裁剪及其他构建警告视为错误，没有以关闭警告完成发布。打包只选取可执行文件和 `wwwroot`，不会打入开发数据库、独立 SQLite 动态库或调试符号。
+NativeAOT 不跨操作系统编译，本项目 CI 使用目标架构原生宿主。把两个宿主生成的可执行文件和同一份前端收集到打包主机，再执行：
 
-`dist/` 输出 ZIP / tar.gz 及 SHA-256 文件。Linux 用 `sha256sum -c hbtool-linux-arm64.tar.gz.sha256`；Windows 用 `Get-FileHash .\hbtool-win-x86.zip -Algorithm SHA256` 与同名 `.sha256` 内容对照。Actions 发布包保留 30 天，测试证据保留 14 天，可重新运行工作流生成；需要长期保存的包请自行下载留存。
+```sh
+python3 scripts/package.py --win-x86 publish/win-x86/StreetEcoTool.exe --linux-arm64 publish/linux-arm64/StreetEcoTool --web-static web/.output/public --output dist
+```
 
-复现验收前关闭本机正在运行的工具；Python 脚本会复制程序到临时目录，自行启动并关闭，不使用正式 `data`。以下以 Linux ARM64 发布目录为例；Windows 替换可执行文件路径和 `python3` 命令：
+输出只有 `dist/hbtool.zip` 和 `dist/hbtool.zip.sha256`。打包校验 Windows PE 的 x86 架构、Linux ELF 的 ARM64 架构、ZIP 完整性以及 Linux 权限 755；包中只选取两份程序与一份 `wwwroot`，不带 `appsettings.json`、数据、调试符号、独立 SQLite 库或 Linux x64 验证程序。
+
+Linux 在 `dist` 中运行 `sha256sum -c hbtool.zip.sha256`；Windows 用 `Get-FileHash .\dist\hbtool.zip -Algorithm SHA256` 对照校验文件。CI 先构建 `web-static` 与三个 `bin-*`，`package` 汇总 Windows x86 / Linux ARM64，`browser` 单独使用 Linux x64 加同一份静态资源。发布附件保留 30 天，测试证据保留 14 天，需要长期保存的产物请下载留存。
+
+## 12. 复现验收与既有证据
+
+复现前关闭本机正在运行的工具。测试脚本会复制程序到隔离目录自行启动 / 停止，不使用正式数据；浏览器验收的程序旁需要完整 `wwwroot`。以下以 Linux ARM64 构建目录为例，Windows 替换程序路径；CI 浏览器环境使用 Linux x64：
 
 ```sh
 dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false -warnaserror
 python3 tests/api-smoke.py --executable publish/linux-arm64/StreetEcoTool --report test-results/api-smoke-report.json
 python3 tests/word-smoke.py --executable publish/linux-arm64/StreetEcoTool --report test-results/word-smoke-report.json
+mkdir -p publish/linux-arm64/wwwroot
+cp -a web/.output/public/. publish/linux-arm64/wwwroot/
 cd web
 npx playwright install --with-deps chromium
 node browser-test.mjs --executable ../publish/linux-arm64/StreetEcoTool
 ```
 
-三个先行 spike 均已通过：[AOT + SQLite 三平台](spikes/aot-sqlite/RESULTS.md)（[CI](https://github.com/SunSi12138/build-sandbox/actions/runs/38049947360)）、[Nuxt 离线 / hash](spikes/nuxt-offline/README.md)（[CI](https://github.com/SunSi12138/build-sandbox/actions/runs/38050309537)）、[jSquash 方向 / 压缩 / 回退](spikes/photo-compression/RESULTS.md)（[CI](https://github.com/SunSi12138/build-sandbox/actions/runs/38050177110)）。约 1200 万像素合成样本由 7,946,458 字节压到 301,622 字节，八种 EXIF 方向与 WASM 失败回退均有实际浏览器验证。
+v2 新增或调整的验收包括：真实 v1 数据库迁移与回滚、新旧目录合并、旧 ZIP 恢复、午夜快照与跨日写入顺序、临时点位及转常态、级联删除、经纬度、主图 / 缩略图、批量反馈 / 复查原子性、整治、统计口径、监听重绑与非回环 403、七种 Word、全站禁用文案扫描、移动布局和断外网运行。AOT / 裁剪及其他构建警告均视为错误，保留 `-warnaserror`。
 
-Word 阶段已通过 **103 个单元测试、3 个 RID 的零警告 AOT 发布、各平台 31 次 Word API 请求、9 组完整浏览器流程**，包括三种真实 Word 下载；最终结果以[最新成功工作流](https://github.com/SunSi12138/build-sandbox/actions/workflows/build.yml?query=branch%3Ahbtool)及其中的 `test-results-*`、`browser-evidence` 为准。测试覆盖提醒边界、JPEG 解析、照片关联、整改流转、备份恢复 / 中断回滚、OOXML 结构与资源、普通 HTTP 压缩、外域请求阻断和手机布局。
+截图目录为 `web/test-results/screens/`，九个页面各生成 **375×812、768×1024、1440×900** 三种尺寸，预期 27 张。文件名为下表前缀加 `-宽x高.png`：
 
-**实际验证边界**：Windows 程序在 Server 2022 WOW64 执行；浏览器自动化使用 CI 的 Chromium，未逐一实测最低浏览器版本、真机 iOS 或真实手机相册。LibreOffice 已对六份含长文本、照片的 DOCX 转 PDF 并目视检查，QA 使用 Noto CJK 替代字体；尚未在 Microsoft Word / WPS 图形界面实际打开验收，不能把 LibreOffice 检查等同于这两项人工验收。可用 `libreoffice --headless --convert-to pdf --outdir test-results/word-pdf test-results/word-samples/*.docx` 在装有中文字体的电脑复查。
-
-## 11. 常见问题
-
-| 现象 | 排查办法 |
+| 页面 | 截图前缀 |
 | --- | --- |
-| 电脑能打开，手机连不上 | 核对地址不是 localhost、端口正确；确认电脑未休眠、手机与相应网卡互通；检查 Wi-Fi 隔离及该物理 / 蒲公英网卡实际防火墙配置文件 |
-| 提示端口占用 / 改端口无效 | 正常关闭已有实例后重启；其他程序占用时改 `--port` 或配置文件，并同步放行新端口 |
-| 照片上传失败 | 等待压缩完成，检查与服务器连接、磁盘空间、目录权限；重试失败照片；压缩后超过 10 MiB 时调低质量，不能解码的格式先转 JPEG / PNG |
-| 换网址后草稿不见了 | 回原协议、IP / 主机名、端口和浏览器查看；正式保存的记录在服务器，草稿不会跨浏览器或网址同步 |
-| 页面空白 / 更新后样式异常 | 使用满足基线的浏览器；确认完整复制 `wwwroot`，刷新页面。入口 HTML 禁缓存，带 hash 的资源长期缓存；不要混用新旧版本的静态文件 |
-| 通知单不能下载 / 图片缺失 | 先填写街道设置并确认该次有问题；检查照片文件及完整备份，保留现有数据后处理；正常记录使用「导出排查记录单」 |
-| 无法写入 / Linux 提示 GLIBC 版本不足 | 将安装目录设为运行账户可写并检查磁盘；GLIBC 问题使用符合构建基线的系统或在目标受支持系统重新原生构建，不能靠安装 .NET Runtime 修复 |
+| 首页 | `home` |
+| 点位列表 | `points` |
+| 点位详情 | `point-detail` |
+| 排查列表 | `inspections` |
+| 新增排查 | `inspection-new` |
+| 排查详情（多个问题） | `inspection-detail` |
+| 整治列表 | `campaigns` |
+| 新增整治 | `campaign-new` |
+| 设置 | `settings` |
+
+测试另在 360 px 宽度检查无横向滚动，检查移动点击区域至少 40×40、正文文字至少 12 px（底部 tab 例外）、移动首页首屏统计与首条待办、375 px 排查首屏至少 5 条、桌面页头不超过 64 px、移动顶栏 48 px、移动筛选两列。截图须逐张目视复核，自动断言不能替代看图。原始结果写入 `web/test-results/browser-report.json` 并由 `browser-evidence` 附件保存。
+
+### v1 已完成的基线，不能当作 v2 测试结果
+
+三个先行验证已有独立记录：[AOT + SQLite 三平台](spikes/aot-sqlite/RESULTS.md)（[CI](https://github.com/SunSi12138/build-sandbox/actions/runs/38049947360)）、[Nuxt 离线 / hash 路由](spikes/nuxt-offline/README.md)（[CI](https://github.com/SunSi12138/build-sandbox/actions/runs/38050309537)）、[jSquash 方向 / 压缩 / 回退](spikes/photo-compression/RESULTS.md)（[CI](https://github.com/SunSi12138/build-sandbox/actions/runs/38050177110)）。图像验证中约 1200 万像素合成样本由 7,946,458 字节压到 301,622 字节，并覆盖八种 EXIF 方向和 WASM 失败回退；这只是该固定样本的数据。
+
+本轮基于 `eec6117` 源码继续改造。[v1 最终工作流](https://github.com/SunSi12138/build-sandbox/actions/runs/38054839889)记录 **103 个单元测试、3 个 RID 的零警告 AOT 发布、各平台 31 次 Word API 请求、9 组完整浏览器流程**。这些是 v1 数字，包含当时三种 Word 下载，不是 v2 的测试总数或七种导出通过证明。
+
+v1 曾使用 LibreOffice 对六份含长文本、照片的 DOCX 转 PDF 并目视检查，使用 Noto CJK 替代字体。v2 的新文档样本须单独复验。有 LibreOffice 和中文字体时可运行：
+
+```sh
+libreoffice --headless --convert-to pdf --outdir test-results/word-pdf test-results/word-samples/*.docx
+```
+
+## 13. 本轮 v2 验收结果（待最终核验）
+
+**本节留待本轮最终 CI、产物与截图检查完成后填写。目前不能宣称 v2 全部测试通过。**
+
+| 项目 | 本轮结果与证据 |
+| --- | --- |
+| 最终提交与工作流 | 待填写提交 SHA 和 CI 链接 |
+| 单元测试总数、通过数 | 待填写；不要沿用 v1 的 103 |
+| Windows x86、Linux ARM64、Linux x64 AOT | 待最终确认三个 RID 零警告及依赖检查 |
+| 三个平台 API 冒烟 | 待填写，含监听、v1 恢复、旧布局和正常退出 |
+| 七种 Word 及 OOXML 样式断言 | 待填写各平台报告 |
+| Nuxt 类型检查、静态构建、浏览器流程 | 待填写 |
+| 27 张截图逐张查看与布局断言 | 待填写结果及截图清单 |
+| 外部请求、字体、图标、压缩回退 | 待填写浏览器报告 |
+| 统一 ZIP 结构、SHA-256、Linux 755 | 待填写产物检查 |
+| v2 LibreOffice 转换与目视检查 | 待填写实际执行情况 |
+
+**仍需人工环境验收的边界：**尚未在 Microsoft Word 或 WPS 图形界面实际打开 v2 七种文档，不能宣称这两种软件无修复提示或无更新域提示；OOXML 断言及 LibreOffice 转换不等于 Word / WPS 人工验收。最低浏览器版本、真机 iOS、真实手机拍照 / 相册和每一种目标 Linux 发行版也没有逐一实测。
+
+## 14. 常见问题
+
+| 现象 | 处理办法 |
+| --- | --- |
+| 电脑可打开，手机连不上 | 先确认监听已包含手机可达的网卡，地址不是 localhost，再检查端口、Wi-Fi 隔离、电脑睡眠和网卡防火墙配置 |
+| 在办公室电脑上也不能改监听 | 使用回环网址 localhost / 127.0.0.1 打开；以本机局域网 IP 访问仍属于非回环请求 |
+| 保存过的 IP 不见了 | DHCP 或网卡发生变化，程序可能已回退仅本机；从本机选择当前有效地址 |
+| 改端口无效 / 提示端口占用 | 关闭旧实例，检查启动命令是否覆盖配置，修改端口后重启并更新防火墙 |
+| 换网址后草稿不见了 | 回到原协议、主机、端口和浏览器查看；已正式保存的记录在服务器，草稿不跨网址同步 |
+| 照片失败或旧缩略图不存在 | 检查磁盘、目录权限和网络；主图超 10 MiB 时调低质量；特殊格式先转换，旧图缺缩略图会回退主图 |
+| 整改记录单不能下载 | 查看该次是否仍有未闭环问题，正常排查应下载排查记录单 |
+| 升级后照片缺失 | v2 照片在根目录 `photos`，不能只迁移 `data`；保留现有数据后核对旧目录冲突日志和完整备份 |
+| 更新后空白或样式异常 | 替换完整 `wwwroot`，使用兼容浏览器并刷新；入口 HTML 禁缓存，带 hash 的资源长期缓存，不混用两版静态文件 |
+| 无法写入 / Linux GLIBC 不匹配 | 检查运行账户目录权限和磁盘；系统库不足时使用符合构建基线的系统或在目标受支持系统重建，安装 .NET Runtime 不能替代系统库 |

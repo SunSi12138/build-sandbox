@@ -59,8 +59,11 @@ def main() -> None:
         if any("linux-x64" in name or name.endswith("appsettings.json") for name in names):
             raise ValueError("Package includes a test binary or user configuration")
         assert (archive.getinfo("hbtool/StreetEcoTool-linux-arm64").external_attr >> 16) & 0o777 == 0o755
+    checksum_hash = hashlib.sha256()
     with target.open("rb") as package_file:
-        digest = hashlib.file_digest(package_file, "sha256").hexdigest()
+        while block := package_file.read(1024 * 1024):
+            checksum_hash.update(block)
+    digest = checksum_hash.hexdigest()
     checksum = args.output / "hbtool.zip.sha256"
     checksum.write_text(f"{digest}  hbtool.zip\n", encoding="ascii")
     print(f"Packaged {len(files)} files into {target} ({target.stat().st_size:,} bytes)")

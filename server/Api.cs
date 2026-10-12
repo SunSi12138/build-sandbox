@@ -88,7 +88,8 @@ public static class Api
 
         static InspectionQuery InspectionFilters(HttpContext context) => new(Query(context, "pointId"), Query(context, "communityId"),
             Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30),
-            Query(context, "rectify"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "typeId"), Flag(context, "temporary"));
+            Query(context, "rectify"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "typeId"), Flag(context, "temporary"),
+            Flag(context, "awaitingReview"), Flag(context, "openOnly"));
         RequestDelegate inspections = context => Write(context, store.ListInspections(InspectionFilters(context)), AppJsonContext.Default.InspectionPage);
         RequestDelegate inspectionCounts = context => Write(context, store.GetInspectionCounts(InspectionFilters(context)), AppJsonContext.Default.InspectionCountsDto);
         RequestDelegate inspection = context => Write(context, store.GetInspectionDetail(Id(context)), AppJsonContext.Default.InspectionDetailDto);

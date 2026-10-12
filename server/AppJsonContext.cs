@@ -45,4 +45,3 @@ namespace StreetEcoTool;
 [JsonSerializable(typeof(CampaignDetailDto))]
 [JsonSerializable(typeof(PageDto<CampaignDto>), TypeInfoPropertyName = "CampaignPage")]
 public partial class AppJsonContext : JsonSerializerContext;
-

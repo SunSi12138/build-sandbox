@@ -98,6 +98,15 @@ async function waitForDialogsClosed() {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
 }
 
+async function assertDialogInViewport(dialog, name) {
+  await dialog.waitFor()
+  const bounds = await dialog.boundingBox(), viewport = page.viewportSize()
+  assert(bounds && bounds.width > 0 && bounds.height > 0 && bounds.x >= -1 && bounds.y >= -1 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1,
+    `Dialog is outside the viewport: ${JSON.stringify({ name, bounds, viewport })}`)
+  report.dialogLayoutChecks ??= []
+  report.dialogLayoutChecks.push({ name, bounds, viewport })
+}
+
 async function assertMobileActionLayout(toastTitle) {
   const toastSelector = '[data-swipe-direction][data-state="open"]'
   await page.locator(toastSelector).filter({ hasText: toastTitle }).first().waitFor({ state: 'visible' })
@@ -193,9 +202,16 @@ async function visualAssertions(name, width) {
       const rect = element.getBoundingClientRect()
       return visible(element) && rect.top >= 48 && rect.bottom <= (nav?.top ?? innerHeight)
     }).length
-    const firstTodo = document.querySelector('[data-testid="home-todos"] .list-row')?.getBoundingClientRect()
-    const lastStat = [...document.querySelectorAll('.stat-block')].at(-1)?.getBoundingClientRect()
-    return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, headerHeight: header?.height, buttons, smallText, columns, visibleRows, firstTodoBottom: firstTodo?.bottom, lastStatBottom: lastStat?.bottom, navTop: nav?.top }
+    function visiblePosition(element) {
+      if (!element) return null
+      const rect = element.getBoundingClientRect()
+      return { visible: visible(element), top: rect.top, bottom: rect.bottom, height: rect.height }
+    }
+    const firstTodo = visiblePosition(document.querySelector('[data-testid="home-todos"] .list-row'))
+    const stats = [...document.querySelectorAll('.stat-block')].map(element => ({
+      ...visiblePosition(element), fontSize: parseFloat(getComputedStyle(element.querySelector('.stat-number')).fontSize)
+    }))
+    return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, headerHeight: header?.height, buttons, smallText, columns, visibleRows, firstTodo, stats, firstTodoBottom: firstTodo?.bottom, lastStatBottom: stats.at(-1)?.bottom, navTop: nav?.top }
   })
   assert(value.scrollWidth <= width + 1, `${name}: horizontal overflow ${value.scrollWidth} > ${width}`)
   assert.deepEqual(value.smallText, [], `${name}: text smaller than 12 px`)
@@ -205,9 +221,11 @@ async function visualAssertions(name, width) {
     assert.equal(value.headerHeight, 48, `${name}: mobile header must be 48 px`)
     if (value.columns) assert.equal(value.columns.split(' ').length, 2, `${name}: mobile filters need two columns`)
     if (name === 'inspections' && width === 375) assert(value.visibleRows >= 5, `Only ${value.visibleRows} inspection rows are visible on the first screen`)
+    if (name === 'home') assert(value.stats.every(stat => stat.fontSize <= 20), 'Mobile statistics exceed 20 px')
     if (name === 'home' && width === 375) {
-      assert(value.lastStatBottom <= value.navTop, 'Statistics not visible on first screen')
-      assert(value.firstTodoBottom <= value.navTop, 'First to-do row not visible on first screen')
+      assert.equal(value.stats.length, 4, 'Home must render all four statistics')
+      assert(value.stats.every(stat => stat.visible && stat.height > 0 && stat.top >= 48 && stat.bottom <= value.navTop), 'Statistics not visible on first screen')
+      assert(value.firstTodo?.visible && value.firstTodo.height > 0 && value.firstTodo.top >= 48 && value.firstTodo.bottom <= value.navTop, 'First to-do row not visible on first screen')
     }
   } else assert(value.headerHeight <= 64, `${name}: desktop header exceeds 64 px`)
   delete value.buttons
@@ -244,6 +262,33 @@ try {
     await page.waitForURL('**/#/inspections?**'); assert(page.url().includes('rectify=pending'))
     await page.goto(origin + '/#/exports', { waitUntil: 'networkidle' }); await page.waitForURL('**/#/inspections')
     await page.setViewportSize({ width: 375, height: 812 })
+  })
+
+  await test('Home issue reminders retain mixed inspection states and matching problem counts', async () => {
+    const dashboard = await api('/dashboard')
+    assert(dashboard.awaitingReview.count > 0, 'Demo fixture must include a problem awaiting review')
+    const mixed = await api('/inspections/' + dashboard.awaitingReview.items[0].inspectionId)
+    assert(mixed.issues.some(issue => issue.status === 'pending') && mixed.issues.some(issue => issue.status === 'feedback'), 'Demo fixture must include mixed pending and feedback problems')
+    await page.goto(origin + '/#/', { waitUntil: 'networkidle' })
+    let response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections' && new URL(response.url()).searchParams.get('awaitingReview') === 'true' && response.status() === 200)
+    await page.locator('.stat-block').filter({ hasText: '待复查' }).click()
+    const awaiting = await (await response).json()
+    assert.equal(awaiting.matchingIssueCount, dashboard.awaitingReview.count)
+    assert(awaiting.items.some(item => item.id === mixed.inspection.id), 'Mixed inspection disappeared from the awaiting-review reminder')
+    await waitForText(`涉及 ${awaiting.total} 条排查 · ${awaiting.matchingIssueCount} 项问题`)
+    await page.getByRole('button', { name: '待复查问题', exact: true }).click()
+    await page.waitForURL('**/#/inspections')
+    await page.goto(origin + '/#/', { waitUntil: 'networkidle' })
+    response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections' && new URL(response.url()).searchParams.get('openOnly') === 'true' && response.status() === 200)
+    await page.getByTestId('home-all-todos').click()
+    const open = await (await response).json()
+    assert(open.items.every(item => item.openIssueCount > 0), 'Todo list contains inspections without open problems')
+    assert(open.items.some(item => item.id === mixed.inspection.id), 'Todo list lost a mixed inspection')
+    assert.equal(open.matchingIssueCount, open.items.reduce((sum, item) => sum + item.openIssueCount, 0))
+    await waitForText(`涉及 ${open.total} 条排查 · ${open.matchingIssueCount} 项问题`)
+    await page.getByRole('button', { name: '未闭环问题', exact: true }).click()
+    await page.waitForURL('**/#/inspections')
+    report.homeFilterChecks = { mixedInspectionId: mixed.inspection.id, awaitingReview: { inspectionCount: awaiting.total, issueCount: awaiting.matchingIssueCount }, openOnly: { inspectionCount: open.total, issueCount: open.matchingIssueCount } }
   })
 
   let inspectionId, issueId, closedInspectionId, campaignId, fixtureJpeg
@@ -302,6 +347,7 @@ try {
     await page.waitForURL('**/#/inspections/' + inspectionId + '?issue=' + issueId)
     await page.getByTestId('batch-feedback').click()
     let dialog = page.getByRole('dialog', { name: '记录反馈', exact: true })
+    await assertDialogInViewport(dialog, 'mobile-feedback')
     await dialog.getByTestId('batch-date').fill(bootstrap.today)
     await dialog.getByTestId('batch-notes-1').fill('社区已安排人员完成现场清理。')
     await uploadIn(dialog.getByTestId('photo-file-input'), 'after.jpg', fixtureJpeg)
@@ -309,8 +355,16 @@ try {
     await dialog.getByTestId('batch-save').click(); await response; await waitForDialogsClosed()
     assert.equal((await api('/issues/' + issueId)).issue.status, 'feedback')
     await assertMobileActionLayout('已保存')
+    await page.goto(origin + '/#/', { waitUntil: 'networkidle' })
+    const todosResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections' && new URL(response.url()).searchParams.get('openOnly') === 'true' && response.status() === 200)
+    await page.getByTestId('home-all-todos').click()
+    const todos = await (await todosResponse).json()
+    assert(todos.items.some(item => item.id === inspectionId && item.rectifyStatus === 'feedback'), 'Todo list lost an inspection whose only problem is awaiting review')
+    report.homeFilterChecks.feedbackOnlyInspectionId = inspectionId
+    await page.goto(origin + '/#/inspections/' + inspectionId + '?issue=' + issueId, { waitUntil: 'networkidle' })
     await page.getByTestId('batch-review').click()
     dialog = page.getByRole('dialog', { name: '复查闭环', exact: true })
+    await assertDialogInViewport(dialog, 'mobile-review')
     await dialog.getByTestId('batch-notes-1').fill('现场复查已清理到位。')
     response = page.waitForResponse(response => new URL(response.url()).pathname === `/api/inspections/${inspectionId}/review` && response.status() === 200)
     await dialog.getByTestId('batch-save').click(); await response; await waitForDialogsClosed()
@@ -463,7 +517,8 @@ try {
     const extra = await api('/communities', { method: 'POST', body: { name: '恢复前临时社区', title: '恢复前临时社区居民委员会' } })
     await page.goto(origin + '/#/settings?tab=backup', { waitUntil: 'networkidle' })
     await page.getByTestId('restore-file-input').setInputFiles({ name: 'browser-backup.zip', mimeType: 'application/zip', buffer: backup })
-    const dialog = page.getByRole('dialog', { name: '恢复备份？', exact: true }); await dialog.waitFor()
+    const dialog = page.getByRole('dialog', { name: '恢复备份？', exact: true })
+    await assertDialogInViewport(dialog, 'mobile-restore')
     assert(await dialog.getByTestId('restore-confirm').isDisabled())
     assert((await api('/communities')).some(community => community.id === extra.id))
     await dialog.getByRole('checkbox').check()

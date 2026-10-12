@@ -24,8 +24,11 @@ public sealed partial class Store
         AND ($from='' OR n.inspection_date>=$from) AND ($to='' OR n.inspection_date<=$to)
         AND ($q='' OR n.point_name LIKE $like OR n.notice_number LIKE $like OR n.inspector LIKE $like)
         AND ($type='' OR n.type_id=$type) AND ($temporary=0 OR pt.temporary=1)
-        AND ($overdue=0 OR EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed' AND x.deadline<$today))
-        AND ($soon=0 OR EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed' AND x.deadline>=$today AND x.deadline<=$through))
+        AND (($overdue=0 AND $soon=0 AND $awaiting=0 AND $open=0) OR EXISTS(
+            SELECT 1 FROM issues x WHERE x.inspection_id=n.id
+            AND ($overdue=0 OR (x.status<>'closed' AND x.deadline<$today))
+            AND ($soon=0 OR (x.status<>'closed' AND x.deadline>=$today AND x.deadline<=$through))
+            AND ($awaiting=0 OR x.status='feedback') AND ($open=0 OR x.status<>'closed')))
         AND ($rectify='' OR $rectify=CASE WHEN n.result='normal' THEN 'none'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END)
@@ -75,7 +78,7 @@ public sealed partial class Store
         return [("$point", query.PointId ?? ""), ("$community", query.CommunityId ?? ""),
             ("$from", from ?? ""), ("$to", to ?? ""), ("$q", q), ("$like", "%" + q + "%"),
             ("$type", query.TypeId ?? ""), ("$temporary", query.Temporary ? 1 : 0), ("$overdue", query.Overdue ? 1 : 0),
-            ("$soon", query.DueSoon ? 1 : 0), ("$rectify", rectify),
+            ("$soon", query.DueSoon ? 1 : 0), ("$awaiting", query.AwaitingReview ? 1 : 0), ("$open", query.OpenOnly ? 1 : 0), ("$rectify", rectify),
             ("$through", DateTime.Today.AddDays(3).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))];
     }
 
@@ -85,7 +88,8 @@ public sealed partial class Store
             SELECT COUNT(*) FROM inspections n JOIN points pt ON pt.id=n.point_id JOIN issues matched ON matched.inspection_id=n.id
             """ + " " + InspectionWhere + " " + """
              AND ($overdue=0 OR (matched.status<>'closed' AND matched.deadline<$today))
-             AND ($soon=0 OR (matched.status<>'closed' AND matched.deadline>=$today AND matched.deadline<=$through));
+             AND ($soon=0 OR (matched.status<>'closed' AND matched.deadline>=$today AND matched.deadline<=$through))
+             AND ($awaiting=0 OR matched.status='feedback') AND ($open=0 OR matched.status<>'closed');
             """, null, [.. parameters, ("$today", Today)]);
         return Convert.ToInt32(command.ExecuteScalar());
     }

@@ -93,13 +93,15 @@ class ApiSmoke:
             (public / filename).write_text("<!doctype html><html lang=zh-CN><body>API smoke fixture</body></html>", encoding="utf-8")
         (public / "_nuxt" / "smoke.0123456789.js").write_text("console.log('local fixture');", encoding="utf-8")
 
-    def start(self, seed: bool = False) -> None:
+    def start(self, seed: bool = False, *, listen: list[str] | None = None, host: str = "127.0.0.1") -> None:
         require(self.process is None, "A previous test server is still running")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
-        self.origin = f"http://127.0.0.1:{port}"
+        self.origin = f"http://{host}:{port}"
         command = [str(self.executable), "--no-browser", "--port", str(port)]
+        for address in listen or []:
+            command.extend(["--listen", address])
         if seed:
             command.append("--seed-demo")
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -678,6 +680,99 @@ class ApiSmoke:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
             require(archive.testzip() is None and {"[Content_Types].xml", "word/document.xml", "word/styles.xml"}.issubset(archive.namelist()), "Word export package is incomplete")
 
+    def test_listening(self) -> None:
+        info = self.json("GET", "/api/system")
+        require(info["listen"] == ["127.0.0.1"] and info["canConfigure"], "The default listener must allow configuration only through loopback")
+        require(info["addresses"] == [f"http://localhost:{info['port']}"], "Loopback-only configuration advertised an unreachable LAN address")
+        before = self.fingerprint()
+        config_path = self.install / "appsettings.json"
+        original_config = config_path.read_bytes() if config_path.exists() else None
+        for addresses in ([], ["0.0.0.0", "127.0.0.1"], ["not-an-ip"], ["203.0.113.9"]):
+            self.json("PUT", "/api/system/listen", {"listen": addresses}, expected=400)
+        require((config_path.read_bytes() if config_path.exists() else None) == original_config, "Invalid listening input changed persistent configuration")
+
+        def remote_json(host: str, method: str, path: str, body=None, expected=200):
+            connection = http.client.HTTPConnection(host, info["port"], timeout=10)
+            payload = None if body is None else json.dumps(body).encode("utf-8")
+            try:
+                connection.request(method, path, body=payload, headers={"Content-Type": "application/json", "X-Forwarded-For": "127.0.0.1"})
+                response = connection.getresponse()
+                data = response.read()
+                self.report["requests"].append({"method": method, "path": path, "host": host, "status": response.status})
+                require(response.status == expected, f"{method} {host}{path}: expected {expected}, got {response.status}: {data[:200]!r}")
+                return json.loads(data) if data else None
+            finally:
+                connection.close()
+
+        ipv6_available = False
+        if socket.has_ipv6:
+            try:
+                with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+                    probe.bind(("::1", 0))
+                ipv6_available = True
+            except OSError:
+                pass
+        if ipv6_available:
+            require(remote_json("::1", "GET", "/api/system")["canConfigure"], "IPv6 loopback listener is missing or read-only")
+        self.report["ipv6LoopbackVerified"] = ipv6_available
+
+        def wait_for_listen(addresses: list[str]) -> dict:
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                require(self.process is not None and self.process.poll() is None, "Listener rebinding stopped the application process")
+                try:
+                    current = self.json("GET", "/api/system")
+                    if current["listen"] == addresses and not current["switching"]:
+                        return current
+                except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+                    pass
+                time.sleep(0.1)
+            raise SmokeFailure("Listener did not switch within 15 seconds")
+
+        pid = self.process.pid
+        changed = self.json("PUT", "/api/system/listen", {"listen": ["0.0.0.0"]})
+        require(changed["ok"] and changed["rebinding"], "Listener API did not acknowledge the accepted change")
+        require(json.loads(config_path.read_text(encoding="utf-8"))["listen"] == ["0.0.0.0"], "Listener success arrived before configuration was persisted")
+        active = wait_for_listen(["0.0.0.0"])
+        require(self.process.pid == pid, "Rebinding replaced the process and lost single-instance ownership")
+        require(all("0.0.0.0" not in address for address in active["addresses"]), "The listener advertised a wildcard as a usable URL")
+        interfaces = active["interfaces"]
+        require(interfaces, "The native integration host has no eligible IPv4 adapter to verify remote access")
+        address = interfaces[0]["address"]
+        remote = remote_json(address, "GET", "/api/system")
+        require(not remote["canConfigure"], "A non-loopback connection can edit listening configuration")
+        denied = remote_json(address, "PUT", "/api/system/listen", {"listen": ["127.0.0.1"]}, expected=403)
+        require(denied["message"] == "请在运行程序的电脑上修改监听设置", "Remote listening rejection lost its required explanation")
+        require(json.loads(config_path.read_text(encoding="utf-8"))["listen"] == ["0.0.0.0"], "A rejected remote request changed saved listening addresses")
+
+        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1", address]})
+        multiple = wait_for_listen(["127.0.0.1", address])
+        require(f"http://{address}:{info['port']}" in multiple["addresses"], "Explicit adapter listening did not advertise its actual URL")
+        require(not remote_json(address, "GET", "/api/system")["canConfigure"], "Explicit adapter binding bypassed the loopback check")
+        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]})
+        wait_for_listen(["127.0.0.1"])
+        require(self.process.pid == pid and self.fingerprint() == before, "Listener changes modified business data or restarted the process")
+
+        # An adapter-only command line remains usable and overrides, without rewriting,
+        # the saved loopback choice. This isolated process is then restarted normally.
+        self.stop()
+        saved_config = config_path.read_bytes()
+        self.start(listen=[address], host=address)
+        adapter_only = self.json("GET", "/api/system")
+        require(adapter_only["listen"] == [address] and not adapter_only["canConfigure"], "--listen did not override the saved default")
+        require(all("localhost" not in url and "127.0.0.1" not in url for url in adapter_only["addresses"]), "Adapter-only listener still advertised localhost")
+        require(config_path.read_bytes() == saved_config, "The --listen override unexpectedly rewrote appsettings.json")
+        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]}, expected=403)
+        self.stop()
+
+        config_path.write_text(json.dumps({"port": 5180, "listen": ["203.0.113.9"]}), encoding="utf-8")
+        self.start()
+        fallback = self.json("GET", "/api/system")
+        require(fallback["listen"] == ["127.0.0.1"] and "203.0.113.9" in fallback["unavailableSaved"], "An unavailable saved adapter did not fall back to loopback")
+        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]})
+        wait_for_listen(["127.0.0.1"])
+        require(self.fingerprint() == before, "Listener restart and fallback lost business data")
+
     def test_legacy_upgrade_and_restore(self) -> None:
         require(self.process is None, "Legacy-layout fixtures require a stopped temporary server")
         fixture = Path(__file__).resolve().parents[1] / "server" / "StreetEcoTool.Tests" / "Fixtures" / "schema-v1"
@@ -723,6 +818,7 @@ class ApiSmoke:
             ("feedback, optional-photo review, closure and return audit trail", self.test_state_transitions),
             ("calendar periods, deadline boundaries and dashboard/list agreement", self.test_dashboard),
             ("v2 temporary points, thumbnails, batch rollback, editing, campaigns and seven Word exports", self.test_version2_workflows),
+            ("loopback-only listening, IPv6, live rebinding, remote 403, command override and missing-adapter fallback", self.test_listening),
             ("consistent backup, restore confirmation, invalid ZIP and failed-preservation safety", self.test_backups),
             ("orphan cleanup, future-record reminders, graceful restart and idempotent demo seed", self.test_cleanup_and_restart),
             ("restart recovery before and after restore commit, with old evidence retained", self.test_interrupted_restore),
