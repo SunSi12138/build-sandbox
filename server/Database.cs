@@ -33,7 +33,8 @@ public sealed partial class Store : IDisposable
         Directory.CreateDirectory(BackupDir);
         Directory.CreateDirectory(TemporaryDir);
         SQLitePCL.Batteries_V2.Init();
-        ReopenConnection();
+        try { ReopenConnection(); }
+        catch { _db?.Dispose(); throw; }
     }
 
     // The caller holds _gate when replacing a live database (restore).

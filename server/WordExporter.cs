@@ -228,13 +228,13 @@ public static class WordExporter
 
     private static void WriteInspectionInfo(Document document, InspectionDto inspection, string? completed = null)
     {
-        var rows = new List<Cell[]>
-        {
+        List<Cell[]> rows =
+        [
             [new("点位名称", Header: true), new(inspection.PointName), new("点位类型", Header: true), new(inspection.TypeName)],
             [new("所属社区", Header: true), new(inspection.CommunityName), new("排查日期", Header: true), new(inspection.Date, Align: "center")],
             [new("详细地址", Header: true), new(inspection.Address, Span: 3)],
             [new("排查人", Header: true), new(inspection.Inspector), new("排查结果", Header: true), new(inspection.Result == "normal" ? "正常" : "发现问题", Align: "center")]
-        };
+        ];
         var contact = string.Join("　", new[] { inspection.Contact, inspection.Phone }.Where(value => !string.IsNullOrWhiteSpace(value)));
         if (contact.Length > 0) rows.Add([new("联系人及电话", Header: true), new(contact, Span: 3)]);
         if (completed is not null) rows.Add([new("通知单编号", Header: true), new(inspection.NoticeNumber), new("整改完成日期", Header: true), new(completed, Align: "center")]);
