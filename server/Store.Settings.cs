@@ -1,3 +1,5 @@
+using Microsoft.Data.Sqlite;
+
 namespace StreetEcoTool;
 
 public sealed partial class Store
@@ -29,7 +31,7 @@ public sealed partial class Store
 
     public BootstrapDto GetBootstrap()
     {
-        lock (_gate) return new(GetSettings(), GetCommunities(), GetPointTypes(), Today);
+        lock (_gate) return new(GetSettings(), GetCommunities(), GetPointTypes(), Today, GetCampaignTypes());
     }
 
     public CommunityDto[] GetCommunities()
@@ -44,9 +46,9 @@ public sealed partial class Store
         }
     }
 
-    private CommunityDto RequireCommunity(string id)
+    private CommunityDto RequireCommunity(string id, SqliteTransaction? transaction = null)
     {
-        using var command = Command("SELECT id,name,title FROM communities WHERE id=$id;", null, ("$id", id));
+        using var command = Command("SELECT id,name,title FROM communities WHERE id=$id;", transaction, ("$id", id));
         using var row = command.ExecuteReader();
         if (!row.Read()) throw new ApiException(400, "所选社区不存在，请刷新后重新选择。");
         return new(row.GetString(0), row.GetString(1), row.GetString(2));
@@ -73,8 +75,8 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using (var used = Command("SELECT (SELECT COUNT(*) FROM points WHERE community_id=$id)+(SELECT COUNT(*) FROM inspections WHERE community_id=$id);", null, ("$id", id)))
-                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该社区已被点位或历史排查引用，不能删除；可以修改名称和抬头。");
+            using (var used = Command("SELECT (SELECT COUNT(*) FROM points WHERE community_id=$id)+(SELECT COUNT(*) FROM inspections WHERE community_id=$id)+(SELECT COUNT(*) FROM campaigns WHERE community_id=$id);", null, ("$id", id)))
+                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该社区已被记录引用，不能删除。");
             using var command = Command("DELETE FROM communities WHERE id=$id;", null, ("$id", id));
             RequireChanged(command.ExecuteNonQuery(), "社区");
         }
@@ -92,9 +94,9 @@ public sealed partial class Store
         }
     }
 
-    private PointTypeDto RequirePointType(string id)
+    private PointTypeDto RequirePointType(string id, SqliteTransaction? transaction = null)
     {
-        using var command = Command("SELECT id,name FROM point_types WHERE id=$id;", null, ("$id", id));
+        using var command = Command("SELECT id,name FROM point_types WHERE id=$id;", transaction, ("$id", id));
         using var row = command.ExecuteReader();
         if (!row.Read()) throw new ApiException(400, "所选点位类型不存在，请刷新后重新选择。");
         return new(row.GetString(0), row.GetString(1));

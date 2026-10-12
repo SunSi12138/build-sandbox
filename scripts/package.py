@@ -1,50 +1,71 @@
 #!/usr/bin/env python3
-"""Package only the NativeAOT executable and generated offline wwwroot."""
+"""Combine two NativeAOT executables and one offline SPA into hbtool.zip."""
 import argparse
 import hashlib
-import os
 from pathlib import Path
-import tarfile
-import tempfile
+import struct
 import zipfile
-import shutil
+
+
+def verify_binary(path: Path, platform: str) -> None:
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"Missing regular executable: {path}")
+    with path.open("rb") as source:
+        header = source.read(64)
+        if platform == "win-x86":
+            if header[:2] != b"MZ":
+                raise ValueError("Windows executable is not a PE file")
+            source.seek(struct.unpack_from("<I", header, 60)[0])
+            pe = source.read(6)
+            if pe[:4] != b"PE\0\0" or struct.unpack_from("<H", pe, 4)[0] != 0x14C:
+                raise ValueError("Windows executable is not x86")
+        elif header[:5] != b"\x7fELF\x02" or struct.unpack_from("<H", header, 18)[0] != 183:
+            raise ValueError("Linux executable is not ARM64 ELF")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rid', required=True, choices=['win-x86', 'linux-arm64', 'linux-x64'])
-    parser.add_argument('--publish', type=Path, default=Path('publish'))
-    parser.add_argument('--output', type=Path, default=Path('dist'))
+    parser.add_argument("--win-x86", type=Path, required=True)
+    parser.add_argument("--linux-arm64", type=Path, required=True)
+    parser.add_argument("--web-static", type=Path, required=True)
+    parser.add_argument("--output", type=Path, default=Path("dist"))
     args = parser.parse_args()
-    binary_name = 'StreetEcoTool.exe' if args.rid.startswith('win-') else 'StreetEcoTool'
-    binary = args.publish / binary_name
-    public = args.publish / 'wwwroot'
-    if not binary.is_file() or not (public / 'index.html').is_file():
-        raise SystemExit('Packaging requires the native executable and wwwroot/index.html.')
-    if any(p.name in ('e_sqlite3.dll', 'libe_sqlite3.so', 'libe_sqlite3.dylib') for p in args.publish.rglob('*')):
-        raise SystemExit('SQLite must be statically linked; a dynamic SQLite library was found.')
+    verify_binary(args.win_x86, "win-x86")
+    verify_binary(args.linux_arm64, "linux-arm64")
+    if not (args.web_static / "index.html").is_file():
+        raise ValueError("Missing generated frontend index.html")
+    files = [(args.win_x86, "hbtool/StreetEcoTool-win-x86.exe", 0o644),
+             (args.linux_arm64, "hbtool/StreetEcoTool-linux-arm64", 0o755)]
+    for file in sorted(args.web_static.rglob("*")):
+        if file.is_symlink():
+            raise ValueError(f"Frontend cannot include symbolic links: {file}")
+        if file.is_file():
+            files.append((file, "hbtool/wwwroot/" + file.relative_to(args.web_static).as_posix(), 0o644))
     args.output.mkdir(parents=True, exist_ok=True)
-    suffix = '.zip' if args.rid.startswith('win-') else '.tar.gz'
-    destination = args.output / ('hbtool-' + args.rid + suffix)
-    with tempfile.TemporaryDirectory(prefix='hbtool-package-') as temporary:
-        root = Path(temporary) / 'hbtool'
-        root.mkdir()
-        shutil.copy2(binary, root / binary_name)
-        shutil.copytree(public, root / 'wwwroot')
-        if not args.rid.startswith('win-'):
-            (root / binary_name).chmod(0o755)
-        if suffix == '.zip':
-            with zipfile.ZipFile(destination, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
-                for path in sorted(root.rglob('*')):
-                    if path.is_file():
-                        archive.write(path, path.relative_to(root.parent).as_posix())
-        else:
-            with tarfile.open(destination, 'w:gz', compresslevel=6) as archive:
-                archive.add(root, arcname='hbtool')
-    digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-    destination.with_suffix(destination.suffix + '.sha256').write_text(digest + '  ' + destination.name + '\n', encoding='ascii')
-    print(f'{destination}: {destination.stat().st_size:,} bytes; SHA256 {digest}')
+    target = args.output / "hbtool.zip"
+    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for source, name, mode in files:
+            entry = zipfile.ZipInfo(name)
+            entry.create_system = 3
+            entry.external_attr = (0o100000 | mode) << 16
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            with source.open("rb") as input_file, archive.open(entry, "w") as output:
+                while block := input_file.read(1024 * 1024):
+                    output.write(block)
+    with zipfile.ZipFile(target) as archive:
+        if archive.testzip() is not None:
+            raise ValueError("Package CRC verification failed")
+        names = archive.namelist()
+        if any("linux-x64" in name or name.endswith("appsettings.json") for name in names):
+            raise ValueError("Package includes a test binary or user configuration")
+        assert (archive.getinfo("hbtool/StreetEcoTool-linux-arm64").external_attr >> 16) & 0o777 == 0o755
+    with target.open("rb") as package_file:
+        digest = hashlib.file_digest(package_file, "sha256").hexdigest()
+    checksum = args.output / "hbtool.zip.sha256"
+    checksum.write_text(f"{digest}  hbtool.zip\n", encoding="ascii")
+    print(f"Packaged {len(files)} files into {target} ({target.stat().st_size:,} bytes)")
+    print(f"SHA-256: {digest}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

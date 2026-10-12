@@ -8,11 +8,13 @@ public sealed partial class Store : IDisposable
     private readonly object _gate = new();
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
     public const int DatabaseApplicationId = 1397048143;
+    public string RootDir { get; }
     public string DataDir { get; }
     public string PhotosDir { get; }
     public string BackupDir { get; }
+    public string TemporaryDir { get; }
     public string DatabasePath => Path.Combine(DataDir, "app.db");
     public static string Today => DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     public static string NewId() => Guid.NewGuid().ToString("N");
@@ -20,12 +22,16 @@ public sealed partial class Store : IDisposable
     public Store(string dataDir)
     {
         DataDir = Path.GetFullPath(dataDir);
-        PhotosDir = Path.Combine(DataDir, "photos");
-        BackupDir = Path.Combine(DataDir, "backup");
+        RootDir = Directory.GetParent(DataDir)?.FullName ?? throw new IOException("数据目录缺少程序上级目录。");
+        PhotosDir = Path.Combine(RootDir, "photos");
+        BackupDir = Path.Combine(RootDir, "backup");
+        TemporaryDir = Path.Combine(RootDir, "temp");
         Directory.CreateDirectory(DataDir);
+        RecoverInterruptedRestore(DataDir);
+        MigrateLegacyLayout(DataDir);
         Directory.CreateDirectory(PhotosDir);
         Directory.CreateDirectory(BackupDir);
-        RecoverInterruptedRestore(DataDir);
+        Directory.CreateDirectory(TemporaryDir);
         SQLitePCL.Batteries_V2.Init();
         ReopenConnection();
     }
@@ -48,6 +54,7 @@ public sealed partial class Store : IDisposable
         var version = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
         if (version > SchemaVersion) throw new ApiException(409, "数据库来自更新版本，请使用相同或更新的程序打开。");
         if (version == 0) MigrateToVersion1();
+        if (version <= 1) MigrateToVersion2(version == 1);
     }
 
     private void MigrateToVersion1()
@@ -118,6 +125,132 @@ public sealed partial class Store : IDisposable
             type.ExecuteNonQuery();
         }
         transaction.Commit();
+    }
+
+
+    public static void MigrateLegacyLayout(string dataDir)
+    {
+        var data = Path.GetFullPath(dataDir);
+        var root = Directory.GetParent(data)?.FullName ?? throw new IOException("数据目录缺少程序上级目录。");
+        try
+        {
+            foreach (var name in new[] { "photos", "backup" })
+                MergeDirectory(Path.Combine(data, name), Path.Combine(root, name));
+            var temp = Path.Combine(root, "temp");
+            MergeDirectory(Path.Combine(data, ".temporary"), temp);
+            MergeDirectory(Path.Combine(data, ".restore-staging"), Path.Combine(temp, "restore-staging"));
+            foreach (var name in new[] { ".restore-journal.json", ".restore-journal.json.tmp" })
+            {
+                var old = Path.Combine(data, name);
+                if (!File.Exists(old)) continue;
+                Directory.CreateDirectory(temp);
+                var target = Path.Combine(temp, name.TrimStart('.'));
+                if (File.Exists(target)) Console.Error.WriteLine($"旧目录存在同名文件，已保留原文件：{old}");
+                else File.Move(old, target);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { throw new IOException($"旧目录迁移失败，原数据已保留，请检查磁盘权限后重试：{error.Message}", error); }
+    }
+
+    private static void MergeDirectory(string source, string target)
+    {
+        if (!Directory.Exists(source)) return;
+        if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0 ||
+            (Directory.Exists(target) && (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0))
+            throw new IOException("数据目录不能使用符号链接或目录联接。");
+        if (!Directory.Exists(target)) { Directory.CreateDirectory(Path.GetDirectoryName(target)!); Directory.Move(source, target); return; }
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            var destination = Path.Combine(target, Path.GetFileName(file));
+            if (File.Exists(destination) || Directory.Exists(destination)) Console.Error.WriteLine($"旧目录存在同名条目，已保留原文件：{file}");
+            else File.Move(file, destination);
+        }
+        foreach (var directory in Directory.EnumerateDirectories(source))
+        {
+            var destination = Path.Combine(target, Path.GetFileName(directory));
+            if (File.Exists(destination)) Console.Error.WriteLine($"旧目录存在同名条目，已保留原目录：{directory}");
+            else MergeDirectory(directory, destination);
+        }
+        if (!Directory.EnumerateFileSystemEntries(source).Any()) Directory.Delete(source);
+    }
+
+    private void MigrateToVersion2(bool preserveVersion1)
+    {
+        Directory.CreateDirectory(BackupDir);
+        if (preserveVersion1)
+        {
+            using (var checkpoint = Command("PRAGMA wal_checkpoint(TRUNCATE);"))
+            using (var result = checkpoint.ExecuteReader())
+                if (!result.Read() || result.GetInt32(0) != 0) throw new IOException("迁移前无法完成数据库快照，请关闭其他数据库程序后重试。");
+            var backup = Path.Combine(BackupDir, $"before-migrate-v1-{DateTime.Now:yyyyMMdd-HHmmss}-{NewId()[..8]}.db");
+            File.Copy(DatabasePath, backup);
+        }
+        using (var foreignKeys = Command("PRAGMA foreign_keys=OFF;")) foreignKeys.ExecuteNonQuery();
+        try
+        {
+            using var transaction = _db.BeginTransaction();
+            using (var migrate = Command("""
+                ALTER TABLE points ADD COLUMN longitude REAL CHECK(longitude IS NULL OR longitude BETWEEN -180 AND 180);
+                ALTER TABLE points ADD COLUMN latitude REAL CHECK(latitude IS NULL OR latitude BETWEEN -90 AND 90);
+                ALTER TABLE points ADD COLUMN temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1));
+                CREATE TABLE campaign_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+                CREATE TABLE campaigns (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                    type_id TEXT NOT NULL REFERENCES campaign_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
+                    community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT, community_name TEXT NOT NULL,
+                    location TEXT NOT NULL, campaign_date TEXT NOT NULL, end_date TEXT,
+                    organizer TEXT NOT NULL DEFAULT '', participants TEXT NOT NULL DEFAULT '',
+                    participant_count INTEGER CHECK(participant_count IS NULL OR participant_count >= 0),
+                    vehicle_count INTEGER CHECK(vehicle_count IS NULL OR vehicle_count >= 0),
+                    garbage_tons REAL CHECK(garbage_tons IS NULL OR garbage_tons >= 0),
+                    area_sqm REAL CHECK(area_sqm IS NULL OR area_sqm >= 0),
+                    content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                    CHECK(end_date IS NULL OR end_date >= campaign_date)
+                );
+                CREATE TABLE photos_v2 (
+                    id TEXT PRIMARY KEY, inspection_id TEXT REFERENCES inspections(id) ON DELETE RESTRICT,
+                    issue_id TEXT REFERENCES issues(id) ON DELETE RESTRICT,
+                    action_id TEXT REFERENCES issue_actions(id) ON DELETE RESTRICT,
+                    point_id TEXT REFERENCES points(id) ON DELETE RESTRICT,
+                    campaign_id TEXT REFERENCES campaigns(id) ON DELETE RESTRICT,
+                    phase TEXT NOT NULL CHECK(phase IN ('site','after','review','point','before','process')),
+                    relative_path TEXT NOT NULL UNIQUE, width INTEGER NOT NULL CHECK(width>0), height INTEGER NOT NULL CHECK(height>0),
+                    uploaded_at TEXT NOT NULL, has_thumb INTEGER NOT NULL DEFAULT 0 CHECK(has_thumb IN (0,1)),
+                    CHECK((inspection_id IS NOT NULL)+(issue_id IS NOT NULL)+(point_id IS NOT NULL)+(campaign_id IS NOT NULL) <= 1),
+                    CHECK(action_id IS NULL OR issue_id IS NOT NULL),
+                    CHECK(inspection_id IS NULL OR phase='site'),
+                    CHECK(issue_id IS NULL OR phase IN ('site','after','review')),
+                    CHECK(point_id IS NULL OR phase='point'),
+                    CHECK(campaign_id IS NULL OR phase IN ('before','process','after'))
+                );
+                INSERT INTO photos_v2(id,inspection_id,issue_id,action_id,phase,relative_path,width,height,uploaded_at)
+                    SELECT id,inspection_id,issue_id,action_id,phase,relative_path,width,height,uploaded_at FROM photos;
+                DROP TABLE photos;
+                ALTER TABLE photos_v2 RENAME TO photos;
+                CREATE INDEX ix_photos_inspection ON photos(inspection_id);
+                CREATE INDEX ix_photos_issue ON photos(issue_id);
+                CREATE INDEX ix_photos_point ON photos(point_id);
+                CREATE INDEX ix_photos_campaign ON photos(campaign_id);
+                CREATE INDEX ix_photos_unattached ON photos(uploaded_at)
+                    WHERE inspection_id IS NULL AND issue_id IS NULL AND point_id IS NULL AND campaign_id IS NULL;
+                CREATE INDEX ix_campaigns_date ON campaigns(campaign_date,community_id,type_id);
+                CREATE INDEX ix_points_temporary ON points(temporary,disabled);
+                PRAGMA user_version=2;
+                """, transaction)) migrate.ExecuteNonQuery();
+            foreach (var name in new[] { "卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他" })
+            {
+                using var command = Command("INSERT INTO campaign_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
+                command.ExecuteNonQuery();
+            }
+            using (var check = Command("PRAGMA foreign_key_check;", transaction))
+            using (var row = check.ExecuteReader())
+                if (row.Read()) throw new InvalidDataException("迁移后的数据关联检查失败。");
+            transaction.Commit();
+        }
+        catch (Exception error) when (error is SqliteException or IOException or InvalidDataException)
+        { throw new IOException($"数据库升级失败，事务已回滚，请保留升级前备份：{error.Message}", error); }
+        finally { using var foreignKeys = Command("PRAGMA foreign_keys=ON;"); foreignKeys.ExecuteNonQuery(); }
     }
 
     private SqliteCommand Command(string sql, SqliteTransaction? transaction = null, params (string Name, object? Value)[] parameters)

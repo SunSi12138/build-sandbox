@@ -31,37 +31,45 @@ public sealed partial class Store
     private const long MaximumExpandedBytes = 16L * 1024 * 1024 * 1024;
     private const int MaximumArchiveEntries = 50000;
     private string? _maintenanceDate;
-    private string StagingDir => Path.Combine(DataDir, ".restore-staging");
-    private string TemporaryDir => Path.Combine(DataDir, ".temporary");
+    private string StagingDir => Path.Combine(TemporaryDir, "restore-staging");
 
-    public void RunMaintenance()
+    public void RunMaintenance() => RunDailyMaintenance(DateOnly.FromDateTime(DateTime.Today));
+
+    public void EnsurePreviousDaySnapshot(DateOnly today)
     {
         lock (_gate)
         {
-            var today = Today;
-            if (_maintenanceDate == today) return;
             Directory.CreateDirectory(BackupDir);
-            var destination = Path.Combine(BackupDir, $"auto-{today}.db");
+            var previousDay = today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var destination = Path.Combine(BackupDir, $"auto-{previousDay}.db");
             if (!File.Exists(destination))
             {
-                var temporary = Path.Combine(BackupDir, $".auto-{NewId()}.db");
+                var temporary = Path.Combine(TemporaryDir, $"auto-{NewId()}.db");
                 try { VacuumInto(temporary); File.Move(temporary, destination); }
                 finally { TryDeleteFile(temporary); }
+                Console.WriteLine($"已保存 {previousDay} 数据库快照：{destination}");
             }
-            var automatic = GetAutomaticBackupFiles().OrderByDescending(path => Path.GetFileName(path), StringComparer.Ordinal).ToArray();
-            foreach (var old in automatic.Skip(14)) File.Delete(old);
+            foreach (var old in GetAutomaticBackupFiles().OrderByDescending(Path.GetFileName, StringComparer.Ordinal).Skip(14)) File.Delete(old);
+        }
+    }
+
+    public void RunDailyMaintenance(DateOnly today)
+    {
+        lock (_gate)
+        {
+            var day = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            if (_maintenanceDate == day) return;
+            EnsurePreviousDaySnapshot(today);
             CleanupOrphanPhotos();
+            var cutoff = DateTime.Now.AddDays(-1);
             if (Directory.Exists(StagingDir))
-            {
                 foreach (var directory in Directory.EnumerateDirectories(StagingDir))
-                    if (Directory.GetLastWriteTime(directory) < DateTime.Now.AddDays(-1)) TryDeleteDirectory(directory);
-            }
-            if (Directory.Exists(TemporaryDir))
-            {
-                foreach (var file in Directory.EnumerateFiles(TemporaryDir))
-                    if (File.GetLastWriteTime(file) < DateTime.Now.AddDays(-1)) TryDeleteFile(file);
-            }
-            _maintenanceDate = today;
+                    if (Directory.GetLastWriteTime(directory) < cutoff) TryDeleteDirectory(directory);
+            foreach (var file in Directory.EnumerateFiles(TemporaryDir))
+                if (!Path.GetFileName(file).StartsWith("restore-journal", StringComparison.Ordinal) && File.GetLastWriteTime(file) < cutoff) TryDeleteFile(file);
+            foreach (var directory in Directory.EnumerateDirectories(TemporaryDir))
+                if (directory != StagingDir && Directory.GetLastWriteTime(directory) < cutoff) TryDeleteDirectory(directory);
+            _maintenanceDate = day;
         }
     }
 
@@ -102,14 +110,20 @@ public sealed partial class Store
                 var manifest = archive.CreateEntry("manifest.json");
                 using (var output = manifest.Open())
                     JsonSerializer.Serialize(output, new BackupManifest(1, SchemaVersion, DateTime.Now.ToString("O", CultureInfo.InvariantCulture), "StreetEcoTool"), BackupJsonContext.Default.BackupManifest);
-                using var photoCommand = Command("SELECT id,relative_path FROM photos ORDER BY relative_path;");
+                using var photoCommand = Command("SELECT id,relative_path,has_thumb FROM photos ORDER BY relative_path;");
                 using var photoRows = photoCommand.ExecuteReader();
                 while (photoRows.Read())
                 {
                     var relative = photoRows.GetString(1);
                     var photo = PhotoStorage.ResolvePath(PhotosDir, photoRows.GetString(0), relative);
-                    if (!File.Exists(photo)) throw new IOException("数据库中登记的照片文件缺失，请保留现有 data 目录并检查磁盘。");
+                    if (!File.Exists(photo)) throw new IOException("数据库中登记的照片文件缺失，请保留现有数据并检查磁盘。");
                     archive.CreateEntryFromFile(photo, "photos/" + relative, CompressionLevel.NoCompression);
+                    if (photoRows.GetInt32(2) != 0)
+                    {
+                        var thumbnail = PhotoStorage.ResolveThumbnailPath(PhotosDir, photoRows.GetString(0), relative);
+                        if (!File.Exists(thumbnail)) throw new IOException("数据库中登记的缩略图缺失，请检查照片目录。");
+                        archive.CreateEntryFromFile(thumbnail, "photos/" + relative[..^4] + ".thumb.jpg", CompressionLevel.NoCompression);
+                    }
                 }
                 return destination;
             }
@@ -172,7 +186,7 @@ public sealed partial class Store
             {
                 "app.db" => 256L * 1024 * 1024,
                 "manifest.json" => 16L * 1024,
-                _ when IsArchivePhotoPath(name) => 10L * 1024 * 1024,
+                _ when IsArchivePhotoPath(name) => name.EndsWith(".thumb.jpg", StringComparison.Ordinal) ? PhotoStorage.MaximumThumbnailBytes : PhotoStorage.MaximumUploadBytes,
                 _ => throw new InvalidDataException("压缩包只能包含 app.db、manifest.json 与 photos 中的 JPEG 照片。")
             };
             if (entry.Length < 1 || entry.Length > limit) throw new InvalidDataException($"压缩包中的 {name} 为空或超过大小限制。");
@@ -206,8 +220,10 @@ public sealed partial class Store
     {
         if (!name.StartsWith("photos/", StringComparison.Ordinal)) return false;
         var parts = name[7..].Split('/');
-        return parts.Length == 2 && IsPhotoMonth(parts[0]) && parts[1].Length == 36 && parts[1].EndsWith(".jpg", StringComparison.Ordinal)
-            && parts[1][..32].All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+        return parts.Length == 2 && IsPhotoMonth(parts[0]) &&
+            ((parts[1].Length == 36 && parts[1].EndsWith(".jpg", StringComparison.Ordinal)) ||
+             (parts[1].Length == 42 && parts[1].EndsWith(".thumb.jpg", StringComparison.Ordinal))) &&
+            parts[1][..32].All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
     }
 
     private static RestorePreviewDto ValidateRestoreDirectory(string directory, string token, long expanded)
@@ -247,18 +263,32 @@ public sealed partial class Store
             using var schema = connection.CreateCommand(); schema.CommandText = sql;
             using var reader = schema.ExecuteReader();
         }
+        if (version >= 2)
+        {
+            foreach (var sql in new[] {
+                "SELECT longitude,latitude,temporary FROM points LIMIT 0;",
+                "SELECT point_id,campaign_id,has_thumb FROM photos LIMIT 0;",
+                "SELECT id,name FROM campaign_types LIMIT 0;",
+                "SELECT id,name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes FROM campaigns LIMIT 0;" })
+            {
+                using var schema = connection.CreateCommand(); schema.CommandText = sql;
+                using var reader = schema.ExecuteReader();
+            }
+        }
         using (var dates = connection.CreateCommand())
         {
             dates.CommandText = "SELECT inspection_date FROM inspections UNION ALL SELECT deadline FROM issues UNION ALL SELECT feedback_date FROM issues UNION ALL SELECT review_date FROM issues UNION ALL SELECT closed_date FROM issues UNION ALL SELECT action_date FROM issue_actions;";
+            if (version >= 2) dates.CommandText = dates.CommandText.TrimEnd(';') + " UNION ALL SELECT campaign_date FROM campaigns UNION ALL SELECT end_date FROM campaigns;";
             using var reader = dates.ExecuteReader();
             while (reader.Read())
                 if (!reader.IsDBNull(0) && !DateOnly.TryParseExact(reader.GetString(0), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
                     throw new InvalidDataException("备份包含格式无效的业务日期。");
         }
         var photoFiles = new HashSet<string>(StringComparer.Ordinal);
+        var photoCount = 0;
         using (var photos = connection.CreateCommand())
         {
-            photos.CommandText = "SELECT id,relative_path,width,height FROM photos;";
+            photos.CommandText = version >= 2 ? "SELECT id,relative_path,width,height,has_thumb FROM photos;" : "SELECT id,relative_path,width,height,0 FROM photos;";
             using var reader = photos.ExecuteReader();
             while (reader.Read())
             {
@@ -269,6 +299,16 @@ public sealed partial class Store
                 var dimensions = JpegMetadata.Read(File.ReadAllBytes(file));
                 if (dimensions.Width != reader.GetInt32(2) || dimensions.Height != reader.GetInt32(3)) throw new InvalidDataException("备份照片的实际尺寸与数据库不一致。");
                 photoFiles.Add(Path.GetFullPath(file));
+                photoCount++;
+                if (reader.GetInt32(4) != 0)
+                {
+                    var thumbnail = PhotoStorage.ResolveThumbnailPath(Path.Combine(directory, "photos"), reader.GetString(0), relative);
+                    if (!File.Exists(thumbnail)) throw new InvalidDataException("备份缺少数据库中登记的缩略图。");
+                    if (new FileInfo(thumbnail).Length > PhotoStorage.MaximumThumbnailBytes) throw new InvalidDataException("备份中的缩略图超过 200 KB。");
+                    var thumbSize = JpegMetadata.Read(File.ReadAllBytes(thumbnail));
+                    if (Math.Max(thumbSize.Width, thumbSize.Height) > 360) throw new InvalidDataException("缩略图尺寸超过 360 像素。");
+                    photoFiles.Add(Path.GetFullPath(thumbnail));
+                }
             }
         }
         if (Directory.EnumerateFiles(Path.Combine(directory, "photos"), "*", SearchOption.AllDirectories).Any(file => !photoFiles.Contains(Path.GetFullPath(file))))
@@ -283,7 +323,7 @@ public sealed partial class Store
                 throw new InvalidDataException("备份清单不受支持或与数据库版本不一致。");
             createdAt = manifest.CreatedAt;
         }
-        return new RestorePreviewDto(token, createdAt, checked((int)version), photoFiles.Count,
+        return new RestorePreviewDto(token, createdAt, checked((int)version), photoCount,
             checked((int)Number(connection, "SELECT count(*) FROM points;")), checked((int)Number(connection, "SELECT count(*) FROM inspections;")),
             checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture));
     }
@@ -327,7 +367,7 @@ public sealed partial class Store
             var backupName = $"before-restore-{DateTime.Now:yyyyMMdd-HHmmss}-{NewId()[..8]}";
             var previous = Path.Combine(BackupDir, backupName);
             Directory.CreateDirectory(previous);
-            var journalPath = Path.Combine(DataDir, ".restore-journal.json");
+            var journalPath = Path.Combine(TemporaryDir, "restore-journal.json");
             WriteRestoreJournal(journalPath, new RestoreJournal(backupName, false));
             try
             {
@@ -366,16 +406,19 @@ public sealed partial class Store
 
     public static void RecoverInterruptedRestore(string dataDir)
     {
-        var journalPath = Path.Combine(dataDir, ".restore-journal.json");
+        var root = Directory.GetParent(Path.GetFullPath(dataDir))?.FullName ?? throw new IOException("数据目录无效。");
+        var legacyJournal = Path.Combine(dataDir, ".restore-journal.json");
+        var legacy = File.Exists(legacyJournal);
+        var journalPath = legacy ? legacyJournal : Path.Combine(root, "temp", "restore-journal.json");
         if (!File.Exists(journalPath)) return;
         RestoreJournal journal;
         using (var file = File.OpenRead(journalPath))
-            journal = JsonSerializer.Deserialize(file, BackupJsonContext.Default.RestoreJournal) ?? throw new IOException("恢复日志损坏，请保留 data 目录并联系维护人员。");
+            journal = JsonSerializer.Deserialize(file, BackupJsonContext.Default.RestoreJournal) ?? throw new IOException("恢复日志损坏，请保留数据并联系维护人员。");
         if (Path.GetFileName(journal.BackupName) != journal.BackupName || !journal.BackupName.StartsWith("before-restore-", StringComparison.Ordinal))
             throw new IOException("恢复日志路径无效，已停止以保护数据。");
         if (!journal.Committed)
         {
-            var previous = Path.Combine(dataDir, "backup", journal.BackupName);
+            var previous = Path.Combine(legacy ? dataDir : root, "backup", journal.BackupName);
             if (File.Exists(Path.Combine(previous, "app.db")))
             {
                 foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(Path.Combine(dataDir, "app.db" + suffix));
@@ -384,7 +427,7 @@ public sealed partial class Store
             var oldPhotos = Path.Combine(previous, "photos");
             if (Directory.Exists(oldPhotos))
             {
-                var photos = Path.Combine(dataDir, "photos");
+                var photos = Path.Combine(legacy ? dataDir : root, "photos");
                 if (Directory.Exists(photos)) Directory.Delete(photos, true);
                 Directory.Move(oldPhotos, photos);
             }

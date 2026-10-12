@@ -36,7 +36,7 @@ def validate_docx(payload: bytes) -> tuple[str, int, ET.Element]:
         names = archive.namelist()
         require(len(names) == len(set(names)), "Duplicate package part")
         parsed = {name: ET.fromstring(archive.read(name)) for name in names if name.endswith((".xml", ".rels"))}
-        for required in ("[Content_Types].xml", "_rels/.rels", "word/document.xml", "word/styles.xml", "word/fontTable.xml", "word/footer1.xml", "word/_rels/document.xml.rels"):
+        for required in ("[Content_Types].xml", "_rels/.rels", "word/document.xml", "word/styles.xml", "word/settings.xml", "word/fontTable.xml", "word/footer1.xml", "word/_rels/document.xml.rels"):
             require(required in parsed, "Missing DOCX part: " + required)
         for name, root in parsed.items():
             if not name.endswith(".rels"):
@@ -48,7 +48,28 @@ def validate_docx(payload: bytes) -> tuple[str, int, ET.Element]:
                 require(relationship.get("TargetMode") != "External", "An exported file depends on external resources")
                 target = posixpath.normpath(posixpath.join(base, relationship.get("Target", "")))
                 require(target in names, "Broken relationship: " + target)
+        for name, root in parsed.items():
+            for spacing in root.iter(W + "spacing"):
+                require(spacing.get(W + "line") == "240" and spacing.get(W + "lineRule") == "auto", "Nonstandard paragraph spacing: " + name)
+            for font in root.iter(W + "rFonts"):
+                require(font.get(W + "hint") == "eastAsia", "Font script hint missing")
+                require(all(font.get(W + script) == font.get(W + "eastAsia") for script in ("ascii", "hAnsi", "cs")), "Mixed script fonts")
+        require(parsed["word/settings.xml"].find(W + "updateFields") is None, "Word must not request a field update")
         document = parsed["word/document.xml"]
+        for table in document.iter(W + "tbl"):
+            grid = table.find(W + "tblGrid")
+            require(grid is not None and len(grid) > 0, "Table grid missing")
+            for row in table.findall(W + "tr"):
+                require(row.find("./" + W + "trPr/" + W + "cantSplit") is not None, "Table row can split")
+                spans = 0
+                for cell in row.findall(W + "tc"):
+                    require(len(cell) > 0 and cell[-1].tag == W + "p", "Empty or incomplete table cell")
+                    span = cell.find("./" + W + "tcPr/" + W + "gridSpan")
+                    spans += int(span.get(W + "val", "1")) if span is not None else 1
+                require(spans == len(grid), "Table cell spans do not match its grid")
+        visible_text = "".join(element.text or "" for element in document.iter(W + "t"))
+        for phrase in ("上传", "留痕", "暂无照片", "附后照片", "无。"):
+            require(phrase not in visible_text, "Forbidden generated Word phrase: " + phrase)
         relationships = {item.get("Id"): item for item in parsed["word/_rels/document.xml.rels"]}
         for image in document.iter(A + "blip"):
             relation = relationships.get(image.get(R + "embed"))
@@ -122,7 +143,7 @@ class WordSmoke(api_smoke.ApiSmoke):
         self.ledger_route = "/api/exports/ledger?" + query
         text, photos, document = self.download(self.ledger_route + "&photos=true", "ledger-photos.docx")
         require(photos == 5 and "复查" in text and "整改后" in text, "Ledger before/after/review photos are incomplete or duplicated")
-        require("共 2 条，已闭环 1，未闭环 1，逾期 0。" in text, "Ledger summary is wrong")
+        require("共 2 条，已闭环 1，待复查 0，待整改 1，其中逾期 0" in text, "Ledger summary is wrong")
         size = document.find(".//" + W + "pgSz")
         require(size.get(W + "orient") == "landscape" and size.get(W + "w") == "16838", "Ledger must be landscape A4")
         _, photos, _ = self.download(self.ledger_route + "&photos=false", "ledger-no-photos.docx")
@@ -136,8 +157,46 @@ class WordSmoke(api_smoke.ApiSmoke):
         self.create_inspection(self.point["id"], issues=[self.issue_body(description, self.today - dt.timedelta(days=1))])
         text, _, _ = self.download(self.ledger_route, "ledger-long-text.docx")
         require(description in text, "Long issue description was truncated in Word export")
-        require("共 3 条，已闭环 1，未闭环 2，逾期 1。" in text, "Long ledger summary is wrong")
-        require(not list((self.data / ".temporary").glob("*.docx")), "Completed downloads left temporary DOCX files")
+        require("共 3 条，已闭环 1，待复查 0，待整改 2，其中逾期 1" in text, "Long ledger summary is wrong")
+        require(not list((self.data.parent / "temp").glob("*.docx")), "Completed downloads left temporary DOCX files")
+
+    def new_exports(self):
+        self.request("GET", f"/api/inspections/{self.inspection_id}/export/rectification", expected=400)
+        second = self.inspection["issues"][1]["id"]
+        self.json("POST", f"/api/inspections/{self.inspection_id}/feedback", {"date": self.today.isoformat(), "items": [{"issueId": second, "notes": "裸土覆盖完成。", "photoIds": []}]})
+        self.json("POST", f"/api/inspections/{self.inspection_id}/review", {"date": self.today.isoformat(), "items": [{"issueId": second, "conclusion": "现场覆盖符合要求。", "photoIds": []}]})
+        first = self.inspection["issues"][0]["id"]
+        self.json("POST", f"/api/issues/{first}/return", {"reason": "再次发现新增堆放。"})
+        self.request("GET", f"/api/inspections/{self.inspection_id}/export/rectification", expected=400)
+        self.json("POST", f"/api/inspections/{self.inspection_id}/feedback", {"date": self.today.isoformat(), "items": [{"issueId": first, "notes": "新增堆放已清运。", "photoIds": []}]})
+        self.json("POST", f"/api/inspections/{self.inspection_id}/review", {"date": self.today.isoformat(), "items": [{"issueId": first, "conclusion": "再次复查通过。", "photoIds": []}]})
+        text, photos, _ = self.download(f"/api/inspections/{self.inspection_id}/export/rectification", "rectification-record.docx")
+        require(photos == 5 and "办理过程" in text and "再次发现新增堆放。" in text and "再次复查通过。" in text, "Rectification record omitted photos or return history")
+        self.request("GET", f"/api/inspections/{self.normal['inspection']['id']}/export/rectification", expected=400)
+        query = urllib.parse.urlencode({"from": (self.today - dt.timedelta(days=3)).isoformat(), "to": self.today.isoformat(), "communityId": self.community["id"]})
+        text, photos, document = self.download("/api/exports/inspection-ledger?" + query, "inspection-ledger.docx")
+        require(photos == 0 and "共 3 次排查，正常 1，发现问题 2；问题共 3 项，已闭环 2" in text, "Inspection ledger omitted normal inspections or aggregate counts")
+        main = [table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 10][0]
+        require(len(main.findall(W + "tr")[-1].findall(W + "tc")) == 1, "Inspection ledger summary is not the final merged table row")
+        self.download("/api/exports/rectification-ledger?" + query, "rectification-ledger.docx")
+        types = self.json("GET", "/api/campaign-types")
+        before, process, after = self.upload("before"), self.upload("process"), self.upload("after")
+        campaign = self.json("POST", "/api/campaigns", {
+            "name": "沿河卫生整治", "typeId": types[0]["id"], "communityId": self.community["id"], "location": "沿河道路", "date": self.today.isoformat(),
+            "organizer": "版式验收街道办事处", "participants": "社区工作人员与志愿者", "participantCount": 18, "vehicleCount": 2,
+            "garbageTons": 1.25, "areaSqm": 360.50, "content": "清理河道沿线垃圾，修剪杂草。", "outcome": "河岸环境恢复整洁。", "notes": "现场设置垃圾收集点。",
+            "beforePhotoIds": [before["id"]], "processPhotoIds": [process["id"]], "afterPhotoIds": [after["id"]]
+        }, expected=201)
+        campaign_id = campaign["campaign"]["id"]
+        text, photos, _ = self.download(f"/api/campaigns/{campaign_id}/export/record", "campaign-record.docx")
+        require(photos == 3 and "整治前" in text and "整治中" in text and "整治后" in text, "Campaign record omitted a photo phase")
+        text, photos, document = self.download("/api/exports/campaign-ledger?" + query + "&photos=true&typeId=" + types[0]["id"], "campaign-ledger-photos.docx")
+        require(photos == 3 and "共 1 次整治，累计参加 18 人、出动车辆 2 辆、清运垃圾 1.25 吨、清理面积 360.50 ㎡" in text, "Campaign ledger totals or photos are wrong")
+        main = [table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 11][0]
+        require(len(main.findall(W + "tr")[-1].findall(W + "tc")) == 1, "Campaign ledger summary is not merged")
+        _, photos, _ = self.download("/api/exports/campaign-ledger?" + query, "campaign-ledger-no-photos.docx")
+        require(photos == 0, "Campaign no-photo ledger contains images")
+        self.request("GET", "/api/exports/campaign-ledger?" + query + "&typeId=missing", expected=400)
 
     def run(self):
         self.start()
@@ -145,6 +204,7 @@ class WordSmoke(api_smoke.ApiSmoke):
         self.case("record, notice, normal result, photo phases and download headers", self.single_inspection)
         self.case("landscape ledger, comparison photos, exact summary and invalid filters", self.ledger)
         self.case("long text is retained and downloaded temporary files are removed", self.long_text)
+        self.case("rectification record, inspection ledger, campaign record and campaign ledger", self.new_exports)
 
 
 def main():

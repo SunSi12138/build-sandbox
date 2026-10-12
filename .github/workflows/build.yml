@@ -55,7 +55,6 @@ jobs:
 
   native:
     name: AOT ${{ matrix.rid }}
-    needs: web
     strategy:
       fail-fast: false
       matrix:
@@ -86,10 +85,19 @@ jobs:
         run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror
       - name: Publish NativeAOT with zero warnings
         run: dotnet publish server/StreetEcoTool.csproj -c Release -r ${{ matrix.rid }} -o publish -p:PublishAot=true -p:SelfContained=true -warnaserror
-      - uses: actions/download-artifact@v8
+      - name: Stage native executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bin | Out-Null
+          $source = if ($IsWindows) { 'publish/StreetEcoTool.exe' } else { 'publish/StreetEcoTool' }
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          Copy-Item $source "bin/StreetEcoTool-${{ matrix.rid }}$suffix"
+      - uses: actions/upload-artifact@v7
         with:
-          name: web-static
-          path: publish/wwwroot
+          name: bin-${{ matrix.rid }}
+          path: bin/
+          if-no-files-found: error
+          retention-days: 30
       - name: Verify static SQLite and run API integration tests
         shell: pwsh
         run: |
@@ -100,15 +108,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'NativeAOT API integration tests failed' }
           python tests/word-smoke.py --executable $executable --report test-results/word-smoke-report.json
           if ($LASTEXITCODE -ne 0) { throw 'NativeAOT Word integration tests failed' }
-      - name: Package executable and wwwroot
-        run: python scripts/package.py --rid ${{ matrix.rid }} --publish publish --output dist
-      - name: Upload portable package
-        uses: actions/upload-artifact@v7
-        with:
-          name: hbtool-${{ matrix.rid }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
       - name: Preserve test evidence
         uses: actions/upload-artifact@v7
         if: always()
@@ -117,6 +116,33 @@ jobs:
           path: test-results/
           if-no-files-found: warn
           retention-days: 14
+
+  package:
+    name: Assemble one portable package
+    needs: [web, native]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-static
+          path: package-input/wwwroot
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-win-x86
+          path: package-input/bin
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-linux-arm64
+          path: package-input/bin
+      - name: Package both architectures with shared frontend
+        run: python scripts/package.py --win-x86 package-input/bin/StreetEcoTool-win-x86.exe --linux-arm64 package-input/bin/StreetEcoTool-linux-arm64 --web-static package-input/wwwroot --output dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hbtool
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
 
   browser:
     name: Browser workflows and offline resources
@@ -132,15 +158,19 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - uses: actions/download-artifact@v8
         with:
-          name: hbtool-linux-x64
+          name: bin-linux-x64
           path: browser-package
-      - run: tar -xzf browser-package/hbtool-linux-x64.tar.gz -C browser-package
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-static
+          path: browser-package/wwwroot
+      - run: chmod +x browser-package/StreetEcoTool-linux-x64
       - run: npm ci
         working-directory: web
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - name: Run the packaged app in a real browser
-        run: node web/browser-test.mjs --executable browser-package/hbtool/StreetEcoTool
+        run: node web/browser-test.mjs --executable browser-package/StreetEcoTool-linux-x64
       - uses: actions/upload-artifact@v7
         if: always()
         with:

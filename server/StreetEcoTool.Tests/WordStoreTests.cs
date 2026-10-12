@@ -116,7 +116,7 @@ public sealed class WordStoreTests
         Assert.Contains("退回 " + Day(0), text);
         Assert.Contains(reason, text);
         Assert.True(text.IndexOf(conclusion, StringComparison.Ordinal) < text.IndexOf(reason, StringComparison.Ordinal));
-        Assert.Contains("共 1 条，已闭环 0，未闭环 1，逾期 0。", text);
+        Assert.Contains("共 1 条，已闭环 0，待复查 0，待整改 1，其中逾期 0", text);
         Assert.Empty(MediaDimensions(ledger.FilePath));
     }
 
@@ -144,6 +144,76 @@ public sealed class WordStoreTests
         var error = Assert.Throws<ApiException>(() => fixture.Store.ExportInspectionWord(detail.Inspection.Id, false));
         Assert.Equal(409, error.StatusCode);
         Assert.Contains("照片文件缺失", error.Message);
+    }
+
+    [Fact]
+    public void RectificationRecordRequiresAllIssuesClosedAndPreservesReturnActions()
+    {
+        using var fixture = new StoreFixture();
+        var detail = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", Issues:
+            [new("问题甲", "清理甲", Store.Today), new("问题乙", "清理乙", Store.Today)]));
+        var rejected = Assert.Throws<ApiException>(() => fixture.Store.ExportRectificationWord(detail.Inspection.Id));
+        Assert.Equal(400, rejected.StatusCode); Assert.Equal("尚有 2 项问题未闭环", rejected.Message);
+        foreach (var issue in detail.Issues)
+        {
+            fixture.Store.RecordFeedback(issue.Id, new(Store.Today, "首轮反馈"));
+            fixture.Store.ReviewAndClose(issue.Id, new(Store.Today, "首轮复查"));
+        }
+        var id = detail.Issues[0].Id;
+        fixture.Store.ReturnIssue(id, new("再次发现堆放"));
+        var returned = Assert.Throws<ApiException>(() => fixture.Store.ExportRectificationWord(detail.Inspection.Id));
+        Assert.Equal("尚有 1 项问题未闭环", returned.Message);
+        fixture.Store.RecordFeedback(id, new(Store.Today, "再次清理"));
+        fixture.Store.ReviewAndClose(id, new(Store.Today, "再次复查通过"));
+        var document = fixture.Store.ExportRectificationWord(detail.Inspection.Id);
+        Assert.StartsWith("整改记录单_", document.FileName, StringComparison.Ordinal);
+        var text = DocumentText(document.FilePath);
+        foreach (var value in new[] { "问题甲", "问题乙", "办理过程", "首轮反馈", "首轮复查", "再次发现堆放", "再次清理", "再次复查通过" }) Assert.Contains(value, text);
+    }
+
+    [Fact]
+    public void InspectionLedgerIncludesNormalAndProblemRecordsWithSnapshotNames()
+    {
+        using var fixture = new StoreFixture();
+        _ = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
+        var detail = fixture.CreateIssue();
+        fixture.Store.RecordFeedback(detail.Issues[0].Id, new(Store.Today, "反馈完成"));
+        fixture.Store.SavePoint(fixture.Point.Id, new("新点位名", fixture.Community.Id, fixture.Point.TypeId, "新地址"));
+        var document = fixture.Store.ExportInspectionLedgerWord(Store.Today, Store.Today, fixture.Community.Id);
+        var text = DocumentText(document.FilePath);
+        Assert.Contains("共 2 次排查，正常 1，发现问题 1；问题共 1 项，已闭环 0", text);
+        Assert.Contains("待复查", text);
+        Assert.Contains(fixture.Point.Name, text);
+        Assert.DoesNotContain("新点位名", text, StringComparison.Ordinal);
+        Assert.Empty(MediaDimensions(document.FilePath));
+    }
+
+    [Fact]
+    public void CampaignExportsUseSnapshotNamesOriginalPhotosAndQuantities()
+    {
+        using var fixture = new StoreFixture();
+        var type = fixture.Store.GetCampaignTypes()[0];
+        var before = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1600, 900), "before");
+        var after = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1200, 800), "after");
+        var process = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(900, 1200), "process");
+        var request = new CampaignWriteRequest("河道整治", type.Id, fixture.Community.Id, "沿河道路", Store.Today, "清理道路垃圾。",
+            ParticipantCount: 12, VehicleCount: 1, GarbageTons: 2.35m, AreaSqm: 100.50m, Outcome: "道路已清洁。",
+            BeforePhotoIds: [before.Id], ProcessPhotoIds: [process.Id], AfterPhotoIds: [after.Id]);
+        var detail = fixture.Store.SaveCampaign(null, request);
+        fixture.Store.SaveCommunity(fixture.Community.Id, new("新社区名称", "新社区抬头"));
+        fixture.Store.SaveCampaignType(type.Id, new("新整治类型"));
+        var record = fixture.Store.ExportCampaignWord(detail.Campaign.Id);
+        Assert.StartsWith("整治记录单_", record.FileName, StringComparison.Ordinal);
+        Assert.Equal(new[] { "1200x800", "1600x900", "900x1200" }, MediaDimensions(record.FilePath));
+        var text = DocumentText(record.FilePath);
+        Assert.Contains(fixture.Community.Name, text); Assert.Contains(type.Name, text);
+        Assert.DoesNotContain("新社区名称", text, StringComparison.Ordinal); Assert.DoesNotContain("新整治类型", text, StringComparison.Ordinal);
+        var ledger = fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, fixture.Community.Id, type.Id, true);
+        Assert.Equal(new[] { "1200x800", "1600x900", "900x1200" }, MediaDimensions(ledger.FilePath));
+        Assert.Contains("累计参加 12 人、出动车辆 1 辆、清运垃圾 2.35 吨、清理面积 100.50 ㎡", DocumentText(ledger.FilePath));
+        var noPhotos = fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, includePhotos: false);
+        Assert.Empty(MediaDimensions(noPhotos.FilePath));
+        Assert.Equal(400, Assert.Throws<ApiException>(() => fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, typeId: "missing")).StatusCode);
     }
 
     private static string DocumentText(string path)
@@ -175,7 +245,7 @@ public sealed class WordStoreTests
         public PointDto Point { get; }
         public StoreFixture()
         {
-            Store = new Store(Directory);
+            Store = new Store(Path.Combine(Directory, "data"));
             var settings = Store.GetSettings();
             Store.SaveSettings(settings with { StreetName = "测试街道办事处", IssuingUnit = "测试街道办事处", DefaultInspector = "测试排查人" });
             Community = Store.SaveCommunity(null, new("原始社区", "原始社区居民委员会"));

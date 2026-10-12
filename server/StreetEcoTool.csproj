@@ -21,6 +21,7 @@
     <PackageReference Include="StaticLink.e_sqlite3" Version="2.1.10.1" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="StreetEcoTool.Tests" />
     <Compile Remove="StreetEcoTool.Tests/**/*.cs" />
     <Content Remove="StreetEcoTool.Tests/**" />
     <None Remove="StreetEcoTool.Tests/**" />

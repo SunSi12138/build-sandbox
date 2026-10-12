@@ -73,7 +73,7 @@ public static class Api
         app.MapDelete("/api/point-types/{id}", deleteType);
 
         RequestDelegate points = context => Write(context, store.ListPoints(new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"),
-            Query(context, "disabled") ?? "false", Number(context, "page", 1), Number(context, "pageSize", 30), Flag(context, "recent"), Flag(context, "missed"))), AppJsonContext.Default.PointPage);
+            Query(context, "disabled") ?? "false", Number(context, "page", 1), Number(context, "pageSize", 30), Flag(context, "recent"), Flag(context, "missed"), Query(context, "temporary") ?? "false"))), AppJsonContext.Default.PointPage);
         RequestDelegate point = context => Write(context, store.GetPointDetail(Id(context)), AppJsonContext.Default.PointDetailDto);
         RequestDelegate createPoint = async context => await Write(context, store.SavePoint(null, await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto, 201);
         RequestDelegate updatePoint = async context => await Write(context, store.SavePoint(Id(context), await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto);
@@ -83,13 +83,48 @@ public static class Api
         app.MapPost("/api/points", createPoint);
         app.MapPut("/api/points/{id}", updatePoint);
         app.MapDelete("/api/points/{id}", deletePoint);
+        RequestDelegate promotePoint = async context => await Write(context, store.PromotePoint(Id(context), await Read(context, AppJsonContext.Default.PointPromoteRequest)), AppJsonContext.Default.PointDto);
+        app.MapPost("/api/points/{id}/promote", promotePoint);
 
-        RequestDelegate inspections = context => Write(context, store.ListInspections(new(Query(context, "pointId"), Query(context, "communityId"), Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30))), AppJsonContext.Default.InspectionPage);
+        static InspectionQuery InspectionFilters(HttpContext context) => new(Query(context, "pointId"), Query(context, "communityId"),
+            Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30),
+            Query(context, "rectify"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "typeId"), Flag(context, "temporary"));
+        RequestDelegate inspections = context => Write(context, store.ListInspections(InspectionFilters(context)), AppJsonContext.Default.InspectionPage);
+        RequestDelegate inspectionCounts = context => Write(context, store.GetInspectionCounts(InspectionFilters(context)), AppJsonContext.Default.InspectionCountsDto);
         RequestDelegate inspection = context => Write(context, store.GetInspectionDetail(Id(context)), AppJsonContext.Default.InspectionDetailDto);
         RequestDelegate createInspection = async context => await Write(context, store.CreateInspection(await Read(context, AppJsonContext.Default.InspectionCreateRequest)), AppJsonContext.Default.InspectionDetailDto, 201);
+        RequestDelegate updateInspection = async context => await Write(context, store.UpdateInspection(Id(context), await Read(context, AppJsonContext.Default.InspectionUpdateRequest)), AppJsonContext.Default.InspectionDetailDto);
+        RequestDelegate deleteInspection = context => { RequireDeleteConfirmation(context); store.DeleteInspection(Id(context)); return Deleted(context); };
+        RequestDelegate batchFeedback = async context => await Write(context, store.RecordInspectionFeedback(Id(context), await Read(context, AppJsonContext.Default.InspectionFeedbackRequest)), AppJsonContext.Default.InspectionDetailDto);
+        RequestDelegate batchReview = async context => await Write(context, store.ReviewInspection(Id(context), await Read(context, AppJsonContext.Default.InspectionReviewRequest)), AppJsonContext.Default.InspectionDetailDto);
         app.MapGet("/api/inspections", inspections);
+        app.MapGet("/api/inspections/counts", inspectionCounts);
         app.MapGet("/api/inspections/{id}", inspection);
         app.MapPost("/api/inspections", createInspection);
+        app.MapPut("/api/inspections/{id}", updateInspection);
+        app.MapDelete("/api/inspections/{id}", deleteInspection);
+        app.MapPost("/api/inspections/{id}/feedback", batchFeedback);
+        app.MapPost("/api/inspections/{id}/review", batchReview);
+
+        RequestDelegate campaignTypes = context => Write(context, store.GetCampaignTypes(), AppJsonContext.Default.CampaignTypeDtoArray);
+        RequestDelegate createCampaignType = async context => await Write(context, store.SaveCampaignType(null, await Read(context, AppJsonContext.Default.CampaignTypeWriteRequest)), AppJsonContext.Default.CampaignTypeDto, 201);
+        RequestDelegate updateCampaignType = async context => await Write(context, store.SaveCampaignType(Id(context), await Read(context, AppJsonContext.Default.CampaignTypeWriteRequest)), AppJsonContext.Default.CampaignTypeDto);
+        RequestDelegate deleteCampaignType = context => { RequireDeleteConfirmation(context); store.DeleteCampaignType(Id(context)); return Deleted(context); };
+        app.MapGet("/api/campaign-types", campaignTypes);
+        app.MapPost("/api/campaign-types", createCampaignType);
+        app.MapPut("/api/campaign-types/{id}", updateCampaignType);
+        app.MapDelete("/api/campaign-types/{id}", deleteCampaignType);
+        RequestDelegate campaigns = context => Write(context, store.ListCampaigns(new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"),
+            Query(context, "from"), Query(context, "to"), Number(context, "page", 1), Number(context, "pageSize", 30))), AppJsonContext.Default.CampaignPage);
+        RequestDelegate campaign = context => Write(context, store.GetCampaignDetail(Id(context)), AppJsonContext.Default.CampaignDetailDto);
+        RequestDelegate createCampaign = async context => await Write(context, store.SaveCampaign(null, await Read(context, AppJsonContext.Default.CampaignWriteRequest)), AppJsonContext.Default.CampaignDetailDto, 201);
+        RequestDelegate updateCampaign = async context => await Write(context, store.SaveCampaign(Id(context), await Read(context, AppJsonContext.Default.CampaignWriteRequest)), AppJsonContext.Default.CampaignDetailDto);
+        RequestDelegate deleteCampaign = context => { RequireDeleteConfirmation(context); store.DeleteCampaign(Id(context)); return Deleted(context); };
+        app.MapGet("/api/campaigns", campaigns);
+        app.MapGet("/api/campaigns/{id}", campaign);
+        app.MapPost("/api/campaigns", createCampaign);
+        app.MapPut("/api/campaigns/{id}", updateCampaign);
+        app.MapDelete("/api/campaigns/{id}", deleteCampaign);
 
         RequestDelegate issues = context => Write(context, store.ListIssues(new(Query(context, "status"), Query(context, "communityId"), Query(context, "pointId"), Query(context, "inspectionId"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30))), AppJsonContext.Default.IssuePage);
         RequestDelegate issue = context => Write(context, store.GetIssueDetail(Id(context)), AppJsonContext.Default.IssueDetailDto);

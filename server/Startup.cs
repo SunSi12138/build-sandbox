@@ -5,21 +5,12 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.FileProviders;
 
 namespace StreetEcoTool;
-
-internal sealed record StartupConfig(int Port = 5180);
-internal sealed record LaunchOptions(int Port, bool NoBrowser, bool SeedDemo, bool Help);
-public sealed record SystemInfoResponse(int Port, string LocalUrl, string[] Addresses, string Today, string Version);
-
-[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true)]
-[JsonSerializable(typeof(StartupConfig))]
-[JsonSerializable(typeof(SystemInfoResponse))]
-internal partial class StartupJsonContext : JsonSerializerContext;
 
 internal static class Startup
 {
@@ -35,7 +26,7 @@ internal static class Startup
             var options = ParseArguments(args);
             if (options.Help)
             {
-                Console.WriteLine("街道生态环保排查—整改留痕工具\n参数：--port 5180　--no-browser　--seed-demo　--help\n端口也可在程序同目录 appsettings.json 中设置：{\"port\":5180}");
+                Console.WriteLine("街道生态环保工具\n参数：--port 5180　--listen 0.0.0.0（可重复）　--no-browser　--seed-demo　--help\n默认仅本机；无桌面的设备使用 --listen 0.0.0.0。\n配置示例：{\"port\":5180,\"listen\":[\"127.0.0.1\"]}");
                 return 0;
             }
 
@@ -69,23 +60,27 @@ internal static class Startup
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException or SqliteException or ApiException)
         {
             Console.Error.WriteLine($"启动失败：{exception.Message}");
-            Console.Error.WriteLine("请确认程序所在文件夹可写、data 目录完整，且配置文件格式正确。");
+            Console.Error.WriteLine("请确认程序文件夹可写，且配置文件格式正确。");
             return 1;
         }
     }
 
-    private static LaunchOptions ParseArguments(string[] args)
+    internal static LaunchOptions ParseArguments(string[] args, string? baseDirectory = null)
     {
         var port = 5180;
-        var settingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
+        var settingsPath = Path.Combine(baseDirectory ?? AppContext.BaseDirectory, "appsettings.json");
+        string[] listen = ["127.0.0.1"];
         if (File.Exists(settingsPath))
         {
             using var stream = File.OpenRead(settingsPath);
-            port = JsonSerializer.Deserialize(stream, StartupJsonContext.Default.StartupConfig)?.Port ?? 5180;
+            var config = JsonSerializer.Deserialize(stream, StartupJsonContext.Default.StartupConfig) ?? throw new ArgumentException("配置文件不能为空");
+            port = config.Port;
+            listen = config.Listen ?? ["127.0.0.1"];
         }
         var noBrowser = false;
         var seedDemo = false;
         var help = false;
+        var commandListen = new List<string>();
         for (var i = 0; i < args.Length; i++)
         {
             var value = args[i];
@@ -98,10 +93,15 @@ internal static class Startup
                 if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out port))
                     throw new ArgumentException("--port 后需要填写 1 至 65535 之间的整数。");
             }
+            else if (value == "--listen" || value.StartsWith("--listen=", StringComparison.Ordinal))
+            {
+                var address = value == "--listen" ? (++i < args.Length ? args[i] : "") : value[9..];
+                commandListen.Add(address);
+            }
             else throw new ArgumentException($"无法识别参数：{value}。可运行 --help 查看用法。");
         }
         if (port is < 1 or > 65535) throw new ArgumentException("端口必须介于 1 至 65535。");
-        return new LaunchOptions(port, noBrowser, seedDemo, help);
+        return new LaunchOptions(port, ListeningService.Normalize(commandListen.Count > 0 ? [.. commandListen] : listen), noBrowser, seedDemo, help, commandListen.Count > 0);
     }
 
     private static async Task RunServerAsync(LaunchOptions options)
@@ -110,17 +110,88 @@ internal static class Startup
         var staticDirectory = Path.Combine(baseDirectory, "wwwroot");
         Directory.CreateDirectory(staticDirectory);
         using var store = new Store(Path.Combine(baseDirectory, "data"));
+        var clock = TimeProvider.System;
+        Console.WriteLine($"当前时区：{clock.LocalTimeZone.Id}");
+        var configuredZone = Environment.GetEnvironmentVariable("TZ");
+        if (clock.LocalTimeZone.BaseUtcOffset == TimeSpan.Zero && !string.IsNullOrWhiteSpace(configuredZone) && configuredZone is not "UTC" and not "Etc/UTC" and not "GMT")
+            Console.WriteLine("时区可能不正确，请安装 tzdata 或设置 TZ=Asia/Shanghai");
+        // Run before demo data and before any HTTP writer can change today's database.
+        store.RunDailyMaintenance(DateOnly.FromDateTime(clock.GetLocalNow().Date));
         if (options.SeedDemo) store.SeedDemo();
+        var listening = new ListeningService(baseDirectory, options.Port, options.Listen);
+        if (options.ListenOverride) Console.WriteLine("命令行 --listen 已覆盖 appsettings.json 中的监听设置。");
+        using var shutdown = new CancellationTokenSource();
+        ConsoleCancelEventHandler interrupt = (_, e) => { e.Cancel = true; shutdown.Cancel(); };
+        EventHandler exit = (_, _) => shutdown.Cancel();
+        Console.CancelKeyPress += interrupt;
+        AppDomain.CurrentDomain.ProcessExit += exit;
+        using var termination = OperatingSystem.IsLinux()
+            ? PosixSignalRegistration.Create(PosixSignal.SIGTERM, signal => { signal.Cancel = true; shutdown.Cancel(); }) : null;
+        using var maintenance = new DailyMaintenanceScheduler(clock, store.RunDailyMaintenance,
+            error => Console.Error.WriteLine($"每日快照或清理失败：{error.Message}"));
+        WebApplication? app = null;
+        try
+        {
+            app = await StartHostAsync(options, store, listening, listening.Current, baseDirectory, staticDirectory);
+            await using var announcement = new InstanceAnnouncement(() => listening.CurrentLocalUrl);
+            PrintAddresses(listening);
+            Console.WriteLine($"数据库：{store.DataDir}\n照片：{store.PhotosDir}\n备份：{store.BackupDir}\n临时文件：{store.TemporaryDir}\n按 Ctrl+C 正常关闭。\n");
+            if (!options.NoBrowser) OpenBrowser(listening.CurrentLocalUrl);
+            while (await listening.Changes.WaitToReadAsync(shutdown.Token))
+            {
+                while (listening.Changes.TryRead(out _)) { }
+                await Task.Delay(300, shutdown.Token);
+                var requested = listening.TakePending();
+                var previous = listening.Current;
+                await app.StopAsync();
+                await app.DisposeAsync();
+                app = null;
+                try
+                {
+                    app = await StartHostAsync(options, store, listening, requested, baseDirectory, staticDirectory);
+                    listening.Applied(requested);
+                }
+                catch (Exception error) when (error is IOException or SocketException or InvalidOperationException)
+                {
+                    Console.Error.WriteLine($"监听切换失败：{error.Message}");
+                    var recovered = ListeningService.ResolveAvailable(previous, ListeningService.GetInterfaces(), out _);
+                    app = await StartHostAsync(options, store, listening, recovered, baseDirectory, staticDirectory);
+                    listening.Applied(recovered, "监听切换失败，已恢复此前监听地址");
+                }
+                PrintAddresses(listening);
+            }
+        }
+        catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
+        finally
+        {
+            Console.CancelKeyPress -= interrupt;
+            AppDomain.CurrentDomain.ProcessExit -= exit;
+            if (app is not null)
+            {
+                await app.StopAsync();
+                await app.DisposeAsync();
+            }
+        }
+    }
 
+    private static async Task<WebApplication> StartHostAsync(LaunchOptions options, Store store, ListeningService listening,
+        string[] addresses, string baseDirectory, string staticDirectory)
+    {
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
         {
             Args = [], ContentRootPath = baseDirectory, WebRootPath = staticDirectory
         });
-        builder.WebHost.UseUrls($"http://0.0.0.0:{options.Port}");
+        builder.Services.AddSingleton<IHostLifetime>(new RebindHostLifetime());
         builder.WebHost.ConfigureKestrel(server =>
         {
             server.AddServerHeader = false;
             server.Limits.MaxRequestBodySize = 10L * 1024 * 1024;
+            foreach (var address in addresses)
+            {
+                if (address == "127.0.0.1") server.ListenLocalhost(options.Port);
+                else if (address == "0.0.0.0") server.ListenAnyIP(options.Port);
+                else server.Listen(IPAddress.Parse(address), options.Port);
+            }
         });
         builder.Logging.ClearProviders();
         builder.Logging.AddSimpleConsole(log => { log.SingleLine = true; log.TimestampFormat = "HH:mm:ss "; });
@@ -129,13 +200,17 @@ internal static class Startup
             json.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
             json.SerializerOptions.TypeInfoResolverChain.Insert(1, StartupJsonContext.Default);
         });
-
-        await using var app = builder.Build();
+        var app = builder.Build();
         app.Use(async (HttpContext context, RequestDelegate next) =>
         {
             context.Response.Headers.XContentTypeOptions = "nosniff";
             if (context.Request.Path.StartsWithSegments("/api")) context.Response.Headers.CacheControl = "no-store";
-            try { await next(context); }
+            try
+            {
+                if (context.Request.Path.StartsWithSegments("/api") && context.Request.Method is not "GET" and not "HEAD" and not "OPTIONS")
+                    store.EnsurePreviousDaySnapshot(DateOnly.FromDateTime(TimeProvider.System.GetLocalNow().Date));
+                await next(context);
+            }
             catch (Exception error) when (!context.Response.HasStarted && error is ApiException or JsonException or BadHttpRequestException or SqliteException or IOException or UnauthorizedAccessException)
             {
                 var (status, message) = error switch
@@ -145,7 +220,7 @@ internal static class Startup
                     BadHttpRequestException bad => (bad.StatusCode, bad.StatusCode == 413 ? "上传文件超过大小限制。照片请先压缩到 10 MB 以内。" : "请求内容不完整，请重试。"),
                     SqliteException sql when sql.SqliteErrorCode == 19 => (409, "数据存在重复或仍被其他记录引用，请检查后重试。"),
                     SqliteException sql when sql.SqliteErrorCode is 5 or 6 => (503, "数据库正在处理其他操作，请稍后重试。"),
-                    _ => (500, "数据读写失败，请检查磁盘剩余空间及 data 文件夹权限。")
+                    _ => (500, "数据读写失败，请检查磁盘剩余空间及程序文件夹权限。")
                 };
                 if (status >= 500) app.Logger.LogError(error, "数据处理失败");
                 context.Response.StatusCode = status;
@@ -153,7 +228,7 @@ internal static class Startup
             }
         });
 
-        using var fileProvider = new PhysicalFileProvider(staticDirectory);
+        var fileProvider = app.Environment.WebRootFileProvider;
         app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fileProvider });
         app.UseStaticFiles(new StaticFileOptions
         {
@@ -173,10 +248,17 @@ internal static class Startup
         PhotoApi.Map(app, store);
         store.MapBackupApi(app);
         store.MapWordApi(app);
-        RequestDelegate systemInfo = context => context.Response.WriteAsJsonAsync(
-            new SystemInfoResponse(options.Port, $"http://localhost:{options.Port}", GetLanAddresses(options.Port), DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), "0.1.0"),
-            StartupJsonContext.Default.SystemInfoResponse, contentType: null, cancellationToken: context.RequestAborted);
+        RequestDelegate systemInfo = context => Api.Write(context, listening.GetInfo(context.Connection.RemoteIpAddress), StartupJsonContext.Default.SystemInfoResponse);
+        RequestDelegate changeListen = async context =>
+        {
+            if (!ListeningService.IsLoopback(context.Connection.RemoteIpAddress))
+                throw new ApiException(403, "请在运行程序的电脑上修改监听设置");
+            var result = listening.Prepare(await Api.Read(context, StartupJsonContext.Default.ListenRequest), context.Connection.RemoteIpAddress);
+            context.Response.OnCompleted(() => { listening.SignalChange(); return Task.CompletedTask; });
+            await Api.Write(context, result, StartupJsonContext.Default.ListenResponse);
+        };
         app.MapGet("/api/system", systemInfo);
+        app.MapPut("/api/system/listen", changeListen);
         RequestDelegate missingApi = async context =>
         {
             context.Response.StatusCode = 404;
@@ -195,57 +277,24 @@ internal static class Startup
         };
         app.MapFallback(fallback);
 
-        await app.StartAsync();
-        var localAddress = $"http://localhost:{options.Port}";
-        await using var announcement = new InstanceAnnouncement(localAddress);
-        Console.WriteLine($"\n街道生态环保工具已启动\n电脑访问：{localAddress}");
-        foreach (var address in GetLanAddresses(options.Port)) Console.WriteLine($"手机访问：{address}");
-        Console.WriteLine($"数据文件夹：{store.DataDir}\n按 Ctrl+C 正常关闭。\n");
-        try { store.RunMaintenance(); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException)
-        { app.Logger.LogWarning(error, "自动备份或照片清理未完成，请检查磁盘空间和文件夹权限"); }
-
-        using var maintenanceCancellation = new CancellationTokenSource();
-        var maintenance = MaintainAsync(store, app.Logger, maintenanceCancellation.Token);
-        if (!options.NoBrowser) OpenBrowser(localAddress);
-        try { await app.WaitForShutdownAsync(); }
-        finally
-        {
-            await maintenanceCancellation.CancelAsync();
-            await maintenance;
-            await app.StopAsync();
-        }
+        try { await app.StartAsync(); return app; }
+        catch { await app.DisposeAsync(); throw; }
     }
 
-    private static async Task MaintainAsync(Store store, ILogger logger, CancellationToken cancellationToken)
+    private static void PrintAddresses(ListeningService listening)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                try { store.RunMaintenance(); }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException)
-                { logger.LogWarning(error, "每日备份或照片清理失败，稍后自动重试"); }
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        var info = listening.GetInfo(IPAddress.Loopback);
+        Console.WriteLine($"\n街道生态环保工具已启动\n当前监听：{string.Join(", ", info.Listen)}");
+        foreach (var address in info.Addresses) Console.WriteLine($"可访问：{address}");
     }
 
-    internal static string[] GetLanAddresses(int port)
+    private sealed class RebindHostLifetime : IHostLifetime
     {
-        try
-        {
-            return NetworkInterface.GetAllNetworkInterfaces()
-                .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up)
-                .SelectMany(adapter => adapter.GetIPProperties().UnicastAddresses)
-                .Select(address => address.Address)
-                .Where(address => address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address))
-                .Select(address => $"http://{address}:{port}")
-                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
-        }
-        catch (NetworkInformationException) { return []; }
+        public Task WaitForStartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
     }
+
+    internal static string[] GetLanAddresses(int port) => ListeningService.GetInterfaces().Select(n => $"http://{n.Address}:{port}").ToArray();
 
     private static bool IsAddressInUse(Exception exception)
     {
@@ -279,7 +328,7 @@ internal static class Startup
             client.ConnectAsync(timeout.Token).GetAwaiter().GetResult();
             using var reader = new StreamReader(client);
             var text = reader.ReadLineAsync(timeout.Token).AsTask().GetAwaiter().GetResult();
-            return Uri.TryCreate(text, UriKind.Absolute, out var uri) && uri.Scheme == "http" && uri.Host == "localhost" ? text : null;
+            return Uri.TryCreate(text, UriKind.Absolute, out var uri) && uri.Scheme == "http" && (uri.Host == "localhost" || IPAddress.TryParse(uri.Host, out var host) && (ListeningService.IsLoopback(host) || ListeningService.GetInterfaces().Any(n => n.Address == host.ToString()))) ? text : null;
         }
         catch (Exception error) when (error is IOException or TimeoutException or OperationCanceledException or UnauthorizedAccessException) { return null; }
     }
@@ -288,8 +337,8 @@ internal static class Startup
     {
         private readonly CancellationTokenSource _cancellation = new();
         private readonly Task _task;
-        public InstanceAnnouncement(string address) => _task = AnnounceAsync(address, _cancellation.Token);
-        private static async Task AnnounceAsync(string address, CancellationToken cancellationToken)
+        public InstanceAnnouncement(Func<string> address) => _task = AnnounceAsync(address, _cancellation.Token);
+        private static async Task AnnounceAsync(Func<string> address, CancellationToken cancellationToken)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -298,7 +347,7 @@ internal static class Startup
                     await using var server = new NamedPipeServerStream(PipeName, PipeDirection.Out, 2, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                     await server.WaitForConnectionAsync(cancellationToken);
                     await using var writer = new StreamWriter(server, leaveOpen: true) { AutoFlush = true };
-                    await writer.WriteLineAsync(address.AsMemory(), cancellationToken);
+                    await writer.WriteLineAsync(address().AsMemory(), cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
                 catch (Exception error) when (error is SocketException or UnauthorizedAccessException)

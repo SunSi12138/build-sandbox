@@ -14,16 +14,16 @@ public static class ReminderRules
     public static bool IsOverdue(DateOnly deadline, string status, DateOnly today) => status != "closed" && deadline < today;
     public static bool IsDueSoon(DateOnly deadline, string status, DateOnly today) => status != "closed" && deadline >= today && deadline <= today.AddDays(3);
     public static bool IsAwaitingReview(string status) => status == "feedback";
-    public static bool NeedsInspection(string frequency, bool disabled, DateOnly? lastInspectionDate, DateOnly today)
+    public static bool NeedsInspection(string frequency, bool disabled, DateOnly? lastInspectionDate, DateOnly today, bool temporary = false)
     {
-        if (disabled) return false;
+        if (disabled || temporary) return false;
         var start = PeriodStart(frequency, today);
         return start.HasValue && (!lastInspectionDate.HasValue || lastInspectionDate < start || lastInspectionDate > today);
     }
 
-    public static bool NeedsInspection(string frequency, bool disabled, IEnumerable<DateOnly> inspectionDates, DateOnly today)
+    public static bool NeedsInspection(string frequency, bool disabled, IEnumerable<DateOnly> inspectionDates, DateOnly today, bool temporary = false)
     {
-        if (disabled) return false;
+        if (disabled || temporary) return false;
         var start = PeriodStart(frequency, today);
         return start.HasValue && !inspectionDates.Any(date => date >= start.Value && date <= today);
     }

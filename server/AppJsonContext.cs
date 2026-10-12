@@ -32,4 +32,17 @@ namespace StreetEcoTool;
 [JsonSerializable(typeof(PhotoDto))]
 [JsonSerializable(typeof(PhotoUploadDto))]
 [JsonSerializable(typeof(DashboardDto))]
+[JsonSerializable(typeof(PointPromoteRequest))]
+[JsonSerializable(typeof(InspectionUpdateRequest))]
+[JsonSerializable(typeof(InspectionCountsDto))]
+[JsonSerializable(typeof(InspectionFeedbackRequest))]
+[JsonSerializable(typeof(InspectionReviewRequest))]
+[JsonSerializable(typeof(CampaignTypeDto))]
+[JsonSerializable(typeof(CampaignTypeDto[]))]
+[JsonSerializable(typeof(CampaignTypeWriteRequest))]
+[JsonSerializable(typeof(CampaignWriteRequest))]
+[JsonSerializable(typeof(CampaignDto))]
+[JsonSerializable(typeof(CampaignDetailDto))]
+[JsonSerializable(typeof(PageDto<CampaignDto>), TypeInfoPropertyName = "CampaignPage")]
 public partial class AppJsonContext : JsonSerializerContext;
+

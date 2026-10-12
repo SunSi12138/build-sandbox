@@ -126,7 +126,7 @@ public sealed class WordExporterTests
             Assert.Single(Regex.Matches(text, Regex.Escape(issue.Description)));
         foreach (var placeholder in new[] { "{日期}", "{点位}", "{问题}", "{期限}" }) Assert.DoesNotContain(placeholder, text);
         Assert.Contains(detail.Issues.Select(issue => issue.Deadline).Order(StringComparer.Ordinal).Last(), text);
-        Assert.Contains("各项问题请按表列期限分别完成", text);
+        Assert.DoesNotContain("各项问题请按表列期限分别完成", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -197,14 +197,14 @@ public sealed class WordExporterTests
         Assert.Equal("landscape", (string?)page.Attribute(W + "orient"));
         Assert.InRange(Number(page, W + "w"), 16820, 16855);
         Assert.InRange(Number(page, W + "h"), 11890, 11920);
-        var table = document.Descendants(W + "tbl").First();
+        var table = Assert.Single(document.Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 9);
         Assert.Equal(9, table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
         var header = table.Elements(W + "tr").First();
-        Assert.Equal(new[] { "序号", "排查日期", "点位", "社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论" }, header.Elements(W + "tc").Select(Text).ToArray());
+        Assert.Equal(new[] { "序号", "排查日期", "点位名称", "所属社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论" }, header.Elements(W + "tc").Select(Text).ToArray());
         Assert.NotNull(header.Element(W + "trPr")?.Element(W + "tblHeader"));
         Assert.All(table.Descendants(W + "sz"), size => Assert.Contains((string?)size.Attribute(W + "val"), new[] { "21", "24" }));
         var text = Regex.Replace(Text(document), @"\s", "");
-        Assert.Contains("共3条，已闭环1，未闭环2，逾期1", text);
+        Assert.Contains("共3条，已闭环1，待复查1，待整改1，其中逾期1", text);
         Assert.Contains("已清理，等待复查", text);
         Assert.Contains("整改到位，予以闭环", text);
         Assert.Empty(package.Media);
@@ -221,7 +221,7 @@ public sealed class WordExporterTests
         }
         using var empty = new Package(Render(stream => WordExporter.WriteLedger(stream, new("2026-10-01", "2026-10-31", "全部社区", [], [], true), Settings())));
         ValidatePackage(empty);
-        Assert.Contains("共0条，已闭环0，未闭环0，逾期0", Regex.Replace(Text(empty.Xml("word/document.xml")), @"\s", ""));
+        Assert.Contains("共0条，已闭环0，待复查0，待整改0，其中逾期0", Regex.Replace(Text(empty.Xml("word/document.xml")), @"\s", ""));
     }
 
     [Fact]
@@ -236,10 +236,10 @@ public sealed class WordExporterTests
         Assert.Equal(3, package.Media.Length); // Shared photo has one media part even though displayed twice.
         var document = package.Xml("word/document.xml");
         Assert.Equal(4, document.Descendants(W + "drawing").Count());
-        Assert.Contains("现场", Text(document));
+        Assert.Contains("整改前", Text(document));
         Assert.Contains("整改后", Text(document));
         Assert.Contains("复查", Text(document));
-        Assert.True(document.Descendants(W + "pageBreakBefore").Count() >= issues.Length);
+        Assert.Single(document.Descendants(W + "pageBreakBefore"));
     }
 
     [Fact]
@@ -264,6 +264,209 @@ public sealed class WordExporterTests
         Assert.InRange(Encoding.UTF8.GetByteCount(longName), 1, 255);
         Assert.EndsWith("_20261010.docx", longName, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void AllSevenExportsUseTheV2StylesAndCompleteSingleSpacedStructures()
+    {
+        var detail = ClosedInspection();
+        var campaign = Campaign();
+        byte[][] documents =
+        [
+            Render(stream => WordExporter.WriteRecord(stream, detail, Settings(), [])),
+            Render(stream => WordExporter.WriteNotice(stream, detail, Settings(), [])),
+            Render(stream => WordExporter.WriteRectificationRecord(stream, detail, Settings(), [])),
+            Render(stream => WordExporter.WriteCampaignRecord(stream, new(campaign, []), Settings(), [])),
+            Render(stream => WordExporter.WriteLedger(stream, new("2026-10-01", "2026-10-31", "全部社区", detail.Issues, [], false), Settings())),
+            Render(stream => WordExporter.WriteInspectionLedger(stream, new("2026-10-01", "2026-10-31", "全部社区", [detail.Inspection], "2026-10-12"), Settings())),
+            Render(stream => WordExporter.WriteCampaignLedger(stream, new("2026-10-01", "2026-10-31", "全部社区", [campaign], [], false, "2026-10-12"), Settings()))
+        ];
+        foreach (var bytes in documents)
+        {
+            using var package = new Package(bytes);
+            ValidatePackage(package);
+            var styles = package.Xml("word/styles.xml");
+            (string Id, string Font, string Size, bool Bold)[] expected =
+            [
+                ("Normal", "仿宋", "32", false), ("Title", "方正小标宋简体", "44", false),
+                ("Heading1", "黑体", "32", false), ("Heading2", "仿宋", "32", true),
+                ("TableHeader", "黑体", "21", false), ("TableText", "仿宋", "21", false), ("Footer", "宋体", "18", false)
+            ];
+            foreach (var item in expected)
+            {
+                var style = Assert.Single(styles.Descendants(W + "style"), element => (string?)element.Attribute(W + "styleId") == item.Id);
+                var properties = style.Element(W + "rPr")!;
+                var font = properties.Element(W + "rFonts")!;
+                foreach (var script in new[] { "ascii", "hAnsi", "eastAsia", "cs" }) Assert.Equal(item.Font, (string?)font.Attribute(W + script));
+                Assert.Equal("eastAsia", (string?)font.Attribute(W + "hint"));
+                Assert.Equal(item.Size, (string?)properties.Element(W + "sz")?.Attribute(W + "val"));
+                Assert.Equal(item.Size, (string?)properties.Element(W + "szCs")?.Attribute(W + "val"));
+                var bold = properties.Element(W + "b");
+                Assert.Equal(item.Bold, bold is not null && (string?)bold.Attribute(W + "val") != "0");
+                Assert.NotNull(style.Element(W + "pPr")?.Element(W + "spacing"));
+            }
+            Assert.Equal("640", (string?)styles.Descendants(W + "style").Single(style => (string?)style.Attribute(W + "styleId") == "Normal").Element(W + "pPr")?.Element(W + "ind")?.Attribute(W + "firstLine"));
+            XNamespace dc = "http://purl.org/dc/elements/1.1/";
+            Assert.Equal(Settings().StreetName, package.Xml("docProps/core.xml").Root?.Element(dc + "creator")?.Value);
+            var text = Text(package.Xml("word/document.xml"));
+            foreach (var prohibited in new[] { "上传", "留痕", "暂无照片", "无。", "附后照片" }) Assert.DoesNotContain(prohibited, text, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void InspectionInfoMergesAddressAndContactAndOmitsEmptyPhotoAndRemarkSections()
+    {
+        var detail = Inspection();
+        detail = detail with { Inspection = detail.Inspection with { Notes = "" } };
+        using var package = new Package(Render(stream => WordExporter.WriteRecord(stream, detail, Settings(), [])));
+        var document = package.Xml("word/document.xml");
+        var table = document.Descendants(W + "tbl").First();
+        Assert.Equal(4, table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
+        var rows = table.Elements(W + "tr").ToArray();
+        Assert.Equal(5, rows.Length);
+        foreach (var index in new[] { 2, 4 })
+        {
+            Assert.Equal(2, rows[index].Elements(W + "tc").Count());
+            Assert.Equal("3", (string?)rows[index].Elements(W + "tc").Last().Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val"));
+        }
+        Assert.Contains(detail.Inspection.Contact, Text(rows[4]));
+        Assert.Contains(detail.Inspection.Phone, Text(rows[4]));
+        Assert.DoesNotContain("现场照片", Text(document), StringComparison.Ordinal);
+        Assert.DoesNotContain("备注", Text(document), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoticeUsesChineseBodyDatesAndKeepsTheReceiptAsOneGroup()
+    {
+        using var package = new Package(Render(stream => WordExporter.WriteNotice(stream, Inspection(), Settings(), [])));
+        var document = package.Xml("word/document.xml");
+        Assert.Contains("2026年10月10日", Text(document));
+        Assert.Contains("2026年10月15日", Text(document));
+        var bodyParagraphs = document.Root!.Element(W + "body")!.Elements(W + "p").ToArray();
+        var recipient = Assert.Single(bodyParagraphs, paragraph => Text(paragraph) == Inspection().Inspection.CommunityTitle + "：");
+        Assert.Equal("0", (string?)recipient.Element(W + "pPr")?.Element(W + "ind")?.Attribute(W + "firstLine"));
+        var receipt = Assert.Single(document.Descendants(W + "tbl"), table => Text(table).Contains("负责人签字及日期", StringComparison.Ordinal));
+        var rows = receipt.Elements(W + "tr").ToArray();
+        Assert.Equal(3, rows.Length);
+        Assert.All(rows.Take(2).SelectMany(row => row.Descendants(W + "pPr")), properties => Assert.NotNull(properties.Element(W + "keepNext")));
+        Assert.All(rows[^1].Descendants(W + "pPr"), properties => Assert.Null(properties.Element(W + "keepNext")));
+        var caption = receipt.ElementsBeforeSelf(W + "p").Last();
+        Assert.Equal("整改情况回执", Text(caption));
+        var heading = package.Xml("word/styles.xml").Descendants(W + "style").Single(style => (string?)style.Attribute(W + "styleId") == "Heading1");
+        Assert.NotNull(heading.Element(W + "pPr")?.Element(W + "keepNext"));
+    }
+
+    [Fact]
+    public void RectificationRecordRejectsEveryUnclosedIssueAndNormalInspections()
+    {
+        var pending = Inspection();
+        var error = Assert.Throws<ApiException>(() => Render(stream => WordExporter.WriteRectificationRecord(stream, pending, Settings(), [])));
+        Assert.Equal(400, error.StatusCode);
+        Assert.Equal("尚有 2 项问题未闭环", error.Message);
+        var normal = pending with { Issues = [] };
+        Assert.Equal(400, Assert.Throws<ApiException>(() => Render(stream => WordExporter.WriteRectificationRecord(stream, normal, Settings(), []))).StatusCode);
+    }
+
+    [Fact]
+    public void RectificationRecordIncludesLatestDatesAllPhasesAndReturnedHistoryWithoutPhotoCaptions()
+    {
+        using var files = new TemporaryFiles();
+        var detail = ClosedInspection();
+        var issue = detail.Issues[0];
+        IssueActionDto[] actions =
+        [
+            new("action-1", "feedback", "2026-10-10", "首轮反馈文本", []),
+            new("action-2", "review", "2026-10-10", "首轮复查文本", []),
+            new("action-3", "return", "2026-10-11", "退回原因文本", []),
+            new("action-4", "feedback", "2026-10-12", "第二轮反馈文本", []),
+            new("action-5", "review", "2026-10-13", "第二轮复查文本", [])
+        ];
+        detail = detail with { IssueDetails = [new(issue, detail.Inspection, [], actions)] };
+        WordPhoto[] photos = [files.Photo('a', "site", 640, 480, issue.Id), files.Photo('b', "after", 600, 800, issue.Id), files.Photo('c', "review", 800, 600, issue.Id), files.Photo('d', "site", 700, 500, detail.Issues[1].Id)];
+        using var package = new Package(Render(stream => WordExporter.WriteRectificationRecord(stream, detail, Settings(), photos)));
+        ValidatePackage(package);
+        var document = package.Xml("word/document.xml");
+        var text = Text(document);
+        Assert.Contains("整改完成日期2026-10-14", text);
+        Assert.Contains("2026年10月14日", text);
+        Assert.Contains("办理过程", text);
+        foreach (var action in actions) Assert.Contains(action.Notes, text);
+        Assert.Equal(4, package.Media.Length);
+        Assert.Equal(4, document.Descendants(W + "drawing").Count());
+        var imageRows = document.Descendants(W + "tr").Where(row => row.Descendants(W + "drawing").Any()).ToArray();
+        Assert.All(imageRows, row => Assert.Equal("", Text(row)));
+        var oneSided = Assert.Single(imageRows, row => row.Descendants(W + "drawing").Count() == 1 && row.Descendants(A + "blip").Any(blip => (string?)blip.Attribute(R + "embed") == "rPhoto4"));
+        Assert.Equal("", Text(oneSided.Elements(W + "tc").Last()));
+    }
+
+    [Fact]
+    public void CampaignRecordKeepsFullContentAndSparseQuantitiesIncludingZero()
+    {
+        var campaign = Campaign() with { Content = new string('清', 2000), Outcome = "", Notes = "", ParticipantCount = 0, VehicleCount = null, GarbageTons = null, AreaSqm = null };
+        using var package = new Package(Render(stream => WordExporter.WriteCampaignRecord(stream, new(campaign, []), Settings(), [])));
+        ValidatePackage(package);
+        var document = package.Xml("word/document.xml");
+        Assert.Contains(campaign.Content, Text(document));
+        var quantities = Assert.Single(document.Descendants(W + "tbl"), table => Text(table).Contains("参加人数（人）", StringComparison.Ordinal));
+        Assert.Equal(1, quantities.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
+        Assert.Equal("0", Text(quantities.Elements(W + "tr").Last()));
+        Assert.DoesNotContain("整治照片", Text(document), StringComparison.Ordinal);
+        Assert.DoesNotContain("备注", Text(document), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InspectionAndCampaignLedgersHaveMergedLastSummaryRowsAndExactTotals()
+    {
+        var detail = ClosedInspection();
+        var normal = detail.Inspection with { Id = "normal", Result = "normal", IssueCount = 0, ClosedCount = 0, OpenIssueCount = 0, RectifyStatus = "none" };
+        using (var package = new Package(Render(stream => WordExporter.WriteInspectionLedger(stream,
+            new("2026-10-01", "2026-10-31", "全部社区", [detail.Inspection, normal], "2026-10-12"), Settings()))))
+        {
+            ValidatePackage(package);
+            var main = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), table => table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 10);
+            var summary = Assert.Single(main.Elements(W + "tr").Last().Elements(W + "tc"));
+            Assert.Equal("10", (string?)summary.Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val"));
+            Assert.Contains("共 2 次排查，正常 1，发现问题 1；问题共 2 项，已闭环 2", Text(summary));
+            Assert.NotNull(summary.Descendants(W + "b").FirstOrDefault());
+        }
+        var first = Campaign() with { Content = new string('清', 100), Outcome = "完成。剩余文字不显示。", GarbageTons = 1.25m, AreaSqm = 25.35m };
+        var second = first with { Id = "campaign-2", Name = "第二场", ParticipantCount = null, VehicleCount = 2, GarbageTons = 0.10m, AreaSqm = null };
+        using var campaigns = new Package(Render(stream => WordExporter.WriteCampaignLedger(stream,
+            new("2026-10-01", "2026-10-31", "全部社区", [first, second], [], false, "2026-10-12"), Settings())));
+        ValidatePackage(campaigns);
+        var table = Assert.Single(campaigns.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 11);
+        var cells = table.Elements(W + "tr").Skip(1).First().Elements(W + "tc").ToArray();
+        Assert.Equal(new string('清', 60) + "…", Text(cells[^1]));
+        Assert.Equal("right", (string?)cells[8].Element(W + "p")?.Element(W + "pPr")?.Element(W + "jc")?.Attribute(W + "val"));
+        var merged = Assert.Single(table.Elements(W + "tr").Last().Elements(W + "tc"));
+        Assert.Equal("11", (string?)merged.Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val"));
+        Assert.Contains("共 2 次整治，累计参加 12 人、出动车辆 3 辆、清运垃圾 1.35 吨、清理面积 25.35 ㎡", Text(merged));
+    }
+
+    [Fact]
+    public void CampaignLedgerPhotoOptionUsesAllThreePhasesAndOriginalJpegFiles()
+    {
+        using var files = new TemporaryFiles();
+        var campaign = Campaign();
+        WordPhoto[] photos = [files.Photo('a', "before", 1600, 900), files.Photo('b', "after", 900, 1600), files.Photo('c', "process", 800, 600)];
+        photos = photos.Select(photo => photo with { Photo = photo.Photo with { CampaignId = campaign.Id, HasThumb = true } }).ToArray();
+        using var package = new Package(Render(stream => WordExporter.WriteCampaignLedger(stream,
+            new("2026-10-01", "2026-10-31", "全部社区", [campaign], photos, true, "2026-10-12"), Settings())));
+        ValidatePackage(package);
+        var document = package.Xml("word/document.xml");
+        Assert.Equal(3, package.Media.Length);
+        Assert.Contains("整治前", Text(document)); Assert.Contains("整治后", Text(document)); Assert.Contains("整治中", Text(document));
+        Assert.Single(document.Descendants(W + "pageBreakBefore"));
+        foreach (var photo in photos) Assert.Contains(package.Media, media => package.Bytes(media).SequenceEqual(File.ReadAllBytes(photo.FilePath)));
+    }
+
+    private static InspectionDetailDto ClosedInspection()
+    {
+        var detail = Inspection();
+        var issues = detail.Issues.Select((issue, index) => issue with { Status = "closed", FeedbackDate = "2026-10-12", FeedbackNotes = "完成清理", ReviewDate = index == 0 ? "2026-10-13" : "2026-10-14", ReviewConclusion = "复查通过", ClosedDate = index == 0 ? "2026-10-13" : "2026-10-14", Overdue = false }).ToArray();
+        return detail with { Issues = issues, Inspection = detail.Inspection with { OpenIssueCount = 0, ClosedCount = 2, RectifyStatus = "closed" } };
+    }
+
+    private static CampaignDto Campaign() => new("campaign-1", "沿河环境整治", "campaign-type-1", "河道清理", "community-1", "东苑社区", "河道沿岸", "2026-10-10", "2026-10-12", "示例街道办事处", "社区工作人员", 12, 1, 1.20m, 240.50m, "清理河道沿岸垃圾。", "河道沿岸清洁。", "现场备注", 0);
 
     private static SettingsDto Settings() => new("示例街道办事处", "示例街道办事处", "李巡查", "经我街道于{日期}对你社区辖区内{点位}开展环保排查，发现以下问题：\n{问题}\n请于{期限}前整改完毕，并书面反馈。", 75);
 
@@ -341,8 +544,41 @@ public sealed class WordExporterTests
                 Assert.Contains(target, names);
             }
         }
+        foreach (var part in names.Where(name => name.EndsWith(".xml", StringComparison.Ordinal)))
+        {
+            var xml = package.Xml(part);
+            Assert.All(xml.Descendants(W + "spacing"), spacing =>
+            {
+                Assert.Equal("240", (string?)spacing.Attribute(W + "line"));
+                Assert.Equal("auto", (string?)spacing.Attribute(W + "lineRule"));
+            });
+            Assert.All(xml.Descendants(W + "rFonts"), font =>
+            {
+                Assert.Equal("eastAsia", (string?)font.Attribute(W + "hint"));
+                Assert.All(new[] { "ascii", "hAnsi", "cs" }, script => Assert.Equal((string?)font.Attribute(W + "eastAsia"), (string?)font.Attribute(W + script)));
+            });
+        }
+        Assert.Empty(package.Xml("word/settings.xml").Descendants(W + "updateFields"));
         var document = package.Xml("word/document.xml");
         Assert.Equal(W + "document", document.Root?.Name);
+        Assert.All(document.Descendants(W + "p"), paragraph => Assert.NotNull(paragraph.Element(W + "pPr")?.Element(W + "spacing")));
+        Assert.All(document.Descendants(W + "tr"), row => Assert.NotNull(row.Element(W + "trPr")?.Element(W + "cantSplit")));
+        foreach (var table in document.Descendants(W + "tbl"))
+        {
+            var grid = table.Element(W + "tblGrid");
+            Assert.NotNull(grid);
+            var columns = grid.Elements(W + "gridCol").Count();
+            Assert.True(columns > 0);
+            foreach (var row in table.Elements(W + "tr"))
+                Assert.Equal(columns, row.Elements(W + "tc").Sum(cell => int.Parse((string?)cell.Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val") ?? "1", CultureInfo.InvariantCulture)));
+            foreach (var border in table.Element(W + "tblPr")!.Element(W + "tblBorders")!.Elements())
+            { Assert.Equal("4", (string?)border.Attribute(W + "sz")); Assert.Equal("000000", (string?)border.Attribute(W + "color")); }
+            var margins = table.Element(W + "tblPr")!.Element(W + "tblCellMar")!;
+            foreach (var edge in new[] { "top", "bottom" }) Assert.Equal("50", (string?)margins.Element(W + edge)?.Attribute(W + "w"));
+            foreach (var edge in new[] { "left", "right" }) Assert.Equal("100", (string?)margins.Element(W + edge)?.Attribute(W + "w"));
+            foreach (var header in table.Elements(W + "tr").Where(row => row.Element(W + "trPr")?.Element(W + "tblHeader") is not null))
+                Assert.All(header.Elements(W + "tc"), cell => Assert.Equal("F2F2F2", (string?)cell.Element(W + "tcPr")?.Element(W + "shd")?.Attribute(W + "fill")));
+        }
         var relationships = DocumentRelationships(package);
         foreach (var reference in document.Descendants().Attributes().Where(attribute => attribute.Name.Namespace == R)) Assert.Contains(reference.Value, relationships.Keys);
         var body = document.Root?.Element(W + "body") ?? throw new InvalidDataException("Word body missing.");

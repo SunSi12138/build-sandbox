@@ -15,13 +15,17 @@ public sealed partial class Store
             var soon = openIssues.Where(issue => ReminderRules.IsDueSoon(DateOnly.ParseExact(issue.Deadline, "yyyy-MM-dd", CultureInfo.InvariantCulture), issue.Status, date)).ToArray();
             var awaiting = openIssues.Where(issue => ReminderRules.IsAwaitingReview(issue.Status)).ToArray();
             var points = new List<PointDto>();
-            using (var command = Command(PointSelect + " WHERE p.disabled=0 AND p.frequency<>'irregular' ORDER BY p.name,p.rowid;", null, ("$today", today)))
+            using (var command = Command(PointSelect + " WHERE p.disabled=0 AND p.temporary=0 AND p.frequency<>'irregular' ORDER BY p.name,p.rowid;", null, ("$today", today)))
             using (var rows = command.ExecuteReader())
                 while (rows.Read()) points.Add(ReadPoint(rows));
             var missed = points.Where(point => ReminderRules.NeedsInspection(point.Frequency, point.Disabled,
-                point.LastInspectionDate is null ? null : DateOnly.ParseExact(point.LastInspectionDate, "yyyy-MM-dd", CultureInfo.InvariantCulture), date)).ToArray();
+                point.LastInspectionDate is null ? null : DateOnly.ParseExact(point.LastInspectionDate, "yyyy-MM-dd", CultureInfo.InvariantCulture), date, point.Temporary)).ToArray();
+            var active = ReadInspectionList("WHERE EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed') ORDER BY n.inspection_date DESC,n.rowid DESC;", [], today);
+            var todo = active.OrderBy(item => item.OverdueCount > 0 ? 0 : soon.Any(issue => issue.InspectionId == item.Id) ? 1 : item.RectifyStatus == "feedback" ? 2 : 3)
+                .ThenBy(item => item.NearestDeadline, StringComparer.Ordinal).Take(5).ToArray();
+            var recent = ReadInspectionList("ORDER BY n.inspection_date DESC,n.rowid DESC LIMIT 5;", [], today);
             return new(today, new(overdue.Length, overdue.Take(8).ToArray()), new(soon.Length, soon.Take(8).ToArray()),
-                new(awaiting.Length, awaiting.Take(8).ToArray()), new(missed.Length, missed.Take(8).ToArray()));
+                new(awaiting.Length, awaiting.Take(8).ToArray()), new(missed.Length, missed.Take(5).ToArray()), todo, recent);
         }
     }
 
@@ -61,6 +65,12 @@ public sealed partial class Store
             ReviewAndClose(water.Issues[0].Id, new(Day(-7), "现场复查清理到位，予以闭环。"));
             CreateInspection(new(rubbish.Id, Day(-6), inspector, "issues", "", "",
                 [new("垃圾收集点周边散落杂物，部分垃圾桶盖未关闭。", "清扫周边环境并规范垃圾桶使用。", Today)]));
+            CreateInspection(new(null, Today, inspector, "issues", Issues: [new("巷口有散落垃圾。", "清理散落垃圾。", Day(5))],
+                NewPoint: new("东苑北巷临时排查点", east.Id, Type("垃圾堆放"), "东苑北巷路口", Longitude: 88.893426, Latitude: 29.274331)));
+            CreateInspection(new(restaurant.Id, Day(-14), inspector, "normal"));
+            SaveCampaign(null, new("西河沿岸卫生大扫除", GetCampaignTypes()[0].Id, west.Id, "西河桥至滨河步道", Day(-2),
+                "清扫河岸步道，清运积存垃圾。", Organizer: GetSettings().IssuingUnit, Participants: "社区工作人员及志愿者", ParticipantCount: 24,
+                VehicleCount: 2, GarbageTons: 1.25m, AreaSqm: 1200m, Outcome: "河岸步道清理完成。"));
             return true;
         }
     }
