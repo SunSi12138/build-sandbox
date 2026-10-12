@@ -230,6 +230,17 @@ async function visualAssertions(name, width) {
     }
     const filters = document.querySelector('[data-testid="list-filters"]')
     const columns = filters ? getComputedStyle(filters).gridTemplateColumns : null
+    const dateInputs = [...(filters?.querySelectorAll('.filter-dates input[type="date"]') ?? [])].map(element => ({
+      label: element.getAttribute('aria-label'), visible: visible(element)
+    }))
+    const dateToggle = filters?.querySelector('.filter-date-toggle')
+    const dateToggleVisible = Boolean(dateToggle && visible(dateToggle))
+    const tableRows = [...document.querySelectorAll('.table-wrap tbody tr')].filter(visible).map(element => ({
+      height: element.getBoundingClientRect().height, text: element.textContent.trim().slice(0, 80)
+    }))
+    const coordinateLabel = [...document.querySelectorAll('.detail-grid dt')].find(element => element.textContent.trim() === '经纬度')
+    const coordinateValue = coordinateLabel?.nextElementSibling
+    const coordinates = coordinateValue ? { text: coordinateValue.textContent.trim(), height: coordinateValue.getBoundingClientRect().height, lineHeight: parseFloat(getComputedStyle(coordinateValue).lineHeight) } : null
     const nav = document.querySelector('.mobile-tabs')?.getBoundingClientRect()
     const visibleRows = [...document.querySelectorAll('.mobile-records [data-testid="inspection-row"]')].filter(element => {
       const rect = element.getBoundingClientRect()
@@ -244,10 +255,20 @@ async function visualAssertions(name, width) {
     const stats = [...document.querySelectorAll('.stat-block')].map(element => ({
       ...visiblePosition(element), fontSize: parseFloat(getComputedStyle(element.querySelector('.stat-number')).fontSize)
     }))
-    return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, headerHeight: header?.height, buttons, smallText, columns, visibleRows, firstTodo, stats, firstTodoBottom: firstTodo?.bottom, lastStatBottom: stats.at(-1)?.bottom, navTop: nav?.top }
+    return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, headerHeight: header?.height, buttons, smallText, columns, dateInputs, dateToggleVisible, tableRows, coordinates, visibleRows, firstTodo, stats, firstTodoBottom: firstTodo?.bottom, lastStatBottom: stats.at(-1)?.bottom, navTop: nav?.top }
   })
   assert(value.scrollWidth <= width + 1, `${name}: horizontal overflow ${value.scrollWidth} > ${width}`)
   assert.deepEqual(value.smallText, [], `${name}: text smaller than 12 px`)
+  if (name === 'inspections' || name === 'campaigns') {
+    assert.equal(value.dateInputs.length, 2, `${name}: both date filters must render`)
+    assert(value.dateInputs.every(input => input.visible === (width >= 768)), `${name}: date filters must be visible on desktop and initially collapsed on mobile`)
+    assert.equal(value.dateToggleVisible, width < 768, `${name}: mobile date toggle must remain accessible`)
+  }
+  if (name === 'point-detail') {
+    assert(value.coordinates, 'Point detail must show its coordinates')
+    assert(value.coordinates.height <= value.coordinates.lineHeight + 1, 'Coordinate digits wrap onto a second line')
+    assert.match(value.coordinates.text, /^-?\d+\.\d{6},-?\d+\.\d{6}$/, 'Coordinates must retain six decimal places')
+  }
   if (width < 768) {
     const small = value.buttons.filter(button => button.width < 39.5 || button.height < 39.5)
     assert.deepEqual(small, [], `${name}: touch targets smaller than 40 × 40`)
@@ -260,7 +281,13 @@ async function visualAssertions(name, width) {
       assert(value.stats.every(stat => stat.visible && stat.height > 0 && stat.top >= 48 && stat.bottom <= value.navTop), 'Statistics not visible on first screen')
       assert(value.firstTodo?.visible && value.firstTodo.height > 0 && value.firstTodo.top >= 48 && value.firstTodo.bottom <= value.navTop, 'First to-do row not visible on first screen')
     }
-  } else assert(value.headerHeight <= 64, `${name}: desktop header exceeds 64 px`)
+  } else {
+    assert(value.headerHeight <= 64, `${name}: desktop header exceeds 64 px`)
+    if (['points', 'inspections', 'campaigns'].includes(name)) {
+      assert(value.tableRows.length > 0, `${name}: desktop data rows must render`)
+      assert(value.tableRows.every(row => Math.abs(row.height - 44) <= 0.5), `${name}: standard fixture rows must be 44 px: ${JSON.stringify(value.tableRows)}`)
+    }
+  }
   delete value.buttons
   report.layoutAssertions ??= []
   report.layoutAssertions.push({ name, ...value })

@@ -77,7 +77,7 @@ onMounted(() => { void fetchSettings() })
             <UFormField class="field-full" label="街道全称" name="streetName" required><UInput v-model="form.streetName" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
             <UFormField class="field-full" label="落款单位" name="issuingUnit" required><UInput v-model="form.issuingUnit" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
             <UFormField label="默认排查人" name="defaultInspector" required><UInput v-model="form.defaultInspector" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
-            <UFormField label="JPEG 质量" name="jpegQuality" description="建议 75"><UInput v-model.number="form.jpegQuality" type="number" min="1" max="100" step="1" inputmode="numeric" class="w-full" :disabled="saving" /></UFormField>
+            <UFormField label="JPEG 质量" name="jpegQuality" help="建议 75"><UInput v-model.number="form.jpegQuality" type="number" min="1" max="100" step="1" inputmode="numeric" class="w-full" :disabled="saving" /></UFormField>
           </div>
         </section>
         <section class="form-section flex justify-end"><UButton data-testid="settings-save" type="submit" :loading="saving">保存</UButton></section>
