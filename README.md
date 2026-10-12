@@ -457,7 +457,7 @@ libreoffice --headless --convert-to pdf --outdir test-results/word-pdf test-resu
 | 单元测试 | 151 / 151 通过，失败 0、跳过 0；Linux x64 附件的 `unit-tests.trx` |
 | NativeAOT | Windows x86、Linux ARM64、Linux x64 均通过 `-warnaserror` 发布，AOT 警告 0 |
 | 三平台 API | 每个平台 11 组、283 次请求全部通过；覆盖 v1 迁移/恢复、旧目录、中断恢复、批量回滚及级联删除 |
-| 监听实际连接 | 三平台均验证 IPv6 回环、同进程重绑、非回环 403、CLI 覆盖及失效 IP 回退；每个平台另有 3 次已移除监听地址拒绝 TCP 连接的记录 |
+| 监听实际连接 | 三平台均验证 IPv6 回环、同进程重绑、非回环 403、CLI 覆盖及失效 IP 回退；每个平台另有 3 次已移除监听地址无法建立 TCP 连接的记录 |
 | 七种 Word | 每个平台 5 组、54 次请求通过；覆盖闭环导出门禁、七种单据/台账和 OOXML 字体、行距、表格、照片及汇总断言 |
 | Nuxt | 类型检查与静态构建通过；保持原锁定依赖 |
 | 真实浏览器 | Chromium 151.0.7922.34，14 组流程全部通过；包含草稿、压缩回退、临时点位、按问题反馈、整治、7 个 Word 下载入口、监听及恢复 |
@@ -468,6 +468,8 @@ libreoffice --headless --convert-to pdf --outdir test-results/word-pdf test-resu
 | 统一发布包 | `hbtool.zip` + SHA-256；一个 `hbtool/` 根目录、两个指定平台程序、一份 `wwwroot`，75 个文件；PE x86、ELF64 ARM64、ZIP CRC、Linux 755 均通过，不带用户配置或 Linux x64 |
 | 原生依赖检查 | Windows 仅导入系统 DLL/UCRT；ARM64 动态依赖为 libc、libm 和加载器，最高 GLIBC 符号版本 2.38；没有独立 SQLite 库 |
 | Word 渲染 | 相同 Word 源码生成 12 份样例，LibreOfficeDev 26.8 + Noto CJK 回退渲染，覆盖 52 页；普通 20 页与已审图逐字节一致，其余新页面逐张审阅或比对到同一已审图；两份长台账均完整提取 3,640/3,640 字 |
+
+最终 CI 的 12 份 Word 样例与用于渲染的样例已逐包核对：10 份仅 ZIP 时间戳不同，另外 2 份仅有指向相同 JPEG 字节的图片引用编号差异；文字、样式和图片内容均对应已审阅的 52 页。精确差异与各文件哈希保存在 `word-final-provenance.json`。
 
 完整交付证据包包含三平台 JSON/TRX、浏览器报告、27 张页面图、Word 样例/PDF/页面图、逐图审阅及包结构/SHA 校验结果。GitHub 附件内的原始结果分别位于 `test-results-{rid}`、`browser-evidence` 与 `hbtool`。
 
