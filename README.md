@@ -40,7 +40,7 @@ Linux 解压工具如未保留执行权限，先运行 `chmod +x StreetEcoTool-l
 
 - Windows 系统支持范围以 [.NET 10 官方支持列表](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md)为准。`win-x86` 是程序架构，不代表支持所有旧版系统；不支持 Windows 7 / 8.1，未验收老旧 32 位 Windows。
 - v1 Windows 产物核验为系统 DLL / UCRT 依赖，没有独立 SQLite、`vcruntime*` 或 `msvcp*` DLL；v2 的最终依赖核验结果见本文末尾。现代 Windows 的 UCRT 说明见 [Universal CRT 部署文档](https://learn.microsoft.com/en-us/cpp/windows/universal-crt-deployment)。C++ 工具链用于构建，用户部署不需要编译工具链。
-- ARM64 构建基线为 **Ubuntu 24.04 arm64**。NativeAOT 的 Linux 系统依赖受构建宿主影响；v1 产物曾检出 `GLIBC_2.38`，v2 以本轮产物检查为准。不能据构建架构承诺兼容 Ubuntu 22.04、Debian 12、任意树莓派系统或 Alpine / musl；其他环境应按 [NativeAOT 部署约束](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)在目标系统重建并验收。
+- ARM64 构建基线为 **Ubuntu 24.04 arm64**。NativeAOT 的 Linux 系统依赖受构建宿主影响；本轮 ARM64 产物最高 GLIBC 符号版本为 `GLIBC_2.38`。不能据构建架构承诺兼容 Ubuntu 22.04、Debian 12、任意树莓派系统或 Alpine / musl；其他环境应按 [NativeAOT 部署约束](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/)在目标系统重建并验收。
 - 前端兼容基线为 **Chrome / Edge 111+、Safari / iOS 16.4+、Firefox 128+**，依据 [Tailwind CSS v4 的浏览器要求](https://tailwindcss.com/docs/compatibility)。缺少必要特性的浏览器会显示中文升级提示。自动化使用 CI 的 Chromium，最低版本及真实 iOS 设备没有逐一实测。
 
 ## 2. 监听设置、端口与单实例
@@ -153,7 +153,7 @@ Linux 使用 `./StreetEcoTool-linux-arm64`。`--port=5181`、`--listen=0.0.0.0` 
 
 仍有问题未闭环时，整改记录单接口返回 400 并说明「尚有 N 项问题未闭环」；正常排查使用排查记录单。台账汇总是主表的最后一行，附照在新页输出。整治台账长内容及成效会截断，全文见整治记录单。
 
-「设置 → 正文模板」支持 `{日期}`、`{点位}`、`{问题}`、`{期限}`、`{街道全称}`、`{社区}`。`{日期}` 是排查日期；`{问题}` 插入问题表，省略时在正文后补问题表；`{期限}` 使用该次最晚的整改期限，每项实际期限仍逐条列明。街道、落款和正文采用导出时当前设置，点位与社区抬头采用排查快照。正文与落款日期写为「2026年10月12日」，表格日期为 `2026-10-12`。
+「设置 → 通知单模板」支持 `{日期}`、`{点位}`、`{问题}`、`{期限}`、`{街道全称}`、`{社区}`。`{日期}` 是排查日期；`{问题}` 插入问题表，省略时在正文后补问题表；`{期限}` 使用该次最晚的整改期限，每项实际期限仍逐条列明。街道、落款和正文采用导出时当前设置，点位与社区抬头采用排查快照。正文与落款日期写为「2026年10月12日」，表格日期为 `2026-10-12`。
 
 ### 统一样式
 
@@ -448,24 +448,34 @@ v1 曾使用 LibreOffice 对六份含长文本、照片的 DOCX 转 PDF 并目�
 libreoffice --headless --convert-to pdf --outdir test-results/word-pdf test-results/word-samples/*.docx
 ```
 
-## 13. 本轮 v2 验收结果（待最终核验）
+## 13. 本轮 v2 验收结果
 
-**本节留待本轮最终 CI、产物与截图检查完成后填写。目前不能宣称 v2 全部测试通过。**
+本轮验收代码为 [83769259](https://github.com/SunSi12138/build-sandbox/commit/83769259e434a5dbff9d4f0b36d2fa36cde3c345)，对应 [完整 CI](https://github.com/SunSi12138/build-sandbox/actions/runs/38238235193)。以下数字来自该次实际运行；测试使用隔离目录及示例数据。
 
 | 项目 | 本轮结果与证据 |
 | --- | --- |
-| 最终提交与工作流 | 待填写提交 SHA 和 CI 链接 |
-| 单元测试总数、通过数 | 待填写；不要沿用 v1 的 103 |
-| Windows x86、Linux ARM64、Linux x64 AOT | 待最终确认三个 RID 零警告及依赖检查 |
-| 三个平台 API 冒烟 | 待填写，含监听、v1 恢复、旧布局和正常退出 |
-| 七种 Word 及 OOXML 样式断言 | 待填写各平台报告 |
-| Nuxt 类型检查、静态构建、浏览器流程 | 待填写 |
-| 27 张截图逐张查看与布局断言 | 待填写结果及截图清单 |
-| 外部请求、字体、图标、压缩回退 | 待填写浏览器报告 |
-| 统一 ZIP 结构、SHA-256、Linux 755 | 待填写产物检查 |
-| v2 LibreOffice 转换与目视检查 | 待填写实际执行情况 |
+| 单元测试 | 151 / 151 通过，失败 0、跳过 0；Linux x64 附件的 `unit-tests.trx` |
+| NativeAOT | Windows x86、Linux ARM64、Linux x64 均通过 `-warnaserror` 发布，AOT 警告 0 |
+| 三平台 API | 每个平台 11 组、283 次请求全部通过；覆盖 v1 迁移/恢复、旧目录、中断恢复、批量回滚及级联删除 |
+| 监听实际连接 | 三平台均验证 IPv6 回环、同进程重绑、非回环 403、CLI 覆盖及失效 IP 回退；每个平台另有 3 次已移除监听地址拒绝 TCP 连接的记录 |
+| 七种 Word | 每个平台 5 组、54 次请求通过；覆盖闭环导出门禁、七种单据/台账和 OOXML 字体、行距、表格、照片及汇总断言 |
+| Nuxt | 类型检查与静态构建通过；保持原锁定依赖 |
+| 真实浏览器 | Chromium 151.0.7922.34，14 组流程全部通过；包含草稿、压缩回退、临时点位、按问题反馈、整治、7 个 Word 下载入口、监听及恢复 |
+| 27 张截图 | 第 12 节九个页面 × 三个指定视口，全部逐张按原尺寸审阅；文件均在 `web/test-results/screens/` |
+| 36 组布局测量 | 九个页面 × 360、375、768、1440 宽度；无页面横向滚动；手机目标 ≥40×40、正文 ≥12px（底部 tab 11px）；首页首屏完整显示四项统计与首条待办；375px 排查首屏实际 6 条；顶栏 48px、桌面页头 ≤64px、手机筛选两列 |
+| 看图后补充回归 | 平板/桌面两个日期筛选可见，手机默认折叠；经纬度六位精度且完整单行；三个桌面列表的普通样例行高 44px；设置页同排输入框对齐 |
+| 离线与错误 | 外部请求 0，未处理页面错误 0；本地图标、系统字体栈及 WASM/回退压缩通过；测试程序正常退出 |
+| 统一发布包 | `hbtool.zip` + SHA-256；一个 `hbtool/` 根目录、两个指定平台程序、一份 `wwwroot`，75 个文件；PE x86、ELF64 ARM64、ZIP CRC、Linux 755 均通过，不带用户配置或 Linux x64 |
+| 原生依赖检查 | Windows 仅导入系统 DLL/UCRT；ARM64 动态依赖为 libc、libm 和加载器，最高 GLIBC 符号版本 2.38；没有独立 SQLite 库 |
+| Word 渲染 | 相同 Word 源码生成 12 份样例，LibreOfficeDev 26.8 + Noto CJK 回退渲染，覆盖 52 页；普通 20 页与已审图逐字节一致，其余新页面逐张审阅或比对到同一已审图；两份长台账均完整提取 3,640/3,640 字 |
 
-**仍需人工环境验收的边界：**尚未在 Microsoft Word 或 WPS 图形界面实际打开 v2 七种文档，不能宣称这两种软件无修复提示或无更新域提示；OOXML 断言及 LibreOffice 转换不等于 Word / WPS 人工验收。最低浏览器版本、真机 iOS、真实手机拍照 / 相册和每一种目标 Linux 发行版也没有逐一实测。
+完整交付证据包包含三平台 JSON/TRX、浏览器报告、27 张页面图、Word 样例/PDF/页面图、逐图审阅及包结构/SHA 校验结果。GitHub 附件内的原始结果分别位于 `test-results-{rid}`、`browser-evidence` 与 `hbtool`。
+
+### 本轮处理决定
+
+手机统计数字采用 20px、桌面 28px，按第 4.8 节的上限处理与 4.2/4.7 节的冲突。先上传后关联的照片允许暂时零归属，业务保存后唯一归属；目录同名冲突保留源文件，因此冲突未处理前旧目录可能暂留。首页补充 `awaitingReview` / `openOnly` 问题级筛选，以匹配混合问题状态的数量。超长 Word 表格行按相同序号续行，保留全文，并让每个物理行保持不跨页拆分。
+
+**实际验收边界：**未在 Microsoft Word 或 WPS 图形界面打开七种文档，不能宣称这两种软件无修复或更新域提示；OOXML 检查及 LibreOffice 转换不替代该项人工验收。最低浏览器版本、真实 iOS/Android 设备、真实手机拍照/相册、蒲公英实网及每一种目标 Linux 发行版没有逐一实测。可选二维码按钮未实现。
 
 ## 14. 常见问题
 
