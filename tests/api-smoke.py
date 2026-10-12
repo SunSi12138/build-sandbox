@@ -704,6 +704,19 @@ class ApiSmoke:
             finally:
                 connection.close()
 
+        def require_closed_listener(host: str, port: int) -> None:
+            started = time.monotonic()
+            try:
+                with socket.create_connection((host, port), timeout=1.5):
+                    pass
+            except OSError as error:
+                self.report.setdefault("rejectedListenerConnections", []).append({
+                    "host": host, "port": port, "result": type(error).__name__,
+                    "ms": round((time.monotonic() - started) * 1000),
+                })
+                return
+            raise SmokeFailure(f"Unselected listener still accepts TCP connections: {host}:{port}")
+
         ipv6_available = False
         if socket.has_ipv6:
             try:
@@ -751,6 +764,7 @@ class ApiSmoke:
         require(not remote_json(address, "GET", "/api/system")["canConfigure"], "Explicit adapter binding bypassed the loopback check")
         self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]})
         wait_for_listen(["127.0.0.1"])
+        require_closed_listener(address, info["port"])
         require(self.process.pid == pid and self.fingerprint() == before, "Listener changes modified business data or restarted the process")
 
         # An adapter-only command line remains usable and overrides, without rewriting,
@@ -762,6 +776,9 @@ class ApiSmoke:
         require(adapter_only["listen"] == [address] and not adapter_only["canConfigure"], "--listen did not override the saved default")
         require(all("localhost" not in url and "127.0.0.1" not in url for url in adapter_only["addresses"]), "Adapter-only listener still advertised localhost")
         require(config_path.read_bytes() == saved_config, "The --listen override unexpectedly rewrote appsettings.json")
+        require_closed_listener("127.0.0.1", adapter_only["port"])
+        if ipv6_available:
+            require_closed_listener("::1", adapter_only["port"])
         self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]}, expected=403)
         self.stop()
 

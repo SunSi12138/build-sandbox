@@ -175,6 +175,39 @@ async function uploadIn(control, name, buffer) {
   report.thumbnails.push({ id: photo.id, bytes: thumbnailBytes, width: thumbSize[0], height: thumbSize[1] })
   return { photo, response: uploadedResponse }
 }
+async function waitForVisualPage(name, title) {
+  await page.getByRole('heading', { name: title, exact: true }).waitFor()
+  // A hash navigation can inherit the previous page's network-idle state.
+  // Wait for each route's rendered data as well as its loading placeholders.
+  await page.waitForFunction(name => {
+    const content = document.querySelector('main')
+    if (!content) return false
+    if ([...content.querySelectorAll('[role="status"][aria-label="正在加载"], [aria-busy="true"]')].some(element => element.checkVisibility())) return false
+    const count = selector => content.querySelectorAll(selector).length
+    const input = testId => content.querySelector(`[data-testid="${testId}"]`)
+    switch (name) {
+      case 'home': return count('.stat-block') === 4 && count('[data-testid="home-todos"] .list-row') > 0
+      case 'points': return count('.mobile-records .list-row') > 0
+      case 'point-detail': return count('.detail-grid') > 0 && count('[data-testid="photo-uploaded"]') > 0
+      case 'inspections': return count('.mobile-records [data-testid="inspection-row"]') > 0
+      case 'inspection-new': return Boolean(input('inspection-date')?.value && input('inspection-inspector')?.value && count('[data-testid="inspection-point-option"]') > 0)
+      case 'inspection-detail': return count('.issue-block') >= 2 && Boolean(input('batch-review'))
+      case 'campaigns': return count('[data-testid="campaign-row"]') > 0
+      case 'campaign-new': return Boolean(input('campaign-save') && !input('campaign-save').disabled)
+      case 'settings': return Boolean(content.querySelector('#settings-basic input')?.value)
+      default: return false
+    }
+  }, name, { timeout: 10000 })
+  await page.waitForLoadState('networkidle')
+  await page.evaluate(async () => {
+    await document.fonts.ready
+    const images = [...document.images]
+    images.forEach(image => { image.loading = 'eager' })
+    await Promise.all(images.map(image => image.decode().catch(() => {})))
+  })
+  await page.mouse.move(0, 0)
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-swipe-direction]')].every(element => !element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })), null, { timeout: 10000 })
+}
 async function visualAssertions(name, width) {
   const value = await page.evaluate(() => {
     function visible(element) {
@@ -540,9 +573,7 @@ try {
       for (const [name, route, title] of pages) {
         await page.goto(origin + '/#' + route, { waitUntil: 'networkidle' })
         if (name === 'settings') await page.reload({ waitUntil: 'networkidle' })
-        await page.getByRole('heading', { name: title, exact: true }).waitFor()
-        await page.waitForLoadState('networkidle')
-        await page.evaluate(async () => { const images = [...document.images]; images.forEach(image => { image.loading = 'eager' }); await Promise.all(images.map(image => image.decode().catch(() => {}))) })
+        await waitForVisualPage(name, title)
         await visualAssertions(name, width)
         const file = `${name}-${width}x${height}.png`
         await page.screenshot({ path: path.join(screens, file), fullPage: true, animations: 'disabled' })
@@ -550,7 +581,7 @@ try {
       }
     }
     await page.setViewportSize({ width: 360, height: 800 })
-    for (const [name, route, title] of pages) { await page.goto(origin + '/#' + route, { waitUntil: 'networkidle' }); await page.getByRole('heading', { name: title, exact: true }).waitFor(); await visualAssertions(name, 360) }
+    for (const [name, route, title] of pages) { await page.goto(origin + '/#' + route, { waitUntil: 'networkidle' }); if (name === 'settings') await page.reload({ waitUntil: 'networkidle' }); await waitForVisualPage(name, title); await visualAssertions(name, 360) }
     assert.equal(report.screenshots.length, 27)
   })
 
