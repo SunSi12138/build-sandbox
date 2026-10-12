@@ -8,6 +8,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             _ = GetInspection(inspectionId);
             var items = request.Items ?? [];
             ValidateBatchIds(items.Select(item => item?.IssueId).ToArray());
@@ -40,6 +41,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             _ = GetInspection(inspectionId);
             var items = request.Items ?? [];
             ValidateBatchIds(items.Select(item => item?.IssueId).ToArray());

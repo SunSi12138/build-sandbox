@@ -97,6 +97,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var issue = GetIssue(id);
             if (issue.Status != "pending") throw new ApiException(409, "只有待整改问题可以修改；如需继续整改，请先退回待整改。");
             using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit WHERE id=$id;", null,
@@ -119,6 +120,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var issue = GetIssue(id);
             if (issue.Status != "pending") throw new ApiException(409, "该问题当前不是待整改状态，不能重复记录反馈。");
             var date = ActionDate(request.Date, issue.InspectionDate, "反馈日期");
@@ -141,6 +143,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var issue = GetIssue(id);
             if (issue.Status != "feedback") throw new ApiException(409, "请先记录社区反馈，再复查闭环。");
             var date = ActionDate(request.Date, issue.FeedbackDate ?? issue.InspectionDate, "复查日期");
@@ -163,6 +166,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var issue = GetIssue(id);
             if (issue.Status == "pending") throw new ApiException(409, "该问题已经是待整改状态。");
             var reason = Text(request.Reason, "退回原因", 8000);

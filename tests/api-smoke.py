@@ -169,11 +169,12 @@ class ApiSmoke:
         finally:
             item["seconds"] = round(time.monotonic() - started, 3)
 
-    def fingerprint(self) -> dict:
+    def fingerprint(self, photo_root: Path | None = None) -> dict:
+        photo_root = photo_root or (self.install / "photos")
         return {
             "database": database_rows(self.data / "app.db"),
-            "photos": {path.relative_to(self.data / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-                       for path in sorted((self.data / "photos").rglob("*")) if path.is_file()},
+            "photos": {path.relative_to(photo_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                       for path in sorted(photo_root.rglob("*")) if path.is_file()},
         }
 
     def sql_rows(self, statement: str, parameters=()) -> list:
@@ -228,7 +229,7 @@ class ApiSmoke:
         require((self.data / "app.db").is_file(), "Database was not created next to the copied executable")
         require(not (self.cwd / "data").exists(), "Database incorrectly depends on the current working directory")
         require(self.sql_rows("PRAGMA journal_mode")[0][0].lower() == "wal", "WAL mode is not enabled")
-        require(self.sql_rows("PRAGMA user_version")[0][0] >= 1, "Schema migration was not recorded")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 2, "Schema migration was not recorded")
         require(self.sql_rows("PRAGMA application_id")[0][0] == 1397048143, "Database application identifier is missing")
         require({"餐饮油烟", "工地扬尘", "河道水体", "垃圾堆放", "小散乱污", "其他"}.issubset({row["name"] for row in self.bootstrap["pointTypes"]}), "Default point types are incomplete")
         self.settings = {"streetName": "测试街道 O'Brien", "issuingUnit": "生态环境办公室", "defaultInspector": "默认排查员",
@@ -413,7 +414,9 @@ class ApiSmoke:
     def test_backups(self) -> None:
         overview = self.json("GET", "/api/backups")
         require(overview["retentionCount"] == 14, "Daily database backup retention is not 14")
-        require(any(path.is_file() for path in (self.data / "backup").rglob("*.db")), "First startup did not create a daily database snapshot")
+        require(any(path.is_file() for path in (self.install / "backup").rglob("*.db")), "First startup did not create a daily database snapshot")
+        require(any(item["date"] == day(self.today - dt.timedelta(days=1)) for item in overview["items"]), "Startup must snapshot the previous calendar day")
+        require(not (self.data / "photos").exists() and not (self.data / "backup").exists(), "Version 2 data directory contains legacy photo or backup folders")
         baseline = self.fingerprint()
         headers, backup = self.request("GET", "/api/backups/download")
         require(headers.get("Content-Type", "").startswith("application/zip"), "Backup download has an unexpected content type")
@@ -454,7 +457,7 @@ class ApiSmoke:
         require(self.fingerprint() == current, "Corrupt ZIP changed current data")
         # Simulate a write failure at the archive destination, without changing
         # filesystem permissions or risking another application's directories.
-        backup_dir, held = self.data / "backup", self.data / "backup-held-by-test"
+        backup_dir, held = self.install / "backup", self.install / "backup-held-by-test"
         backup_dir.rename(held)
         backup_dir.write_text("intentionally blocked by integration test", encoding="utf-8")
         try:
@@ -470,8 +473,8 @@ class ApiSmoke:
         require(self.fingerprint() == baseline, "Successful restore did not restore exactly the selected database and photos")
         require(self.json("GET", "/api/settings") == self.settings, "Restored settings are not served by the reopened connection")
         self.json("GET", "/api/points/" + extra["id"], expected=404)
-        preserved = (self.data / restored["preservedBackup"]).resolve()
-        require(preserved.is_relative_to((self.data / "backup").resolve()), "Preserved backup path escaped the backup directory")
+        preserved = (self.install / restored["preservedBackup"]).resolve()
+        require(preserved.is_relative_to((self.install / "backup").resolve()), "Preserved backup path escaped the backup directory")
         require(database_rows(preserved / "app.db") == current["database"], "Pre-restore database was not preserved intact")
         preserved_photos = {path.relative_to(preserved / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in sorted((preserved / "photos").rglob("*")) if path.is_file()}
@@ -488,7 +491,7 @@ class ApiSmoke:
     def test_cleanup_and_restart(self) -> None:
         old_orphan, recent_orphan = self.upload(), self.upload()
         missed_before = self.json("GET", "/api/dashboard")["missedInspections"]["count"]
-        photo_paths = {row[0]: self.data / "photos" / row[1] for row in self.sql_rows("SELECT id,relative_path FROM photos WHERE id IN (?, ?, ?)", (old_orphan["id"], recent_orphan["id"], self.normal_photo["id"]))}
+        photo_paths = {row[0]: self.install / "photos" / row[1] for row in self.sql_rows("SELECT id,relative_path FROM photos WHERE id IN (?, ?, ?)", (old_orphan["id"], recent_orphan["id"], self.normal_photo["id"]))}
         self.stop()
         old_stamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=8)).isoformat(timespec="seconds")
         recent_stamp = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=6)).isoformat(timespec="seconds")
@@ -518,32 +521,36 @@ class ApiSmoke:
 
     def test_interrupted_restore(self) -> None:
         require(self.process is None, "Restore-crash fixtures require the test server to be stopped")
-        for committed in (False, True):
+        for legacy, committed in ((False, False), (False, True), (True, False), (True, True)):
             before = self.fingerprint()
-            backup_name = "before-restore-smoke-" + ("committed" if committed else "uncommitted")
-            previous = self.data / "backup" / backup_name
+            storage_root = self.data if legacy else self.install
+            if legacy:
+                for name in ("photos", "backup"):
+                    (self.install / name).rename(self.data / name)
+            backup_name = "before-restore-smoke-" + ("legacy-" if legacy else "v2-") + ("committed" if committed else "uncommitted")
+            previous = storage_root / "backup" / backup_name
             previous.mkdir()
             for suffix in ("", "-wal", "-shm"):
                 source = self.data / ("app.db" + suffix)
                 if source.exists():
                     source.rename(previous / source.name)
-            (self.data / "photos").rename(previous / "photos")
-            (self.data / "photos").mkdir()
-            # These bytes came from the successful backup-download case above.
-            # Construct the state just after new data was moved into place.
+            (storage_root / "photos").rename(previous / "photos")
+            (storage_root / "photos").mkdir()
             for name, payload in self.backup_entries.items():
                 if name == "app.db" or name.startswith("photos/"):
-                    destination = self.data / name
+                    destination = self.data / name if name == "app.db" else storage_root / name
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_bytes(payload)
             marker = "恢复已提交的新数据" if committed else "尚未提交，不应覆盖旧数据"
             with contextlib.closing(sqlite3.connect(self.data / "app.db")) as database:
                 database.execute("UPDATE settings SET street_name=? WHERE id=1", (marker,))
                 database.commit()
-            replacement = self.fingerprint()
-            journal = self.data / ".restore-journal.json"
+            replacement = self.fingerprint(storage_root / "photos")
+            journal = self.data / ".restore-journal.json" if legacy else self.install / "temp" / "restore-journal.json"
+            journal.parent.mkdir(exist_ok=True)
             journal.write_text(json.dumps({"backupName": backup_name, "committed": committed}), encoding="utf-8")
             self.start(seed=True)
+            previous = self.install / "backup" / backup_name
             require(self.fingerprint() == (replacement if committed else before), "Startup recovered the wrong side of an interrupted restore transaction")
             require(not journal.exists(), "Startup left a processed restore journal behind")
             self.request("GET", "/photos/" + self.normal_photo["id"])
@@ -554,8 +561,158 @@ class ApiSmoke:
                                     for path in sorted((previous / "photos").rglob("*")) if path.is_file()}
                 require(preserved_photos == before["photos"], "Crash recovery discarded preserved old photos")
             else:
-                require(self.json("GET", "/api/settings") == self.settings, "An uncommitted restore changed live settings")
+                require(self.json("GET", "/api/settings")["streetName"] == before["database"]["settings"][0][1], "An uncommitted restore changed live settings")
             self.stop()
+
+    def test_version2_workflows(self) -> None:
+        point_photo = self.upload("point")
+        self.request("GET", "/photos/" + point_photo["id"] + "?size=thumb")
+        self.request("PUT", "/api/photos/" + point_photo["id"] + "/thumb", raw=JPEG, content_type="image/jpeg", expected=204)
+        thumb_path = self.install / "photos" / self.sql_rows("SELECT relative_path FROM photos WHERE id=?", (point_photo["id"],))[0][0].replace(".jpg", ".thumb.jpg")
+        require(thumb_path.is_file() and thumb_path.read_bytes() == JPEG, "Thumbnail was not stored next to its original")
+        self.request("PUT", "/api/photos/" + point_photo["id"] + "/thumb", raw=b"invalid", content_type="image/jpeg", expected=400)
+        temp_point = {**self.point_body("测试V2临时点位"), "longitude": 88.89342678, "latitude": 29.27433178, "photoIds": [point_photo["id"]]}
+        body = {**self.inspection_body(""), "pointId": None, "newPoint": temp_point,
+                "result": "issues", "issues": [self.issue_body("V2问题一", self.today - dt.timedelta(days=1)), self.issue_body("V2问题二", self.today + dt.timedelta(days=2))]}
+        baseline = self.fingerprint()
+        invalid = {**body, "issues": [self.issue_body("应回滚", self.today, ["0" * 32])]}
+        self.json("POST", "/api/inspections", invalid, expected=(400, 409))
+        require(self.fingerprint() == baseline, "Failed temporary-point inspection left an isolated point or attached point photo")
+        self.json("POST", "/api/inspections", {**body, "pointId": self.point["id"]}, expected=400)
+        self.json("POST", "/api/inspections", {**body, "newPoint": {**temp_point, "longitude": 29.274331, "latitude": 88.893426}}, expected=400)
+        temporary = self.json("POST", "/api/inspections", body, expected=201)
+        inspection_id = temporary["inspection"]["id"]
+        point_id = temporary["inspection"]["pointId"]
+        prefix = "/api/inspections/" + inspection_id
+        require(temporary["inspection"]["pointTemporary"] and temporary["inspection"]["rectifyStatus"] == "pending", "Temporary inspection metadata is inconsistent")
+        detail = self.json("GET", "/api/points/" + point_id)
+        require(detail["point"]["frequency"] == "irregular" and detail["point"]["longitude"] == 88.893427 and detail["point"]["latitude"] == 29.274332, "Temporary-point frequency or coordinate rounding failed")
+        require(detail["point"]["coverPhotoId"] == point_photo["id"] and detail["point"]["photoCount"] == 1 and detail["photos"][0]["hasThumb"], "Point cover/photo metadata is missing")
+        require(point_id not in ids(self.json("GET", "/api/points?pageSize=100")["items"]), "Temporary point appeared in the default point list")
+        require(point_id in ids(self.json("GET", "/api/points?temporary=true&pageSize=100")["items"]), "Temporary-point filter did not find the point")
+        require(point_id not in ids(self.json("GET", "/api/points?temporary=all&missed=true&pageSize=100")["items"]), "Temporary point generated a cyclic reminder")
+        filtered = self.json("GET", "/api/inspections?" + urllib.parse.urlencode({"q": "测试V2临时点位", "overdue": "true", "temporary": "true"}))
+        require(filtered["total"] == 1 and filtered["matchingIssueCount"] == 1, "Inspection filter did not distinguish inspection and issue counts")
+        counts = self.json("GET", "/api/inspections/counts?" + urllib.parse.urlencode({"q": "测试V2临时点位", "rectify": "closed"}))
+        require(counts["all"] == 1 and counts["pending"] == 1 and counts["closed"] == 0, "State chip counts must ignore the rectify filter")
+        self.request("GET", prefix + "/export/rectification", expected=400)
+        self.json("PUT", prefix, {"date": day(self.today + dt.timedelta(days=1)), "inspector": "检查人"}, expected=400)
+        edited = self.json("PUT", prefix, {"date": day(self.today), "inspector": "后补排查人", "noticeNumber": "后补编号-V2", "notes": "编辑备注"})
+        require(edited["inspection"]["noticeNumber"] == "后补编号-V2", "Inspection notice number could not be completed after creation")
+        first, second = temporary["issues"]
+        after1, after2 = self.upload("after"), self.upload("after")
+        before = self.fingerprint()
+        self.json("POST", prefix + "/feedback", {"date": day(self.today), "items": [
+            {"issueId": first["id"], "notes": "问题一已改", "photoIds": [after1["id"]]},
+            {"issueId": second["id"], "notes": "问题二已改", "photoIds": ["0" * 32]}]}, expected=(400, 409))
+        require(self.fingerprint() == before, "Failed batch feedback partially committed a state/action/photo association")
+        feedback = self.json("POST", prefix + "/feedback", {"date": day(self.today), "items": [
+            {"issueId": first["id"], "notes": "问题一已改", "photoIds": [after1["id"]]},
+            {"issueId": second["id"], "notes": "问题二已改", "photoIds": [after2["id"]]}]})
+        require(feedback["inspection"]["rectifyStatus"] == "feedback", "All-feedback inspection did not become awaiting review")
+        for issue_id, photo in ((first["id"], after1), (second["id"], after2)):
+            issue_detail = next(item for item in feedback["issueDetails"] if item["issue"]["id"] == issue_id)
+            require(photo["id"] in ids(issue_detail["photos"]) and all(item["issueId"] == issue_id for item in issue_detail["photos"]), "Batch feedback bound a photo to the wrong issue")
+        review_photo = self.upload("review")
+        before = self.fingerprint()
+        self.json("POST", prefix + "/review", {"date": day(self.today), "items": [
+            {"issueId": first["id"], "conclusion": "通过", "photoIds": [review_photo["id"]]},
+            {"issueId": second["id"], "conclusion": "通过", "photoIds": ["0" * 32]}]}, expected=(400, 409))
+        require(self.fingerprint() == before, "Failed batch review partially committed a closure or review photo")
+        closed = self.json("POST", prefix + "/review", {"date": day(self.today), "items": [
+            {"issueId": first["id"], "conclusion": "通过", "photoIds": [review_photo["id"]]}, {"issueId": second["id"], "conclusion": "通过"}]})
+        require(closed["inspection"]["rectifyStatus"] == "closed" and closed["inspection"]["closedCount"] == 2, "Batch review did not close every selected issue")
+        for kind in ("record", "notice", "rectification"):
+            self.assert_docx(prefix + "/export/" + kind)
+        promoted = self.json("POST", "/api/points/" + point_id + "/promote", {"frequency": "monthly"})
+        require(not promoted["temporary"] and promoted["frequency"] == "monthly", "Point promotion did not persist")
+        require(not self.json("GET", prefix)["inspection"]["pointTemporary"], "Historical inspection did not reflect the point's current temporary flag")
+        cleanup_photo = self.upload("site")
+        final_temporary = self.json("POST", "/api/inspections", {**self.inspection_body("", photo_ids=[cleanup_photo["id"]]), "pointId": None,
+            "newPoint": self.point_body("测试V2删除临时点位")}, expected=201)
+        delete_id, delete_point = final_temporary["inspection"]["id"], final_temporary["inspection"]["pointId"]
+        self.json("DELETE", "/api/inspections/" + delete_id, expected=400)
+        self.json("DELETE", "/api/inspections/" + delete_id + "?confirm=true", expected=204)
+        self.json("GET", "/api/points/" + delete_point, expected=404)
+        self.request("GET", "/photos/" + cleanup_photo["id"], expected=404)
+
+        community = self.json("POST", "/api/communities", {"name": "V2整治社区", "title": "V2整治社区居民委员会"}, expected=201)
+        campaign_type = self.json("POST", "/api/campaign-types", {"name": "V2整治类型"}, expected=201)
+        require({"卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他"}.issubset({item["name"] for item in self.json("GET", "/api/campaign-types")}), "Campaign default types are incomplete")
+        before_photo, process_photo, after_photo = self.upload("before"), self.upload("process"), self.upload("after")
+        campaign_body = {"name": "V2环境整治", "typeId": campaign_type["id"], "communityId": community["id"], "location": "V2整治路段",
+                         "date": day(self.today), "endDate": None, "organizer": "组织单位", "participants": "志愿者", "participantCount": 12,
+                         "vehicleCount": 2, "garbageTons": 1.235, "areaSqm": 10.555, "content": "清理路段", "outcome": "路面整洁", "notes": "备注",
+                         "beforePhotoIds": [before_photo["id"]], "processPhotoIds": [process_photo["id"]], "afterPhotoIds": [after_photo["id"]]}
+        before = self.fingerprint()
+        self.json("POST", "/api/campaigns", {**campaign_body, "participantCount": -1}, expected=400)
+        self.json("POST", "/api/campaigns", {**campaign_body, "endDate": day(self.today - dt.timedelta(days=1))}, expected=400)
+        require(self.fingerprint() == before, "Invalid campaign changed data or photo ownership")
+        campaign = self.json("POST", "/api/campaigns", campaign_body, expected=201)
+        campaign_id = campaign["campaign"]["id"]
+        require(campaign["campaign"]["garbageTons"] == 1.24 and campaign["campaign"]["areaSqm"] == 10.56 and len(campaign["photos"]) == 3, "Campaign rounding or three-phase photos failed")
+        require(ids(self.json("GET", "/api/campaigns?" + urllib.parse.urlencode({"q": "V2环境整治", "communityId": community["id"], "typeId": campaign_type["id"], "from": day(self.today), "to": day(self.today)}))["items"]) == {campaign_id}, "Combined campaign filters failed")
+        self.json("PUT", "/api/campaign-types/" + campaign_type["id"], {"name": "整治类别已更名"})
+        self.json("PUT", "/api/communities/" + community["id"], {"name": "整治社区已更名", "title": "已更名居民委员会"})
+        edited_campaign = self.json("PUT", "/api/campaigns/" + campaign_id, {**campaign_body, "content": "修订整治内容"})
+        require(edited_campaign["campaign"]["communityName"] == community["name"] and edited_campaign["campaign"]["typeName"] == campaign_type["name"], "Editing campaign text replaced historical dictionary snapshots")
+        self.json("DELETE", "/api/campaign-types/" + campaign_type["id"] + "?confirm=true", expected=409)
+        self.json("DELETE", "/api/communities/" + community["id"] + "?confirm=true", expected=409)
+        self.assert_docx("/api/campaigns/" + campaign_id + "/export/record")
+        period = "?" + urllib.parse.urlencode({"from": day(self.today.replace(day=1)), "to": day(self.today), "photos": "true"})
+        for kind in ("rectification-ledger", "inspection-ledger", "campaign-ledger"):
+            self.assert_docx("/api/exports/" + kind + period)
+        self.json("DELETE", "/api/campaigns/" + campaign_id, expected=400)
+        self.json("DELETE", "/api/campaigns/" + campaign_id + "?confirm=true", expected=204)
+        self.json("GET", "/api/campaigns/" + campaign_id, expected=404)
+        for photo in (before_photo, process_photo, after_photo):
+            self.request("GET", "/photos/" + photo["id"], expected=404)
+        self.json("DELETE", "/api/campaign-types/" + campaign_type["id"], expected=400)
+        self.json("DELETE", "/api/campaign-types/" + campaign_type["id"] + "?confirm=true", expected=204)
+        self.json("DELETE", "/api/communities/" + community["id"] + "?confirm=true", expected=204)
+        require(self.sql_rows("PRAGMA foreign_key_check") == [], "Version 2 mutations broke foreign keys")
+
+    def assert_docx(self, path: str) -> None:
+        headers, payload = self.request("GET", path)
+        require("wordprocessingml" in headers.get("Content-Type", ""), "Word export content type is incorrect")
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            require(archive.testzip() is None and {"[Content_Types].xml", "word/document.xml", "word/styles.xml"}.issubset(archive.namelist()), "Word export package is incomplete")
+
+    def test_legacy_upgrade_and_restore(self) -> None:
+        require(self.process is None, "Legacy-layout fixtures require a stopped temporary server")
+        fixture = Path(__file__).resolve().parents[1] / "server" / "StreetEcoTool.Tests" / "Fixtures" / "schema-v1"
+        require((fixture / "app.db").is_file(), "The real schema-v1 database fixture is missing")
+        # Replace only this test's isolated installation with the known v1 fixture.
+        shutil.rmtree(self.data)
+        shutil.rmtree(self.install / "photos")
+        self.data.mkdir()
+        shutil.copy2(fixture / "app.db", self.data / "app.db")
+        shutil.copytree(fixture / "photos", self.data / "photos")
+        (self.data / "backup").mkdir()
+        (self.data / "backup" / "before-legacy-marker.db").write_bytes(b"legacy-backup-marker")
+        self.start()
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 2, "Legacy database was not migrated to schema 2")
+        historic = self.json("GET", "/api/inspections/inspection-v1")
+        require(historic["inspection"]["pointName"] == "旧版餐饮点" and historic["inspection"]["noticeNumber"] == "旧编号-001", "Version 1 inspection snapshot or number was lost")
+        require(historic["issueDetails"][0]["actions"][0]["notes"] == "已完成维修。", "Version 1 action history was lost")
+        for number in (1, 2, 3):
+            identifier = f"{number:032x}"
+            _, payload = self.request("GET", "/photos/" + identifier + "?size=thumb")
+            require(payload == (fixture / "photos" / "202610" / (identifier + ".jpg")).read_bytes(), "Legacy photo bytes or thumbnail fallback changed")
+        require(not (self.data / "photos").exists() and (self.install / "backup" / "before-legacy-marker.db").read_bytes() == b"legacy-backup-marker", "Old directories were not merged into version 2 locations")
+        require(self.sql_rows("PRAGMA foreign_key_check") == [], "Migrated version 1 relationships are invalid")
+        migrated_backups = list((self.install / "backup").glob("before-migrate-v1-*.db"))
+        require(migrated_backups, "Version 1 migration did not preserve its original database")
+        archive_entries = {"app.db": (fixture / "app.db").read_bytes(), "manifest.json": (fixture / "manifest.json").read_bytes()}
+        for file in (fixture / "photos").rglob("*.jpg"):
+            archive_entries["photos/" + file.relative_to(fixture / "photos").as_posix()] = file.read_bytes()
+        preview = self.json("PUT", "/api/backups/restore/prepare", raw=self.make_zip(archive_entries), content_type="application/zip")
+        require(preview["schemaVersion"] == 1 and preview["photoCount"] == 4, "Version 1 restore preview miscounted or rejected the old schema")
+        restored = self.json("POST", "/api/backups/restore", {"token": preview["token"], "confirm": True})
+        require(restored["ok"] and self.sql_rows("PRAGMA user_version")[0][0] == 2, "Restoring a version 1 backup did not migrate the reopened database")
+        require(self.sql_rows("SELECT COUNT(*) FROM photos")[0][0] == 4, "Version 1 restore lost a photo row")
+        require(self.sql_rows("PRAGMA foreign_key_check") == [], "Version 1 restored relationships are invalid")
+        self.stop()
 
     def run(self) -> None:
         self.start(seed=True)
@@ -565,9 +722,11 @@ class ApiSmoke:
             ("normal/multi-issue inspections, JPEG upload and transactional photo association", self.test_inspections_and_photos),
             ("feedback, optional-photo review, closure and return audit trail", self.test_state_transitions),
             ("calendar periods, deadline boundaries and dashboard/list agreement", self.test_dashboard),
+            ("v2 temporary points, thumbnails, batch rollback, editing, campaigns and seven Word exports", self.test_version2_workflows),
             ("consistent backup, restore confirmation, invalid ZIP and failed-preservation safety", self.test_backups),
             ("orphan cleanup, future-record reminders, graceful restart and idempotent demo seed", self.test_cleanup_and_restart),
             ("restart recovery before and after restore commit, with old evidence retained", self.test_interrupted_restore),
+            ("real version 1 database upgrade, old photo directories and version 1 backup restore", self.test_legacy_upgrade_and_restore),
         ):
             self.case(name, action)
         self.report["passed"] = True

@@ -30,7 +30,7 @@ async function canvasFallback(file: File, quality: number, signal?: AbortSignal)
     canvas.height = Math.max(1, Math.round(bitmap.height * ratio))
     const context = canvas.getContext('2d')
     if (!context) throw new Error('无法处理这张照片，请重新选择。')
-    context.fillStyle = '#ffffff'
+    context.fillStyle = 'white'
     context.fillRect(0, 0, canvas.width, canvas.height)
     context.imageSmoothingEnabled = true
     context.imageSmoothingQuality = 'high'
@@ -40,7 +40,17 @@ async function canvasFallback(file: File, quality: number, signal?: AbortSignal)
       'image/jpeg', quality / 100,
     ))
     checkCancelled(signal)
-    return { blob, width: canvas.width, height: canvas.height, engine: 'canvas-fallback' }
+    let thumbnail: Blob | undefined
+    const thumbCanvas = document.createElement('canvas')
+    try {
+      const thumbRatio = Math.min(1, 360 / Math.max(canvas.width, canvas.height))
+      thumbCanvas.width = Math.max(1, Math.round(canvas.width * thumbRatio))
+      thumbCanvas.height = Math.max(1, Math.round(canvas.height * thumbRatio))
+      thumbCanvas.getContext('2d')?.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height)
+      thumbnail = await new Promise<Blob | undefined>(resolve => thumbCanvas.toBlob(value => resolve(value ?? undefined), 'image/jpeg', 0.7))
+    } catch { /* Thumbnail failure does not prevent saving the original. */ }
+    finally { thumbCanvas.width = thumbCanvas.height = 1 }
+    return { blob, thumbnail, width: canvas.width, height: canvas.height, engine: 'canvas-fallback' }
   } finally {
     bitmap.close()
     canvas.width = canvas.height = 1
@@ -72,6 +82,7 @@ function inWorker(file: File, quality: number, options: CompressionOptions): Pro
       if (message.kind === 'fallback') { finish(new Error(message.reason)); return }
       finish(undefined, {
         blob: new Blob([message.jpeg], { type: 'image/jpeg' }),
+        thumbnail: message.thumbnail ? new Blob([message.thumbnail], { type: 'image/jpeg' }) : undefined,
         width: message.width, height: message.height, engine: 'mozjpeg-worker',
       })
     }

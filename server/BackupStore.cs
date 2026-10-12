@@ -60,6 +60,7 @@ public sealed partial class Store
             var day = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             if (_maintenanceDate == day) return;
             EnsurePreviousDaySnapshot(today);
+            _dailySnapshotsEnabled = true;
             CleanupOrphanPhotos();
             var cutoff = DateTime.Now.AddDays(-1);
             if (Directory.Exists(StagingDir))
@@ -83,7 +84,7 @@ public sealed partial class Store
     }
 
     private IEnumerable<string> GetAutomaticBackupFiles() => Directory.Exists(BackupDir)
-        ? Directory.EnumerateFiles(BackupDir, "auto-????-??-??.db").Where(path => DateOnly.TryParseExact(Path.GetFileName(path)[5..15], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        ? Directory.EnumerateFiles(BackupDir, "auto-????-??-??.db").Where(path => Path.GetFileName(path).Length == 18 && DateOnly.TryParseExact(Path.GetFileName(path)[5..15], "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
         : [];
 
     private void VacuumInto(string path)
@@ -347,6 +348,7 @@ public sealed partial class Store
             throw new ApiException(400, "备份确认标识无效，请重新上传。");
         lock (_gate)
         {
+            PrepareWrite();
             var staging = Path.Combine(StagingDir, request.Token);
             var metadataPath = Path.Combine(staging, "preview.json");
             if (!File.Exists(metadataPath)) throw new ApiException(404, "待恢复的备份不存在，请重新上传。");

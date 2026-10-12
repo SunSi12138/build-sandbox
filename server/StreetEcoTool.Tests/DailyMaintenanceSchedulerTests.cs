@@ -18,7 +18,7 @@ public sealed class DailyMaintenanceSchedulerTests : IDisposable
     public void SchedulesFromLocalMidnightAndCapturesBeforeMidnightDataOnly()
     {
         var fake = Clock();
-        using var store = new Store(Path.Combine(_root, "data"));
+        using var store = new Store(Path.Combine(_root, "data"), fake);
         store.SaveCommunity(null, new("午夜前社区", "午夜前社区居民委员会"));
         Assert.Equal(TimeSpan.FromSeconds(1), DailyMaintenanceScheduler.UntilNextMidnight(fake));
         using var scheduler = new DailyMaintenanceScheduler(fake, store.RunDailyMaintenance);

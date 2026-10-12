@@ -83,6 +83,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             if (id is null && request.Temporary) throw new ApiException(400, "临时点位请随排查一起保存。");
             string actualId;
             using (var transaction = _db.BeginTransaction())
@@ -137,6 +138,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var point = GetPoint(id);
             ValidateFrequency(request.Frequency);
             using var command = Command("UPDATE points SET temporary=0,frequency=$frequency WHERE id=$id;", null,
@@ -150,6 +152,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             _ = GetPoint(id);
             using (var used = Command("SELECT COUNT(*) FROM inspections WHERE point_id=$id;", null, ("$id", id)))
                 if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该点位已有历史排查，不能删除；请停用点位。");

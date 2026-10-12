@@ -129,6 +129,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             if (string.IsNullOrWhiteSpace(request.PointId) == (request.NewPoint is null))
                 throw new ApiException(400, "请选择常态点位或填写临时点位，不能同时提交。");
             var date = DateText(request.Date, "排查日期", true);
@@ -179,6 +180,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             _ = GetInspection(id);
             var date = DateText(request.Date, "排查日期");
             if (string.CompareOrdinal(date, Today) > 0) throw new ApiException(400, "排查日期不能晚于今天。");
@@ -197,6 +199,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var inspection = GetInspection(id);
             var removeTemporary = inspection.PointTemporary;
             if (removeTemporary)

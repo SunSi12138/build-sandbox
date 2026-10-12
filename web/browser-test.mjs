@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { once } from 'node:events'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -15,13 +15,16 @@ const executableArgument = process.argv.indexOf('--executable')
 assert(executableArgument >= 0 && process.argv[executableArgument + 1], '--executable is required')
 const sourceExecutable = path.resolve(process.argv[executableArgument + 1])
 const evidence = path.join(directory, 'test-results')
+const screens = path.join(evidence, 'screens')
+await mkdir(screens, { recursive: true })
 await mkdir(evidence, { recursive: true })
 const temporary = await mkdtemp(path.join(tmpdir(), 'hbtool-browser-'))
 const installation = path.join(temporary, 'application')
 await mkdir(installation)
 const executable = path.join(installation, path.basename(sourceExecutable))
 await cp(sourceExecutable, executable)
-await cp(path.join(path.dirname(sourceExecutable), 'wwwroot'), path.join(installation, 'wwwroot'), { recursive: true })
+if (process.platform !== 'win32') await chmod(executable, 0o755)
+await cp(process.env.HBTOOL_WEB_ROOT || path.join(path.dirname(sourceExecutable), 'wwwroot'), path.join(installation, 'wwwroot'), { recursive: true })
 
 async function availablePort() {
   const server = createServer()
@@ -143,66 +146,108 @@ async function iconCount() {
   }).length)
 }
 
+async function selectOption(control, label) {
+  await control.click()
+  await page.getByRole('option', { name: label, exact: true }).click()
+}
+async function uploadIn(control, name, buffer) {
+  const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/photos' && response.request().method() === 'PUT' && response.status() === 201)
+  await control.setInputFiles({ name, mimeType: 'image/jpeg', buffer })
+  const uploadedResponse = await response
+  const photo = await uploadedResponse.json()
+  await page.locator(`[data-testid="photo-uploaded"][data-photo-id="${photo.id}"]`).waitFor()
+  const thumbnail = await fetch(directOrigin + `/photos/${photo.id}?size=thumb`)
+  assert.equal(thumbnail.status, 200)
+  const thumbnailBytes = (await thumbnail.arrayBuffer()).byteLength
+  assert(thumbnailBytes <= 200 * 1024, 'Frontend thumbnail should be smaller than 200 KB')
+  const thumbSize = await page.evaluate(async id => { const blob = await (await fetch(`/photos/${id}?size=thumb`)).blob(); const bitmap = await createImageBitmap(blob); const size = [bitmap.width, bitmap.height]; bitmap.close(); return size }, photo.id)
+  assert(Math.max(...thumbSize) <= 360, 'Frontend thumbnail exceeds its 360 px limit')
+  report.thumbnails ??= []
+  report.thumbnails.push({ id: photo.id, bytes: thumbnailBytes, width: thumbSize[0], height: thumbSize[1] })
+  return { photo, response: uploadedResponse }
+}
+async function visualAssertions(name, width) {
+  const value = await page.evaluate(() => {
+    function visible(element) {
+      if (!element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false
+      const style = getComputedStyle(element)
+      return !element.closest('[aria-hidden="true"], [inert]') && style.clip !== 'rect(0px, 0px, 0px, 0px)' && !element.classList.contains('sr-only')
+    }
+    const header = document.querySelector('.page-header')?.getBoundingClientRect()
+    const buttons = [...document.querySelectorAll('a[href],button,input:not([type=hidden]),textarea,select,[role=button],[role=checkbox],[role=tab],[role=option],[role=menuitem]')].filter(visible).map(element => {
+      const rect = element.getBoundingClientRect()
+      return { tag: element.tagName, label: element.getAttribute('aria-label') || element.textContent?.trim().slice(0, 60), width: rect.width, height: rect.height }
+    })
+    const smallText = []
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      const element = text.parentElement
+      if (!text.textContent.trim() || !element || !visible(element) || element.closest('script,style,svg,.mobile-tabs')) continue
+      const size = parseFloat(getComputedStyle(element).fontSize)
+      if (size < 12) smallText.push({ text: text.textContent.trim().slice(0, 60), size })
+    }
+    const filters = document.querySelector('[data-testid="list-filters"]')
+    const columns = filters ? getComputedStyle(filters).gridTemplateColumns : null
+    const nav = document.querySelector('.mobile-tabs')?.getBoundingClientRect()
+    const visibleRows = [...document.querySelectorAll('.mobile-records [data-testid="inspection-row"]')].filter(element => {
+      const rect = element.getBoundingClientRect()
+      return visible(element) && rect.top >= 48 && rect.bottom <= (nav?.top ?? innerHeight)
+    }).length
+    const firstTodo = document.querySelector('[data-testid="home-todos"] .list-row')?.getBoundingClientRect()
+    const lastStat = [...document.querySelectorAll('.stat-block')].at(-1)?.getBoundingClientRect()
+    return { width: innerWidth, scrollWidth: document.documentElement.scrollWidth, headerHeight: header?.height, buttons, smallText, columns, visibleRows, firstTodoBottom: firstTodo?.bottom, lastStatBottom: lastStat?.bottom, navTop: nav?.top }
+  })
+  assert(value.scrollWidth <= width + 1, `${name}: horizontal overflow ${value.scrollWidth} > ${width}`)
+  assert.deepEqual(value.smallText, [], `${name}: text smaller than 12 px`)
+  if (width < 768) {
+    const small = value.buttons.filter(button => button.width < 39.5 || button.height < 39.5)
+    assert.deepEqual(small, [], `${name}: touch targets smaller than 40 × 40`)
+    assert.equal(value.headerHeight, 48, `${name}: mobile header must be 48 px`)
+    if (value.columns) assert.equal(value.columns.split(' ').length, 2, `${name}: mobile filters need two columns`)
+    if (name === 'inspections' && width === 375) assert(value.visibleRows >= 5, `Only ${value.visibleRows} inspection rows are visible on the first screen`)
+    if (name === 'home' && width === 375) {
+      assert(value.lastStatBottom <= value.navTop, 'Statistics not visible on first screen')
+      assert(value.firstTodoBottom <= value.navTop, 'First to-do row not visible on first screen')
+    }
+  } else assert(value.headerHeight <= 64, `${name}: desktop header exceeds 64 px`)
+  delete value.buttons
+  report.layoutAssertions ??= []
+  report.layoutAssertions.push({ name, ...value })
+}
 try {
   await waitForHealthy()
   const bootstrap = await api('/bootstrap')
-  const point = await api('/points', { method: 'POST', body: {
-    name: '浏览器验收点位', communityId: bootstrap.communities[0].id, typeId: bootstrap.pointTypes[0].id,
-    address: '示例路 18 号', contact: '测试联系人', phone: '13800000008', frequency: 'weekly', notes: '自动化验收使用的合成数据。', disabled: false
-  } })
-  browser = await chromium.launch({ args: ['--no-proxy-server', '--host-resolver-rules=MAP hbtool.test 127.0.0.1, EXCLUDE localhost'] })
+  const point = await api('/points', { method: 'POST', body: { name: '浏览器验收点位', communityId: bootstrap.communities[0].id, typeId: bootstrap.pointTypes[0].id, address: '示例路 18 号', contact: '测试联系人', phone: '13800000008', frequency: 'weekly', notes: '自动化测试数据', disabled: false } })
+  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined, args: ['--no-proxy-server', '--host-resolver-rules=MAP hbtool.test 127.0.0.1, EXCLUDE localhost'] })
   report.browser = browser.version()
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1040 }, locale: 'zh-CN' })
-  await context.route('**/*', async (route) => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+  await context.route('**/*', async route => {
     const url = route.request().url()
-    if (/^https?:/.test(url) && new URL(url).origin !== origin) {
-      report.externalRequests.push(url)
-      await route.abort('blockedbyclient')
-    } else await route.continue()
+    if (/^https?:/.test(url) && new URL(url).origin !== origin) { report.externalRequests.push(url); await route.abort('blockedbyclient') }
+    else await route.continue()
   })
-  context.on('request', (request) => {
-    const url = request.url()
-    if (/\.(?:wasm|css|js)(?:\?|$)/.test(url)) report.resources.push(new URL(url).pathname)
-  })
+  context.on('request', request => { const url = request.url(); if (/\.(?:wasm|css|js)(?:\?|$)/.test(url)) report.resources.push(new URL(url).pathname) })
   page = await context.newPage()
-  page.on('pageerror', (error) => report.pageErrors.push(String(error)))
-  page.on('console', (message) => {
-    if (message.type() === 'error') report.consoleErrors.push({ text: message.text(), expectedWasmFailure })
-  })
+  page.on('pageerror', error => report.pageErrors.push(String(error)))
+  page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push({ text: message.text(), expectedWasmFailure }) })
 
-  await test('Fresh HTTP page with external origins blocked, local styles and icons', async () => {
-    await page.goto(origin + '/', { waitUntil: 'networkidle' })
-    await waitForText('逾期')
-    report.secureContext = await page.evaluate(() => isSecureContext)
-    assert.equal(report.secureContext, false)
-    assert((await iconCount()) >= 5, 'Local Lucide icons did not render')
-    await noHorizontalOverflow()
-    await screenshot('desktop-dashboard')
-  })
-
-  await test('Hash navigation, query persistence and responsive layouts', async () => {
+  await test('Fresh HTTP page: offline resources, five navigation items and hash query persistence', async () => {
+    await page.goto(origin + '/', { waitUntil: 'networkidle' }); await waitForText('逾期')
+    report.secureContext = await page.evaluate(() => isSecureContext); assert.equal(report.secureContext, false)
+    assert((await iconCount()) >= 5)
+    assert.equal(await page.locator('.sidebar-nav-link').count(), 5)
+    assert.equal(await page.locator('.mobile-tab').count(), 5)
     await page.goto(origin + '/#/points?q=' + encodeURIComponent(point.name), { waitUntil: 'networkidle' })
-    await waitForText(point.name)
-    await page.reload({ waitUntil: 'networkidle' })
-    assert(page.url().includes(encodeURIComponent(point.name)), 'URL filter was lost on reload')
-    await waitForText(point.name)
-    await screenshot('desktop-points')
+    await page.reload({ waitUntil: 'networkidle' }); await waitForText(point.name)
+    assert(page.url().includes(encodeURIComponent(point.name)))
     await page.goto(origin + '/#/issues?status=pending&overdue=true', { waitUntil: 'networkidle' })
-    await waitForText('整改')
-    await screenshot('desktop-issues')
-    await page.setViewportSize({ width: 390, height: 844 })
-    await page.goto(origin + '/#/', { waitUntil: 'networkidle' })
-    await waitForText('逾期')
-    await noHorizontalOverflow()
-    assert(await page.locator('.mobile-tabs').isVisible(), 'Mobile tabs are missing')
-    assert(!await page.locator('.desktop-sidebar').isVisible(), 'Desktop navigation is visible on mobile')
-    await screenshot('mobile-dashboard')
+    await page.waitForURL('**/#/inspections?**'); assert(page.url().includes('rectify=pending'))
+    await page.goto(origin + '/#/exports', { waitUntil: 'networkidle' }); await page.waitForURL('**/#/inspections')
+    await page.setViewportSize({ width: 375, height: 812 })
   })
 
-  let inspectionId
-  let issueId
-  let fixtureJpeg
-  await test('Mobile inspection: JPEG workers, actual WASM failure fallback and durable draft', async () => {
+  let inspectionId, issueId, closedInspectionId, campaignId, fixtureJpeg
+  await test('Regular mobile inspection: worker JPEG, thumbnail, WASM fallback and version-2 draft', async () => {
     await page.goto(origin + '/#/inspections/new', { waitUntil: 'networkidle' })
     await page.getByTestId('inspection-point-search').fill(point.name)
     await page.getByTestId('inspection-point-option').filter({ hasText: point.name }).click()
@@ -213,201 +258,278 @@ try {
     await page.getByTestId('inspection-issue-description').first().fill(description)
     await page.getByTestId('inspection-issue-deadline').first().fill(bootstrap.today)
     const encoded = await page.evaluate(() => {
-      const canvas = document.createElement('canvas')
-      canvas.width = 2400; canvas.height = 1800
-      const drawing = canvas.getContext('2d')
-      const pixels = drawing.createImageData(canvas.width, canvas.height)
+      const canvas = document.createElement('canvas'); canvas.width = 2400; canvas.height = 1800
+      const drawing = canvas.getContext('2d'), pixels = drawing.createImageData(canvas.width, canvas.height)
       let random = 137
       for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
         random = (Math.imul(random, 1664525) + 1013904223) >>> 0
-        const noise = ((random >>> 24) - 128) * 0.6
-        const index = (y * canvas.width + x) * 4
-        pixels.data[index] = 60 + x / 18 + noise
-        pixels.data[index + 1] = 90 + y / 22 + noise
-        pixels.data[index + 2] = 110 + Math.sin(x / 14) * 35 + noise
-        pixels.data[index + 3] = 255
+        const noise = ((random >>> 24) - 128) * 0.6, index = (y * canvas.width + x) * 4
+        pixels.data[index] = 60 + x / 18 + noise; pixels.data[index + 1] = 90 + y / 22 + noise; pixels.data[index + 2] = 110 + Math.sin(x / 14) * 35 + noise; pixels.data[index + 3] = 255
       }
-      drawing.putImageData(pixels, 0, 0)
-      drawing.fillStyle = '#fff'; drawing.font = 'bold 120px sans-serif'; drawing.fillText('UP', 70, 170)
+      drawing.putImageData(pixels, 0, 0); drawing.fillStyle = 'white'; drawing.font = 'bold 120px sans-serif'; drawing.fillText('UP', 70, 170)
       return canvas.toDataURL('image/jpeg', 0.96).split(',')[1]
     })
     fixtureJpeg = Buffer.from(encoded, 'base64')
-    const uploaded = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/photos' && response.request().method() === 'PUT' && response.status() === 201)
-    await page.getByTestId('photo-file-input').first().setInputFiles({ name: 'inspection-site.jpg', mimeType: 'image/jpeg', buffer: fixtureJpeg })
-    const response = await uploaded
-    const firstPhoto = await response.json()
-    assert(Math.max(firstPhoto.width, firstPhoto.height) <= 1600)
-    await page.locator('[data-testid="photo-uploaded"][data-compression-engine="mozjpeg-worker"]').first().waitFor()
-    const jpegBytes = response.request().postDataBuffer()
-    assert(jpegBytes && jpegBytes[0] === 255 && jpegBytes[1] === 216)
-    assert(jpegBytes.length < fixtureJpeg.length * 0.6, 'Compression did not reduce the synthetic photo enough')
-    report.compression = { inputBytes: fixtureJpeg.length, mozjpegBytes: jpegBytes.length, width: firstPhoto.width, height: firstPhoto.height }
-
+    const first = await uploadIn(page.getByTestId('photo-file-input').first(), 'site.jpg', fixtureJpeg)
+    assert(Math.max(first.photo.width, first.photo.height) <= 1600)
+    const bytes = first.response.request().postDataBuffer(); assert(bytes && bytes[0] === 255 && bytes[1] === 216 && bytes.length < fixtureJpeg.length * 0.6)
+    assert.equal(await page.locator('[data-compression-engine="mozjpeg-worker"]').count(), 1)
+    report.compression = { inputBytes: fixtureJpeg.length, mozjpegBytes: bytes.length, width: first.photo.width, height: first.photo.height }
     expectedWasmFailure = true
-    await context.route('**/*.wasm', (route) => route.abort('failed'))
-    const fallbackUploaded = page.waitForResponse((result) => new URL(result.url()).pathname === '/api/photos' && result.request().method() === 'PUT' && result.status() === 201)
-    await page.getByTestId('photo-file-input').first().setInputFiles({ name: 'inspection-fallback.jpg', mimeType: 'image/jpeg', buffer: fixtureJpeg })
-    const fallbackResponse = await fallbackUploaded
-    const fallbackPhoto = await fallbackResponse.json()
-    assert(Math.max(fallbackPhoto.width, fallbackPhoto.height) <= 1600)
-    await page.locator('[data-testid="photo-uploaded"][data-compression-engine="canvas-fallback"]').first().waitFor()
-    report.compression.canvasFallbackBytes = fallbackResponse.request().postDataBuffer().length
-    await context.unroute('**/*.wasm')
-    expectedWasmFailure = false
-    await page.getByTestId('inspection-save').waitFor({ state: 'visible' })
-    await page.waitForFunction(() => !document.querySelector('[data-testid="inspection-save"]')?.disabled)
-    const draftBefore = await page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v1')))
-    assert.deepEqual(draftBefore.draft.issues[0].photos.map((photo) => photo.id), [firstPhoto.id, fallbackPhoto.id])
+    await context.route('**/*.wasm', route => route.abort('failed'))
+    const fallback = await uploadIn(page.getByTestId('photo-file-input').first(), 'fallback.jpg', fixtureJpeg)
+    assert.equal(await page.locator('[data-compression-engine="canvas-fallback"]').count(), 1)
+    report.compression.canvasFallbackBytes = fallback.response.request().postDataBuffer().length
+    await context.unroute('**/*.wasm'); expectedWasmFailure = false
+    const draft = await page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v2')))
+    assert.equal(draft.version, 2)
+    assert.deepEqual(draft.draft.issues[0].photos.map(photo => photo.id), [first.photo.id, fallback.photo.id])
     await page.reload({ waitUntil: 'networkidle' })
     assert.equal(await page.getByTestId('inspection-issue-description').first().inputValue(), description)
     assert.equal(await page.getByTestId('photo-uploaded').count(), 2)
-    await noHorizontalOverflow()
-    await screenshot('mobile-inspection-draft')
-    const saved = page.waitForResponse((result) => new URL(result.url()).pathname === '/api/inspections' && result.request().method() === 'POST' && result.status() === 201)
+    assert(!await page.locator('.mobile-tabs').isVisible())
+    const saved = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections' && response.request().method() === 'POST' && response.status() === 201)
     await page.getByTestId('inspection-save').click()
-    const savedInspection = await (await saved).json()
-    inspectionId = savedInspection.inspection.id
-    issueId = savedInspection.issues[0].id
+    const record = await (await saved).json(); inspectionId = record.inspection.id; issueId = record.issues[0].id
     await page.waitForURL('**/#/inspections/' + inspectionId)
-    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.inspection-draft.v1')), null)
+    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.inspection-draft.v2')), null)
     assert.equal((await api('/issues/' + issueId)).photos.length, 2)
-    await assertMobileActionLayout('排查已保存')
-    await screenshot('mobile-inspection-saved')
+    await assertMobileActionLayout('已保存')
   })
 
-  await test('Feedback, review without a required photo, and return with historical evidence', async () => {
+  await test('Merged issue page: feedback, optional-photo review, return and history', async () => {
     await page.goto(origin + '/#/issues/' + issueId, { waitUntil: 'networkidle' })
-    await page.getByTestId('feedback-open').click()
-    await page.getByTestId('feedback-date').fill(bootstrap.today)
-    await page.getByTestId('feedback-notes').fill('社区已安排人员完成现场清理。')
-    const uploaded = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/photos' && response.request().method() === 'PUT' && response.status() === 201)
-    await page.getByRole('dialog').getByTestId('photo-file-input').setInputFiles({ name: 'after.jpg', mimeType: 'image/jpeg', buffer: fixtureJpeg })
-    await uploaded
-    const feedbackSaved = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/issues/' + issueId + '/feedback' && response.status() === 200)
-    await page.getByTestId('feedback-save').click()
-    await feedbackSaved
-    await page.getByTestId('review-open').waitFor()
-    await waitForDialogsClosed()
+    await page.waitForURL('**/#/inspections/' + inspectionId + '?issue=' + issueId)
+    await page.getByTestId('batch-feedback').click()
+    let dialog = page.getByRole('dialog', { name: '记录反馈', exact: true })
+    await dialog.getByTestId('batch-date').fill(bootstrap.today)
+    await dialog.getByTestId('batch-notes-1').fill('社区已安排人员完成现场清理。')
+    await uploadIn(dialog.getByTestId('photo-file-input'), 'after.jpg', fixtureJpeg)
+    let response = page.waitForResponse(response => new URL(response.url()).pathname === `/api/inspections/${inspectionId}/feedback` && response.status() === 200)
+    await dialog.getByTestId('batch-save').click(); await response; await waitForDialogsClosed()
     assert.equal((await api('/issues/' + issueId)).issue.status, 'feedback')
-    await assertMobileActionLayout('社区反馈已记录')
-    await screenshot('mobile-before-after')
-    await page.getByTestId('review-open').click()
-    await page.getByTestId('review-date').fill(bootstrap.today)
-    await page.getByTestId('review-conclusion').fill('现场复查已清理到位，予以闭环。')
-    const reviewed = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/issues/' + issueId + '/review' && response.status() === 200)
-    await page.getByTestId('review-save').click()
-    await reviewed
-    await waitForDialogsClosed()
+    await assertMobileActionLayout('已保存')
+    await page.getByTestId('batch-review').click()
+    dialog = page.getByRole('dialog', { name: '复查闭环', exact: true })
+    await dialog.getByTestId('batch-notes-1').fill('现场复查已清理到位。')
+    response = page.waitForResponse(response => new URL(response.url()).pathname === `/api/inspections/${inspectionId}/review` && response.status() === 200)
+    await dialog.getByTestId('batch-save').click(); await response; await waitForDialogsClosed()
     assert.equal((await api('/issues/' + issueId)).issue.status, 'closed')
-    await assertMobileActionLayout('已复查闭环')
-    await page.getByTestId('return-open').click()
+    await page.getByRole('button', { name: '退回待整改', exact: true }).click()
     await page.getByTestId('return-reason').fill('补充整改要求后继续跟进。')
-    const returned = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/issues/' + issueId + '/return' && response.status() === 200)
-    await page.getByTestId('return-save').click()
-    await returned
-    await page.getByTestId('feedback-open').waitFor()
-    await waitForDialogsClosed()
-    const detail = await api('/issues/' + issueId)
-    assert.equal(detail.issue.status, 'pending')
-    assert.equal(detail.actions.length, 3)
-    assert.equal(detail.photos.length, 3)
-    await noHorizontalOverflow()
-    await assertMobileActionLayout('已退回待整改')
-    await screenshot('mobile-issue-history')
+    response = page.waitForResponse(response => new URL(response.url()).pathname === `/api/issues/${issueId}/return` && response.status() === 200)
+    await page.getByTestId('return-save').click(); await response; await waitForDialogsClosed()
+    const issue = await api('/issues/' + issueId)
+    assert.equal(issue.issue.status, 'pending'); assert.equal(issue.actions.length, 3); assert.equal(issue.photos.length, 3)
+    await page.getByRole('button', { name: '办理记录', exact: true }).click()
+    await waitForText('补充整改要求后继续跟进。')
+    await assertMobileActionLayout('已退回')
   })
 
-  await test('Normal inspection produces a durable record', async () => {
-    await page.goto(origin + '/#/inspections/new?pointId=' + point.id, { waitUntil: 'networkidle' })
-    await page.getByTestId('inspection-result-normal').waitFor()
-    assert.equal(await page.getByTestId('inspection-result-normal').getAttribute('aria-pressed'), 'true')
-    const saved = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/inspections' && response.request().method() === 'POST' && response.status() === 201)
+  await test('Point pictures, coordinate validation and Gaode links', async () => {
+    await page.goto(origin + '/#/points/' + point.id, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: '编辑', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '编辑点位', exact: true })
+    await dialog.getByLabel('经纬度', { exact: true }).fill('29.274331,88.893426')
+    await dialog.getByTestId('point-save').click()
+    await dialog.getByText('看起来顺序反了，应为 经度,纬度').waitFor()
+    await dialog.getByLabel('经纬度', { exact: true }).fill('88.893426，29.274331')
+    await uploadIn(dialog.getByTestId('photo-file-input'), 'point.jpg', fixtureJpeg)
+    const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/points/' + point.id && response.request().method() === 'PUT' && response.status() === 200)
+    await dialog.getByTestId('point-save').click(); await response; await waitForDialogsClosed()
+    const result = await api('/points/' + point.id)
+    assert.equal(result.point.longitude, 88.893426); assert.equal(result.point.latitude, 29.274331); assert.equal(result.photos.length, 1); assert(result.point.coverPhotoId)
+    const marker = await page.getByRole('link', { name: '高德查看', exact: true }).getAttribute('href')
+    const navigation = await page.getByRole('link', { name: '高德导航', exact: true }).getAttribute('href')
+    assert(marker.includes('coordinate=gaode')); assert(navigation.includes('callnative=0') && !navigation.includes('coordinate='))
+  })
+
+  await test('Temporary-point draft, atomic creation, promotion and per-issue batch photo ownership', async () => {
+    await page.goto(origin + '/#/inspections/new', { waitUntil: 'networkidle' })
+    await page.getByTestId('temporary-point-mode').click()
+    await page.getByTestId('temporary-point-name').fill('临时河岸排查点')
+    await selectOption(page.getByLabel('社区', { exact: true }), bootstrap.communities[0].name)
+    await selectOption(page.getByLabel('类型', { exact: true }), bootstrap.pointTypes[0].name)
+    await page.getByLabel('详细地址', { exact: true }).fill('沿河路东侧临时堆放处')
+    await page.getByLabel('经纬度', { exact: true }).fill('88.893426 29.274331')
+    await page.getByTestId('inspection-inspector').fill('临时点位验收员')
+    await page.getByTestId('inspection-result-issues').click()
+    await page.getByTestId('inspection-issue-description').first().fill('沿河道路存在垃圾堆积。')
+    await page.getByRole('button', { name: '添加问题', exact: true }).click()
+    await page.getByTestId('inspection-issue-description').nth(1).fill('路边排水沟有杂物堵塞。')
+    const before = (await api('/points?q=' + encodeURIComponent('临时河岸排查点') + '&temporary=all')).total
+    assert.equal(before, 0)
+    await page.reload({ waitUntil: 'networkidle' })
+    assert.equal(await page.getByTestId('temporary-point-mode').getAttribute('aria-pressed'), 'true')
+    assert.equal(await page.getByTestId('temporary-point-name').inputValue(), '临时河岸排查点')
+    assert.equal(await page.getByTestId('inspection-issue-description').count(), 2)
+    let response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections' && response.request().method() === 'POST' && response.status() === 201)
     await page.getByTestId('inspection-save').click()
-    const result = await (await saved).json()
-    await page.waitForURL('**/#/inspections/' + result.inspection.id)
-    assert.equal(result.inspection.result, 'normal')
-    assert.equal(result.issues.length, 0)
-    assert.equal((await api('/inspections/' + result.inspection.id)).inspection.pointId, point.id)
+    const created = await (await response).json(); closedInspectionId = created.inspection.id
+    assert.equal(created.inspection.pointTemporary, true)
+    await page.waitForURL('**/#/inspections/' + closedInspectionId)
+    await page.getByTestId('promote-point').click()
+    response = page.waitForResponse(response => new URL(response.url()).pathname === `/api/points/${created.inspection.pointId}/promote` && response.status() === 200)
+    await page.getByTestId('promote-confirm').click(); await response; await waitForDialogsClosed()
+    assert.equal((await api('/points/' + created.inspection.pointId)).point.temporary, false)
+    await page.getByTestId('batch-feedback').click()
+    let dialog = page.getByRole('dialog', { name: '记录反馈', exact: true })
+    assert(await dialog.getByTestId('batch-issue-1').isChecked()); assert(await dialog.getByTestId('batch-issue-2').isChecked())
+    const photos = []
+    for (let index = 0; index < 2; index++) {
+      await dialog.getByTestId(`batch-notes-${index + 1}`).fill(`第 ${index + 1} 项已完成整改。`)
+      photos.push((await uploadIn(dialog.getByTestId('photo-file-input').nth(index), `batch-${index + 1}.jpg`, fixtureJpeg)).photo.id)
+    }
+    response = page.waitForResponse(response => new URL(response.url()).pathname === `/api/inspections/${closedInspectionId}/feedback` && response.status() === 200)
+    await dialog.getByTestId('batch-save').click()
+    const batchResponse = await response
+    const request = batchResponse.request().postDataJSON()
+    assert.equal(request.items.length, 2)
+    for (let index = 0; index < 2; index++) assert.deepEqual(request.items[index].photoIds, [photos[index]])
+    await waitForDialogsClosed()
+    for (let index = 0; index < 2; index++) assert.deepEqual((await api('/issues/' + created.issues[index].id)).photos.map(photo => photo.id), [photos[index]])
+    await page.getByTestId('batch-review').click()
+    dialog = page.getByRole('dialog', { name: '复查闭环', exact: true })
+    await dialog.getByTestId('batch-notes-1').fill('垃圾已清运。'); await dialog.getByTestId('batch-notes-2').fill('排水沟已疏通。')
+    response = page.waitForResponse(response => new URL(response.url()).pathname === `/api/inspections/${closedInspectionId}/review` && response.status() === 200)
+    await dialog.getByTestId('batch-save').click(); await response; await waitForDialogsClosed()
+    const final = await api('/inspections/' + closedInspectionId)
+    assert.equal(final.inspection.rectifyStatus, 'closed'); assert.equal(final.inspection.closedCount, 2)
+    await page.getByRole('button', { name: '导出', exact: true }).click()
+    assert(await page.getByRole('menuitem', { name: '导出整改记录单', exact: true }).isVisible())
+    await page.keyboard.press('Escape')
   })
 
-  await test('Word record, notice and ledger download through the actual UI', async () => {
-    await verifyWordDownloads({ page, origin, evidence, inspectionId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
+  await test('Normal inspection persists and its notice number can be edited afterwards', async () => {
+    await page.goto(origin + '/#/inspections/new?pointId=' + point.id, { waitUntil: 'networkidle' })
+    assert.equal(await page.getByTestId('inspection-result-normal').getAttribute('aria-pressed'), 'true')
+    let response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections' && response.request().method() === 'POST' && response.status() === 201)
+    await page.getByTestId('inspection-save').click()
+    const result = await (await response).json(); await page.waitForURL('**/#/inspections/' + result.inspection.id)
+    assert.equal(result.inspection.result, 'normal'); assert.equal(result.issues.length, 0)
+    await page.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: '编辑排查信息', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '编辑排查信息', exact: true })
+    await dialog.getByLabel('通知单编号', { exact: true }).fill('补录-2026-01')
+    response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections/' + result.inspection.id && response.request().method() === 'PUT' && response.status() === 200)
+    await dialog.getByRole('button', { name: '保存', exact: true }).click(); await response; await waitForDialogsClosed()
+    assert.equal((await api('/inspections/' + result.inspection.id)).inspection.noticeNumber, '补录-2026-01')
   })
 
-  await test('Backup restore requires a visible second confirmation and preserves old data', async () => {
-    const response = await fetch(directOrigin + '/api/backups/download')
-    assert.equal(response.status, 200)
+  await test('Campaign creation: local draft, three photo stages and quantity fields', async () => {
+    await page.goto(origin + '/#/campaigns/new', { waitUntil: 'networkidle' })
+    await page.getByTestId('campaign-name').fill('东河沿岸卫生整治')
+    await selectOption(page.getByTestId('campaign-type'), bootstrap.campaignTypes[0].name)
+    await selectOption(page.getByTestId('campaign-community'), bootstrap.communities[0].name)
+    await page.getByTestId('campaign-location').fill('东河沿岸及沿河路')
+    await page.getByTestId('campaign-people').fill('12'); await page.getByTestId('campaign-garbage').fill('1.25')
+    await page.getByTestId('campaign-content').fill('清理河岸和道路两侧垃圾，疏通排水沟。')
+    for (const phase of ['before', 'process', 'after']) await uploadIn(page.getByTestId('campaign-' + phase).getByTestId('photo-file-input'), `campaign-${phase}.jpg`, fixtureJpeg)
+    await page.reload({ waitUntil: 'networkidle' })
+    assert.equal(await page.getByTestId('campaign-name').inputValue(), '东河沿岸卫生整治'); assert.equal(await page.getByTestId('photo-uploaded').count(), 3)
+    const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/campaigns' && response.request().method() === 'POST' && response.status() === 201)
+    await page.getByTestId('campaign-save').click()
+    const result = await (await response).json(); campaignId = result.campaign.id
+    await page.waitForURL('**/#/campaigns/' + campaignId)
+    assert.equal(result.campaign.participantCount, 12); assert.equal(result.campaign.garbageTons, 1.25)
+    assert.deepEqual(result.photos.map(photo => photo.phase).sort(), ['after', 'before', 'process'])
+    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v2')), null)
+  })
+
+  await test('Seven Word exports download through the current UI', async () => {
+    await verifyWordDownloads({ page, origin, evidence, inspectionId: closedInspectionId, campaignId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
+  })
+
+  await test('Local listen popover: mutually exclusive all-interfaces selection and live rebind', async () => {
+    await page.goto(origin + '/#/', { waitUntil: 'networkidle' })
+    await page.getByTestId('listen-trigger').click()
+    assert(await page.getByRole('checkbox', { name: '仅本机', exact: true }).isChecked())
+    await page.getByRole('checkbox', { name: '所有网卡', exact: true }).check()
+    assert(!await page.getByRole('checkbox', { name: '仅本机', exact: true }).isChecked())
+    let response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/system/listen' && response.request().method() === 'PUT' && response.status() === 200)
+    await page.getByTestId('listen-apply').click(); await response
+    await page.waitForFunction(() => document.querySelector('[data-testid="listen-trigger"]')?.textContent.includes('局域网'), null, { timeout: 12000 })
+    assert.deepEqual((await api('/system')).listen, ['0.0.0.0'])
+    await page.getByRole('checkbox', { name: '仅本机', exact: true }).check()
+    response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/system/listen' && response.status() === 200)
+    await page.getByTestId('listen-apply').click(); await response
+    await page.waitForFunction(() => document.querySelector('[data-testid="listen-trigger"]')?.textContent.includes('仅本机'), null, { timeout: 12000 })
+    assert.deepEqual((await api('/system')).listen, ['127.0.0.1'])
+    await page.keyboard.press('Escape')
+  })
+
+  await test('Backup restore: preview leaves live data intact, confirmation is required, photographs survive', async () => {
+    const response = await fetch(directOrigin + '/api/backups/download'); assert.equal(response.status, 200)
     const backup = Buffer.from(await response.arrayBuffer())
     const extra = await api('/communities', { method: 'POST', body: { name: '恢复前临时社区', title: '恢复前临时社区居民委员会' } })
-    await page.goto(origin + '/#/settings', { waitUntil: 'networkidle' })
+    await page.goto(origin + '/#/settings?tab=backup', { waitUntil: 'networkidle' })
     await page.getByTestId('restore-file-input').setInputFiles({ name: 'browser-backup.zip', mimeType: 'application/zip', buffer: backup })
-    const dialog = page.getByRole('dialog', { name: '核对备份并确认恢复' })
-    await dialog.waitFor()
-    const restoreButton = dialog.getByRole('button', { name: '确认覆盖并恢复' })
-    assert(await restoreButton.isDisabled(), 'Restore must be disabled until the user confirms')
-    assert((await api('/communities')).some((community) => community.id === extra.id), 'Upload must not replace live data')
+    const dialog = page.getByRole('dialog', { name: '恢复备份？', exact: true }); await dialog.waitFor()
+    assert(await dialog.getByTestId('restore-confirm').isDisabled())
+    assert((await api('/communities')).some(community => community.id === extra.id))
     await dialog.getByRole('checkbox').check()
-    await screenshot('mobile-restore-confirmation')
-    const restored = page.waitForResponse((result) => new URL(result.url()).pathname === '/api/backups/restore' && result.status() === 200)
-    await restoreButton.click()
-    const restoredResult = await (await restored).json()
-    assert(restoredResult.preservedBackup.startsWith('backup/before-restore-'))
+    const restored = page.waitForResponse(result => new URL(result.url()).pathname === '/api/backups/restore' && result.status() === 200)
+    await dialog.getByTestId('restore-confirm').click()
+    assert((await (await restored).json()).preservedBackup.startsWith('backup/before-restore-'))
     await waitForDialogsClosed()
-    assert(!(await api('/communities')).some((community) => community.id === extra.id))
+    assert(!(await api('/communities')).some(community => community.id === extra.id))
     assert.equal((await api('/issues/' + issueId)).photos.length, 3)
+    assert.equal((await api('/campaigns/' + campaignId)).photos.length, 3)
   })
 
-  await test('Settings and local UI remain styled when the browser is fully offline', async () => {
-    await page.goto(origin + '/#/settings', { waitUntil: 'networkidle' })
-    await waitForText('街道')
-    const before = await iconCount()
-    await screenshot('mobile-settings')
-    await context.setOffline(true)
-    assert((await iconCount()) >= before, 'Bundled icons disappeared offline')
+  await test('Twenty-seven screenshots and responsive design assertions across all nine pages', async () => {
+    for (let index = 0; index < 6; index++) await api('/inspections', { method: 'POST', body: { pointId: point.id, date: bootstrap.today, inspector: '列表验收员 ' + (index + 1), result: 'normal' } })
+    const pages = [ ['home', '/', '首页'], ['points', '/points', '点位管理'], ['point-detail', '/points/' + point.id, point.name], ['inspections', '/inspections', '排查记录'], ['inspection-new', '/inspections/new', '新增排查'], ['inspection-detail', '/inspections/' + closedInspectionId, '临时河岸排查点'], ['campaigns', '/campaigns', '整治记录'], ['campaign-new', '/campaigns/new', '新增整治'], ['settings', '/settings?tab=basic', '工具设置'] ]
+    report.screenshots = []
+    for (const [width, height] of [[375, 812], [768, 1024], [1440, 900]]) {
+      await page.setViewportSize({ width, height })
+      for (const [name, route, title] of pages) {
+        await page.goto(origin + '/#' + route, { waitUntil: 'networkidle' })
+        if (name === 'settings') await page.reload({ waitUntil: 'networkidle' })
+        await page.getByRole('heading', { name: title, exact: true }).waitFor()
+        await page.waitForLoadState('networkidle')
+        await page.evaluate(async () => { const images = [...document.images]; images.forEach(image => { image.loading = 'eager' }); await Promise.all(images.map(image => image.decode().catch(() => {}))) })
+        await visualAssertions(name, width)
+        const file = `${name}-${width}x${height}.png`
+        await page.screenshot({ path: path.join(screens, file), fullPage: true, animations: 'disabled' })
+        report.screenshots.push(file)
+      }
+    }
+    await page.setViewportSize({ width: 360, height: 800 })
+    for (const [name, route, title] of pages) { await page.goto(origin + '/#' + route, { waitUntil: 'networkidle' }); await page.getByRole('heading', { name: title, exact: true }).waitFor(); await visualAssertions(name, 360) }
+    assert.equal(report.screenshots.length, 27)
+  })
+
+  await test('Fully offline UI keeps its local fonts, colors and icons', async () => {
+    await page.goto(origin + '/#/settings?tab=basic', { waitUntil: 'networkidle' }); await page.reload({ waitUntil: 'networkidle' }); await waitForText('街道')
+    const before = await iconCount(); await context.setOffline(true)
+    assert((await iconCount()) >= before)
     const style = await page.evaluate(() => ({ font: getComputedStyle(document.body).fontFamily, background: getComputedStyle(document.body).backgroundColor }))
     assert(style.font.includes('Microsoft YaHei') && style.background !== 'rgba(0, 0, 0, 0)')
-    await noHorizontalOverflow()
-    await screenshot('mobile-offline')
-    await context.setOffline(false)
+    await noHorizontalOverflow(); await context.setOffline(false)
   })
 
-  await test('Unsupported browser gets a Chinese explanation', async () => {
+  await test('Unsupported browser displays the Chinese compatibility screen', async () => {
     const legacy = await context.newPage()
     await legacy.addInitScript(() => Object.defineProperty(window.CSS, 'registerProperty', { configurable: true, value: undefined }))
     await legacy.goto(origin + '/', { waitUntil: 'networkidle' })
-    assert(await legacy.locator('#unsupported-browser').isVisible())
-    assert((await legacy.locator('#unsupported-browser').textContent()).includes('请升级浏览器'))
-    await legacy.screenshot({ path: path.join(evidence, 'unsupported-browser.png'), fullPage: true, animations: 'disabled' })
-    await legacy.close()
+    assert(await legacy.locator('#unsupported-browser').isVisible()); assert((await legacy.locator('#unsupported-browser').textContent()).includes('请升级浏览器'))
+    await legacy.screenshot({ path: path.join(evidence, 'unsupported-browser.png'), fullPage: true, animations: 'disabled' }); await legacy.close()
   })
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')
   assert.deepEqual(report.pageErrors, [], 'Unhandled browser errors occurred')
-  assert.deepEqual(report.consoleErrors.filter((entry) => !entry.expectedWasmFailure), [], 'Unexpected browser console errors occurred')
+  assert.deepEqual(report.consoleErrors.filter(entry => !entry.expectedWasmFailure), [], 'Unexpected browser console errors occurred')
   report.passed = true
 } catch (error) {
-  report.error = error.stack || String(error)
-  console.error(report.error)
-  if (page) {
-    await screenshot('failure').catch(() => {})
-    await writeFile(path.join(evidence, 'failure.html'), await page.content().catch(() => '')).catch(() => {})
-  }
+  report.error = error.stack || String(error); console.error(report.error)
+  if (page) { await screenshot('failure').catch(() => {}); await writeFile(path.join(evidence, 'failure.html'), await page.content().catch(() => '')).catch(() => {}) }
   process.exitCode = 1
 } finally {
   if (browser) await browser.close()
   if (application.exitCode === null) application.kill('SIGINT')
-  const ended = await Promise.race([applicationExit, new Promise((resolve) => setTimeout(() => resolve(null), 10000))])
-  if (!ended) {
-    application.kill('SIGKILL')
-    report.shutdown = { timedOut: true }
-    report.passed = false
-    process.exitCode = 1
-    await applicationExit
-  } else {
-    report.shutdown = ended
-    if (ended.code !== 0) { report.passed = false; process.exitCode = 1 }
-  }
-  log.end()
-  report.resources = [...new Set(report.resources)]
-  await writeFile(path.join(evidence, 'browser-report.json'), JSON.stringify(report, null, 2))
-  await rm(temporary, { recursive: true, force: true })
-  console.log(JSON.stringify({ passed: report.passed, cases: report.cases.length, externalRequests: report.externalRequests.length, evidence }))
+  const ended = await Promise.race([applicationExit, new Promise(resolve => setTimeout(() => resolve(null), 10000))])
+  if (!ended) { application.kill('SIGKILL'); report.shutdown = { timedOut: true }; report.passed = false; process.exitCode = 1; await applicationExit }
+  else { report.shutdown = ended; if (ended.code !== 0) { report.passed = false; process.exitCode = 1 } }
+  log.end(); report.resources = [...new Set(report.resources)]
+  await writeFile(path.join(evidence, 'browser-report.json'), JSON.stringify(report, null, 2)); await rm(temporary, { recursive: true, force: true })
+  console.log(JSON.stringify({ passed: report.passed, cases: report.cases.length, externalRequests: report.externalRequests.length, screenshots: report.screenshots?.length ?? 0, evidence }))
 }

@@ -58,6 +58,7 @@ public sealed partial class Store
 
         lock (_gate)
         {
+            PrepareWrite();
             var now = DateTime.Now;
             var id = NewId();
             var relativePath = now.ToString("yyyyMM", CultureInfo.InvariantCulture) + "/" + id + ".jpg";
@@ -121,7 +122,11 @@ public sealed partial class Store
 
     public void DeletePhoto(string id)
     {
-        lock (_gate) DeletePhotoCore(id);
+        lock (_gate)
+        {
+            PrepareWrite();
+            DeletePhotoCore(id);
+        }
     }
 
     public void UploadThumbnail(string id, byte[] jpeg)
@@ -135,18 +140,17 @@ public sealed partial class Store
         catch (InvalidDataException error) { throw new ApiException(400, error.Message); }
         lock (_gate)
         {
+            PrepareWrite();
             using var command = Command("SELECT relative_path FROM photos WHERE id=$id;", null, ("$id", id));
             var relative = command.ExecuteScalar() as string ?? throw new ApiException(404, "照片不存在。");
             var path = PhotoStorage.ResolveThumbnailPath(PhotosDir, id, relative);
             var temporary = path + PendingPhotoUploadSuffix;
-            try
-            {
-                using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-                { stream.Write(jpeg); stream.Flush(true); }
-                using (var update = Command("UPDATE photos SET has_thumb=1 WHERE id=$id;", null, ("$id", id))) update.ExecuteNonQuery();
-                File.Move(temporary, path, true);
-            }
-            catch { throw; }
+            using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            { stream.Write(jpeg); stream.Flush(true); }
+            // Never advertise a thumbnail until its file exists: a failed optional
+            // thumbnail must not turn the next complete backup into a failure.
+            File.Move(temporary, path, true);
+            using (var update = Command("UPDATE photos SET has_thumb=1 WHERE id=$id;", null, ("$id", id))) update.ExecuteNonQuery();
         }
     }
 

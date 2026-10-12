@@ -6,6 +6,8 @@ namespace StreetEcoTool;
 public sealed partial class Store : IDisposable
 {
     private readonly object _gate = new();
+    private readonly TimeProvider _timeProvider;
+    private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
     public const int SchemaVersion = 2;
@@ -19,8 +21,9 @@ public sealed partial class Store : IDisposable
     public static string Today => DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
     public static string NewId() => Guid.NewGuid().ToString("N");
 
-    public Store(string dataDir)
+    public Store(string dataDir, TimeProvider? timeProvider = null)
     {
+        _timeProvider = timeProvider ?? TimeProvider.System;
         DataDir = Path.GetFullPath(dataDir);
         RootDir = Directory.GetParent(DataDir)?.FullName ?? throw new IOException("数据目录缺少程序上级目录。");
         PhotosDir = Path.Combine(RootDir, "photos");
@@ -252,6 +255,13 @@ public sealed partial class Store : IDisposable
         catch (Exception error) when (error is SqliteException or IOException or InvalidDataException)
         { throw new IOException($"数据库升级失败，事务已回滚，请保留升级前备份：{error.Message}", error); }
         finally { using var foreignKeys = Command("PRAGMA foreign_keys=ON;"); foreignKeys.ExecuteNonQuery(); }
+    }
+
+    // Called at the actual mutation boundary under _gate, after HTTP body reads.
+    // A request spanning midnight must snapshot before its first new-day write.
+    private void PrepareWrite()
+    {
+        if (_dailySnapshotsEnabled) EnsurePreviousDaySnapshot(DateOnly.FromDateTime(_timeProvider.GetLocalNow().Date));
     }
 
     private SqliteCommand Command(string sql, SqliteTransaction? transaction = null, params (string Name, object? Value)[] parameters)

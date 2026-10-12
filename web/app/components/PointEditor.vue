@@ -1,67 +1,70 @@
 <script setup lang="ts">
 import type { FormError } from '@nuxt/ui'
-import type { PointDto, PointWriteRequest } from '~/types/api'
-import { errorMessage, frequencyOptions } from '~/utils/format'
-
+import type { PointDetailDto, PointDto, PointWriteRequest, PhotoUploadDto, Frequency } from '~/types/api'
+import { coordinatesText, errorMessage, frequencyOptions, parseCoordinates } from '~/utils/format'
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ point?: PointDto | null }>()
 const emit = defineEmits<{ saved: [point: PointDto] }>()
 const { bootstrap, load } = useAppData()
-const saving = ref(false)
-const loading = ref(false)
-const error = ref('')
-type PointFormState = Omit<PointWriteRequest, 'contact' | 'phone' | 'notes'> & { contact: string; phone: string; notes: string }
-const state = reactive<PointFormState>({ name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false })
+const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
+const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false)
+interface PointState { name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
+const defaults = (): PointState => ({ name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
+const state = reactive<PointState>(defaults())
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
-watch(open, async (value) => {
+watch(open, async value => {
+  overlayForm.value = value
   if (!value) return
-  error.value = ''
-  Object.assign(state, props.point ? {
-    name: props.point.name, communityId: props.point.communityId, typeId: props.point.typeId, address: props.point.address,
-    contact: props.point.contact, phone: props.point.phone, frequency: props.point.frequency, notes: props.point.notes, disabled: props.point.disabled
-  } : { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false })
-  loading.value = true
-  try { await load() } catch (value) { error.value = errorMessage(value) }
+  error.value = ''; loading.value = true
+  const point = props.point
+  Object.assign(state, point ? { ...point, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : defaults())
+  try {
+    await load()
+    if (point) state.photos = (await $fetch<PointDetailDto>(`/api/points/${point.id}`)).photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
+  } catch (value) { error.value = errorMessage(value) }
   finally { loading.value = false }
 })
-function validate(value: PointWriteRequest): FormError[] {
+function validate(value: PointState): FormError[] {
   const errors: FormError[] = []
   if (!value.name.trim()) errors.push({ name: 'name', message: '请填写点位名称' })
   if (!value.communityId) errors.push({ name: 'communityId', message: '请选择所属社区' })
   if (!value.typeId) errors.push({ name: 'typeId', message: '请选择点位类型' })
   if (!value.address.trim()) errors.push({ name: 'address', message: '请填写详细地址' })
+  const coordinates = parseCoordinates(value.coordinates)
+  if (coordinates.error) errors.push({ name: 'coordinates', message: coordinates.error })
   return errors
 }
 async function save() {
-  saving.value = true
-  error.value = ''
-  try {
-    const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/points', { method: props.point ? 'PUT' : 'POST', body: state })
-    emit('saved', point)
-    open.value = false
-  } catch (value) { error.value = errorMessage(value) }
+  if (photosBusy.value || validate(state).length) return
+  saving.value = true; error.value = ''
+  const { longitude, latitude } = parseCoordinates(state.coordinates)
+  const body: PointWriteRequest = { name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
+  try { const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/points', { method: props.point ? 'PUT' : 'POST', body, retry: 0 }); emit('saved', point); open.value = false }
+  catch (value) { error.value = errorMessage(value) }
   finally { saving.value = false }
 }
+onBeforeUnmount(() => { overlayForm.value = false })
 </script>
-
 <template>
-  <UModal v-model:open="open" :title="point ? '编辑点位' : '新增点位'" description="完善点位信息，后续排查时可以直接选择。" :dismissible="!saving" :close="!saving" :ui="{ content: 'sm:max-w-2xl' }">
+  <USlideover v-model:open="open" :title="point ? '编辑点位' : '新增点位'" :dismissible="!saving && !photosBusy" :close="!saving && !photosBusy" :ui="{ content: 'w-full max-w-[480px] max-md:max-w-none' }">
     <template #body>
-      <UAlert v-if="error" :description="error" color="error" variant="subtle" icon="i-lucide-circle-alert" class="mb-5" />
-      <UAlert v-if="!loading && (!communities.length || !types.length)" title="请先维护社区和点位类型" description="基础字典为空，完善后就可以新增点位。" color="warning" variant="subtle" class="mb-5"><template #actions><UButton to="/settings" label="前往设置" color="warning" variant="soft" @click="open = false" /></template></UAlert>
+      <UAlert v-if="error" :description="error" color="error" variant="subtle" class="mb-3" />
+      <p v-if="!loading && (!communities.length || !types.length)" class="mb-3 text-sm text-warning">请先维护社区和点位类型</p>
       <UForm id="point-editor-form" :state="state" :validate="validate" class="field-grid" @submit="save">
-        <UFormField label="点位名称" name="name" required class="md:col-span-2"><UInput v-model="state.name" placeholder="例如：建设路便民餐饮店" maxlength="200" class="w-full" autofocus /></UFormField>
-        <UFormField label="所属社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择所属社区" class="w-full" :loading="loading" /></UFormField>
-        <UFormField label="点位类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择点位类型" class="w-full" :loading="loading" /></UFormField>
-        <UFormField label="详细地址" name="address" required class="md:col-span-2"><UInput v-model="state.address" placeholder="填写道路、门牌号或具体位置" maxlength="1000" class="w-full" /></UFormField>
-        <UFormField label="联系人" name="contact"><UInput v-model="state.contact" maxlength="100" placeholder="选填" class="w-full" /></UFormField>
-        <UFormField label="联系电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" placeholder="选填" class="w-full" /></UFormField>
-        <UFormField label="排查频次" name="frequency" description="按自然周、月、季度提醒"><USelect v-model="state.frequency" :items="frequencyOptions" class="w-full" /></UFormField>
-        <UFormField v-if="point" label="点位状态" name="disabled"><UCheckbox v-model="state.disabled" label="停用此点位" description="停用后不再提醒，历史资料保留" class="pt-3" /></UFormField>
-        <UFormField label="备注" name="notes" class="md:col-span-2"><UTextarea v-model="state.notes" :rows="3" placeholder="其他需要记下的信息（选填）" maxlength="8000" class="w-full" /></UFormField>
+        <UFormField label="名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="point-name" /></UFormField>
+        <UFormField label="社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /></UFormField>
+        <UFormField label="类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
+        <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
+        <UFormField label="经纬度" name="coordinates" class="field-full"><UInput v-model="state.coordinates" placeholder="88.893426,29.274331" class="w-full" /></UFormField>
+        <UFormField label="联系人" name="contact"><UInput v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
+        <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
+        <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>
+        <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="3" maxlength="8000" class="w-full" /></UFormField>
+        <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" phase="point" :max="9" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" /></UFormField>
+        <UFormField v-if="point" label="状态" name="disabled" class="field-full"><div class="check-row"><UCheckbox v-model="state.disabled" label="停用" /></div></UFormField>
       </UForm>
     </template>
-    <template #footer><div class="flex w-full justify-end gap-3"><UButton label="取消" color="neutral" variant="outline" :disabled="saving" @click="open = false" /><UButton type="submit" form="point-editor-form" label="保存点位" icon="i-lucide-check" :loading="saving" :disabled="loading || !communities.length || !types.length" data-testid="point-save" /></div></template>
-  </UModal>
+    <template #footer><span v-if="photosBusy" class="mr-auto text-xs text-muted">照片上传中</span><UButton label="取消" color="neutral" variant="outline" :disabled="saving || photosBusy" @click="open = false" /><UButton type="submit" form="point-editor-form" label="保存" :loading="saving" :disabled="loading || photosBusy || !communities.length || !types.length" data-testid="point-save" /></template>
+  </USlideover>
 </template>

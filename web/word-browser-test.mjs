@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
-// Exercise the actual download buttons against the packaged NativeAOT process.
-// The source inspection contains JPEGs uploaded through the production Worker.
-export async function verifyWordDownloads({ page, origin, evidence, inspectionId, communityId, today, report, screenshot }) {
+// Downloads originate from the visible v2 controls against the packaged process.
+// The supplied inspection is fully closed; all images were added through the production uploader.
+export async function verifyWordDownloads({ page, origin, evidence, inspectionId, campaignId, communityId, today, report, screenshot }) {
+  assert(inspectionId && campaignId, 'Seven Word exports require a closed inspection and a campaign')
   const output = path.join(evidence, 'word-samples')
   await mkdir(output, { recursive: true })
   async function download(testId, kind, destination) {
@@ -21,20 +22,39 @@ export async function verifyWordDownloads({ page, origin, evidence, inspectionId
     report.wordDownloads ??= []
     report.wordDownloads.push({ kind, suggestedFilename: filename, bytes: bytes.length, sample: destination })
   }
-
-  await page.setViewportSize({ width: 1440, height: 1040 })
+  await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(origin + '/#/inspections/' + inspectionId, { waitUntil: 'networkidle' })
   await page.getByTestId('export-record').waitFor()
   await download('export-record', '排查记录单', 'record.docx')
   await download('export-notice', '整改通知单', 'notice.docx')
+  await page.getByTestId('export-rectification').waitFor()
+  await download('export-rectification', '整改记录单', 'rectification-record.docx')
   await screenshot('desktop-word-downloads')
 
-  const query = new URLSearchParams({ from: today, to: today, communityId, photos: 'true' })
-  await page.goto(origin + '/#/exports?' + query, { waitUntil: 'networkidle' })
-  await page.getByTestId('export-ledger').waitFor()
-  await page.waitForFunction(() => document.querySelector('[data-testid="export-ledger"]')?.getAttribute('aria-disabled') !== 'true')
-  await download('export-ledger', '整改台账', 'ledger-photos.docx')
-  await screenshot('desktop-ledger-export')
-  assert(page.url().includes('photos=true'), 'Ledger photo filter was not preserved in the URL')
-  await page.setViewportSize({ width: 390, height: 844 })
+  async function ledger(kind, includePhotos, filename) {
+    const campaign = kind === 'campaign'
+    const query = new URLSearchParams({ communityId })
+    await page.goto(origin + `/#/${campaign ? 'campaigns' : 'inspections'}?${query}`, { waitUntil: 'networkidle' })
+    await page.getByRole('button', { name: '导出台账', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '导出台账', exact: true })
+    await dialog.waitFor()
+    if (!campaign) await dialog.getByTestId(`ledger-kind-${kind}`).click()
+    await dialog.getByRole('button', { name: '自定义', exact: true }).click()
+    await dialog.getByLabel('开始日期', { exact: true }).fill(today)
+    await dialog.getByLabel('结束日期', { exact: true }).fill(today)
+    if (includePhotos) await dialog.getByRole('checkbox', { name: '附照片', exact: true }).check()
+    else if (kind === 'inspection') assert.equal(await dialog.getByRole('checkbox', { name: '附照片', exact: true }).count(), 0, 'Inspection ledger must not expose a photo option')
+    await screenshot(`desktop-${kind}-ledger-export`)
+    await download('export-ledger', campaign ? '整治台账' : kind === 'inspection' ? '排查台账' : '整改台账', filename)
+    await dialog.waitFor({ state: 'hidden' })
+  }
+  await ledger('inspection', false, 'inspection-ledger.docx')
+  await ledger('rectification', true, 'ledger-photos.docx')
+  await page.goto(origin + '/#/campaigns/' + campaignId, { waitUntil: 'networkidle' })
+  await page.getByTestId('export-campaign-record').waitFor()
+  await download('export-campaign-record', '整治记录单', 'campaign-record.docx')
+  await ledger('campaign', true, 'campaign-ledger.docx')
+  const kinds = report.wordDownloads.map(item => item.kind)
+  for (const required of ['排查记录单', '整改通知单', '整改记录单', '排查台账', '整改台账', '整治记录单', '整治台账']) assert(kinds.includes(required), 'Missing visible Word export: ' + required)
+  await page.setViewportSize({ width: 375, height: 812 })
 }

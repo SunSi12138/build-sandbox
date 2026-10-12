@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO.Compression;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace StreetEcoTool.Tests;
@@ -107,6 +108,27 @@ public sealed class StoreV2Tests
         Assert.Equal("2026-10-12", snapshot.Date);
         Assert.Equal("午夜前", V2Environment.Scalar(Path.Combine(store.BackupDir, snapshot.Name), "SELECT street_name FROM settings;"));
         Assert.Equal("午夜后", store.GetSettings().StreetName);
+    }
+
+    [Fact]
+    public void DelayedMidnightTimerCannotLetANewDayMutationEnterYesterdaysSnapshot()
+    {
+        using var environment = new V2Environment();
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 12, 23, 59, 59, TimeSpan.Zero));
+        clock.SetLocalTimeZone(TimeZoneInfo.Utc);
+        using var store = new Store(environment.Data, clock);
+        store.SaveSettings(store.GetSettings() with { StreetName = "午夜前的数据" });
+        store.RunDailyMaintenance(new DateOnly(2026, 10, 12));
+        // Request bytes could already be arriving, but the handler has not
+        // entered Store. No timer is installed: its callback is deliberately late.
+        clock.Advance(TimeSpan.FromSeconds(2));
+        store.SaveSettings(store.GetSettings() with { StreetName = "午夜后的写入" });
+        var previousDay = Path.Combine(store.BackupDir, "auto-2026-10-12.db");
+        Assert.True(File.Exists(previousDay));
+        Assert.Equal("午夜前的数据", V2Environment.Scalar(previousDay, "SELECT street_name FROM settings;"));
+        Assert.Equal("午夜后的写入", store.GetSettings().StreetName);
+        store.RunDailyMaintenance(new DateOnly(2026, 10, 13));
+        Assert.Equal("午夜前的数据", V2Environment.Scalar(previousDay, "SELECT street_name FROM settings;"));
     }
 
     [Fact]
@@ -246,6 +268,20 @@ public sealed class StoreV2Tests
     }
 
     [Fact]
+    public void OptionalThumbnailWriteFailureDoesNotAdvertiseAMissingFileOrBreakBackup()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
+        var original = Assert.Single(Directory.EnumerateFiles(store.PhotosDir, photo.Id + ".jpg", SearchOption.AllDirectories));
+        Directory.CreateDirectory(original[..^4] + ".thumb.jpg");
+        Assert.ThrowsAny<IOException>(() => store.UploadThumbnail(photo.Id, WordExporterTests.Jpeg(60, 40)));
+        Assert.Equal(0L, V2Environment.Number(store.DatabasePath, "SELECT has_thumb FROM photos;"));
+        using var archive = ZipFile.OpenRead(store.CreateBackupZip());
+        Assert.Single(archive.Entries, entry => entry.FullName.StartsWith("photos/", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task BackupIncludesThumbnailsButPreviewCountsOnlyOriginalsAndRestoresVersion1()
     {
         using var environment = new V2Environment();
@@ -253,7 +289,7 @@ public sealed class StoreV2Tests
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
         store.UploadThumbnail(photo.Id, WordExporterTests.Jpeg(60, 40));
         var archive = store.CreateBackupZip();
-        using (var zip = ZipFile.OpenRead(archive)) Assert.Single(zip.Entries.Where(entry => entry.FullName.EndsWith(".thumb.jpg", StringComparison.Ordinal)));
+        using (var zip = ZipFile.OpenRead(archive)) Assert.Single(zip.Entries, entry => entry.FullName.EndsWith(".thumb.jpg", StringComparison.Ordinal));
         await using (var input = File.OpenRead(archive))
         {
             var preview = await store.PrepareRestoreAsync(input, CancellationToken.None);
@@ -335,7 +371,7 @@ internal sealed class V2Environment : IDisposable
     {
         get
         {
-            var current = new DirectoryInfo(Directory.GetCurrentDirectory());
+            DirectoryInfo? current = new DirectoryInfo(Directory.GetCurrentDirectory());
             while (current is not null)
             {
                 var path = Path.Combine(current.FullName, "server", "StreetEcoTool.Tests", "Fixtures", "schema-v1");

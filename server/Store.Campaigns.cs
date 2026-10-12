@@ -28,6 +28,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var name = Text(request.Name, "整治类型", 100, true);
             using (var duplicate = Command("SELECT COUNT(*) FROM campaign_types WHERE name=$name AND id<>$id;", null, ("$name", name), ("$id", id ?? "")))
                 if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0) throw new ApiException(409, "已有同名整治类型。");
@@ -43,6 +44,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             using (var used = Command("SELECT COUNT(*) FROM campaigns WHERE type_id=$id;", null, ("$id", id)))
                 if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该类型已被整治记录引用，不能删除。");
             using var command = Command("DELETE FROM campaign_types WHERE id=$id;", null, ("$id", id));
@@ -128,6 +130,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var existing = id is null ? null : GetCampaign(id);
             var community = RequireCommunity(Text(request.CommunityId, "所属社区", 100, true));
             var type = RequireCampaignType(Text(request.TypeId, "整治类型", 100, true));
@@ -139,8 +142,8 @@ public sealed partial class Store
             if (request.GarbageTons is > 1000000000000m || request.AreaSqm is > 1000000000000m) throw new ApiException(400, "数量过大。");
             var actualId = id ?? NewId();
             (string Name, object? Value)[] parameters = [("$id", actualId), ("$name", Text(request.Name, "整治名称", 200, true)),
-                ("$type", type.Id), ("$typeName", existing?.TypeId == type.Id ? existing.TypeName : type.Name),
-                ("$community", community.Id), ("$communityName", existing?.CommunityId == community.Id ? existing.CommunityName : community.Name),
+                ("$type", type.Id), ("$typeName", existing is not null && existing.TypeId == type.Id ? existing.TypeName : type.Name),
+                ("$community", community.Id), ("$communityName", existing is not null && existing.CommunityId == community.Id ? existing.CommunityName : community.Name),
                 ("$location", Text(request.Location, "整治地点", 1000, true)), ("$date", date), ("$end", endDate),
                 ("$organizer", Text(request.Organizer ?? GetSettings().IssuingUnit, "组织单位", 200)),
                 ("$participants", Text(request.Participants, "参加单位及人员", 2000)), ("$people", request.ParticipantCount),
@@ -172,6 +175,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             _ = GetCampaign(id);
             ExecuteWithPhotoDeletion(ReadPhotos(campaignId: id).Select(photo => photo.Id).ToArray(), transaction =>
             {

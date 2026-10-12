@@ -5,6 +5,7 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 export interface CompressedPhoto {
   blob: Blob
+  thumbnail?: Blob
   width: number
   height: number
   engine: 'mozjpeg-worker' | 'canvas-fallback'
@@ -20,7 +21,7 @@ export interface WorkerRequest { file: File; quality: number }
 
 export type WorkerReply =
   | { kind: 'progress'; percent: number; message: string }
-  | { kind: 'done'; jpeg: ArrayBuffer; width: number; height: number }
+  | { kind: 'done'; jpeg: ArrayBuffer; width: number; height: number; thumbnail?: ArrayBuffer }
   | { kind: 'fallback'; reason: string }
 
 export function cancelledPhotoOperation(): DOMException {

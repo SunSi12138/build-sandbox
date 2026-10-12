@@ -57,7 +57,7 @@ internal static class Startup
             Console.Error.WriteLine("启动失败：端口已被其他程序占用。请关闭占用程序，或用 --port 5181 / appsettings.json 更换端口后重试。");
             return 2;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException or SqliteException or ApiException)
+        catch (Exception exception) when (exception is IOException or SocketException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException or SqliteException or ApiException)
         {
             Console.Error.WriteLine($"启动失败：{exception.Message}");
             Console.Error.WriteLine("请确认程序文件夹可写，且配置文件格式正确。");
@@ -113,7 +113,7 @@ internal static class Startup
         var clock = TimeProvider.System;
         Console.WriteLine($"当前时区：{clock.LocalTimeZone.Id}");
         var configuredZone = Environment.GetEnvironmentVariable("TZ");
-        if (clock.LocalTimeZone.BaseUtcOffset == TimeSpan.Zero && !string.IsNullOrWhiteSpace(configuredZone) && configuredZone is not "UTC" and not "Etc/UTC" and not "GMT")
+        if (clock.LocalTimeZone.Id is "UTC" or "Etc/UTC" or "Etc/GMT" or "GMT" && !string.IsNullOrWhiteSpace(configuredZone) && configuredZone is not "UTC" and not "Etc/UTC" and not "Etc/GMT" and not "GMT")
             Console.WriteLine("时区可能不正确，请安装 tzdata 或设置 TZ=Asia/Shanghai");
         // Run before demo data and before any HTTP writer can change today's database.
         store.RunDailyMaintenance(DateOnly.FromDateTime(clock.GetLocalNow().Date));
@@ -132,7 +132,9 @@ internal static class Startup
         WebApplication? app = null;
         try
         {
-            app = await StartHostAsync(options, store, listening, listening.Current, baseDirectory, staticDirectory);
+            var initial = await StartAvailableHostAsync(options, store, listening, listening.Current, baseDirectory, staticDirectory);
+            app = initial.App;
+            listening.Applied(initial.Addresses, initial.Warning);
             await using var announcement = new InstanceAnnouncement(() => listening.CurrentLocalUrl);
             PrintAddresses(listening);
             Console.WriteLine($"数据库：{store.DataDir}\n照片：{store.PhotosDir}\n备份：{store.BackupDir}\n临时文件：{store.TemporaryDir}\n按 Ctrl+C 正常关闭。\n");
@@ -148,15 +150,26 @@ internal static class Startup
                 app = null;
                 try
                 {
-                    app = await StartHostAsync(options, store, listening, requested, baseDirectory, staticDirectory);
-                    listening.Applied(requested);
+                    var changed = await StartAvailableHostAsync(options, store, listening, requested, baseDirectory, staticDirectory);
+                    app = changed.App;
+                    listening.Applied(changed.Addresses, changed.Warning);
                 }
                 catch (Exception error) when (error is IOException or SocketException or InvalidOperationException)
                 {
                     Console.Error.WriteLine($"监听切换失败：{error.Message}");
                     var recovered = ListeningService.ResolveAvailable(previous, ListeningService.GetInterfaces(), out _);
-                    app = await StartHostAsync(options, store, listening, recovered, baseDirectory, staticDirectory);
-                    listening.Applied(recovered, "监听切换失败，已恢复此前监听地址");
+                    try
+                    {
+                        var previousHost = await StartAvailableHostAsync(options, store, listening, recovered, baseDirectory, staticDirectory);
+                        app = previousHost.App;
+                        listening.Applied(previousHost.Addresses, previousHost.Warning ?? "监听切换失败，已恢复此前监听地址");
+                    }
+                    catch (Exception recoveryError) when (recoveryError is IOException or SocketException or InvalidOperationException && !recovered.SequenceEqual(["127.0.0.1"]))
+                    {
+                        Console.Error.WriteLine($"此前地址无法恢复：{recoveryError.Message}，尝试仅本机监听。");
+                        app = await StartHostAsync(options, store, listening, ["127.0.0.1"], baseDirectory, staticDirectory);
+                        listening.Applied(["127.0.0.1"], "监听切换失败，已切换为仅本机访问");
+                    }
                 }
                 PrintAddresses(listening);
             }
@@ -207,8 +220,6 @@ internal static class Startup
             if (context.Request.Path.StartsWithSegments("/api")) context.Response.Headers.CacheControl = "no-store";
             try
             {
-                if (context.Request.Path.StartsWithSegments("/api") && context.Request.Method is not "GET" and not "HEAD" and not "OPTIONS")
-                    store.EnsurePreviousDaySnapshot(DateOnly.FromDateTime(TimeProvider.System.GetLocalNow().Date));
                 await next(context);
             }
             catch (Exception error) when (!context.Response.HasStarted && error is ApiException or JsonException or BadHttpRequestException or SqliteException or IOException or UnauthorizedAccessException)
@@ -281,6 +292,30 @@ internal static class Startup
         catch { await app.DisposeAsync(); throw; }
     }
 
+    private static async Task<(WebApplication App, string[] Addresses, string? Warning)> StartAvailableHostAsync(
+        LaunchOptions options, Store store, ListeningService listening, string[] addresses, string baseDirectory, string staticDirectory)
+    {
+        try
+        {
+            return (await StartHostAsync(options, store, listening, addresses, baseDirectory, staticDirectory), addresses, null);
+        }
+        catch (Exception error) when (IsAddressUnavailable(error))
+        {
+            Console.Error.WriteLine($"监听地址已失效：{error.Message}");
+            var available = ListeningService.ResolveAvailable(addresses, ListeningService.GetInterfaces(), out _);
+            if (!available.SequenceEqual(addresses))
+            {
+                try
+                {
+                    return (await StartHostAsync(options, store, listening, available, baseDirectory, staticDirectory), available, "已跳过失效的监听地址");
+                }
+                catch (Exception retryError) when (IsAddressUnavailable(retryError)) { }
+            }
+            string[] local = ["127.0.0.1"];
+            return (await StartHostAsync(options, store, listening, local, baseDirectory, staticDirectory), local, "监听地址已失效，已切换为仅本机访问");
+        }
+    }
+
     private static void PrintAddresses(ListeningService listening)
     {
         var info = listening.GetInfo(IPAddress.Loopback);
@@ -300,6 +335,13 @@ internal static class Startup
     {
         for (Exception? current = exception; current is not null; current = current.InnerException)
             if (current is SocketException { SocketErrorCode: SocketError.AddressAlreadyInUse } || current is Microsoft.AspNetCore.Connections.AddressInUseException) return true;
+        return false;
+    }
+
+    private static bool IsAddressUnavailable(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is SocketException { SocketErrorCode: SocketError.AddressNotAvailable or SocketError.NetworkUnreachable or SocketError.NetworkDown }) return true;
         return false;
     }
 

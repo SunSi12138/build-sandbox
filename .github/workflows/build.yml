@@ -75,6 +75,18 @@ jobs:
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+      - name: Install fonts for document and screenshot verification
+        if: matrix.rid == 'linux-x64'
+        run: sudo apt-get install -y fonts-noto-cjk
+      - uses: actions/upload-artifact@v7
+        if: matrix.rid == 'linux-x64'
+        with:
+          name: qa-fonts
+          path: |
+            /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+            /usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc
+          if-no-files-found: error
+          retention-days: 14
       - name: Enable x86 MSVC tools
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -169,6 +181,8 @@ jobs:
         working-directory: web
       - run: npx playwright install --with-deps chromium
         working-directory: web
+      - name: Install Chinese fonts for screenshots
+        run: sudo apt-get install -y fonts-noto-cjk
       - name: Run the packaged app in a real browser
         run: node web/browser-test.mjs --executable browser-package/StreetEcoTool-linux-x64
       - uses: actions/upload-artifact@v7

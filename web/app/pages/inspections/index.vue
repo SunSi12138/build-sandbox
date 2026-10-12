@@ -1,70 +1,43 @@
 <script setup lang="ts">
 import type { TableColumn } from '@nuxt/ui'
-import type { InspectionDto, PageDto } from '~/types/api'
-import { errorMessage, queryText } from '~/utils/format'
-
+import type { InspectionCountsDto, InspectionDto, PageDto } from '~/types/api'
+import { errorMessage, overdueDays, queryText, rectifyLabel, rectifyTone } from '~/utils/format'
 useHead({ title: '排查记录 · 街道生态环保' })
 const route = useRoute()
 const { bootstrap, load: loadAppData } = useAppData()
-const { field, page, setPage } = useQueryFilters()
-const q = field('q'), communityId = field('communityId', 'all'), from = field('from'), to = field('to')
-const loading = ref(true), error = ref('')
-const result = ref<PageDto<InspectionDto> | null>(null)
+const { field, page, setPage, set } = useQueryFilters()
+const q = field('q'), communityId = field('communityId', 'all'), typeId = field('typeId', 'all'), from = field('from'), to = field('to'), rectify = field('rectify', 'all')
+const result = ref<PageDto<InspectionDto> | null>(null), counts = ref<InspectionCountsDto>({ all: 0, none: 0, pending: 0, feedback: 0, closed: 0, issueCount: 0 })
+const loading = ref(true), error = ref(''), datesOpen = ref(false), exportOpen = ref(false)
 let version = 0
-const communities = computed(() => [{ label: '全部社区', value: 'all' }, ...(bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id }))])
-const columns: TableColumn<InspectionDto>[] = [
-  { accessorKey: 'date', header: '排查日期' }, { accessorKey: 'pointName', header: '点位 / 社区' },
-  { accessorKey: 'inspector', header: '排查人' }, { accessorKey: 'result', header: '排查结果' },
-  { accessorKey: 'noticeNumber', header: '通知单编号' }, { id: 'actions', header: '' }
-]
+const overdue = computed(() => queryText(route.query.overdue) === 'true'), temporary = computed(() => queryText(route.query.temporary) === 'true'), dueSoon = computed(() => queryText(route.query.dueSoon) === 'true')
+const communities = computed(() => [{ label: '全部', value: 'all' }, ...(bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id }))])
+const types = computed(() => [{ label: '全部', value: 'all' }, ...(bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
+const statusOptions = computed(() => [{ label: '全部', value: 'all', count: counts.value.all }, { label: '待整改', value: 'pending', count: counts.value.pending }, { label: '待复查', value: 'feedback', count: counts.value.feedback }, { label: '已闭环', value: 'closed', count: counts.value.closed }, { label: '无需整改', value: 'none', count: counts.value.none }])
+const columns: TableColumn<InspectionDto>[] = [{ accessorKey: 'date', header: '排查日期' }, { accessorKey: 'pointName', header: '点位' }, { accessorKey: 'inspector', header: '排查人' }, { accessorKey: 'rectifyStatus', header: '整改情况' }, { accessorKey: 'noticeNumber', header: '通知单编号' }]
 async function load() {
   if (route.path.replace(/\/+$/, '') !== '/inspections') return
-  const current = ++version
-  loading.value = true; error.value = ''
+  const current = ++version; loading.value = true; error.value = ''
   try {
     await loadAppData()
-    const data = await $fetch<PageDto<InspectionDto>>('/api/inspections', { query: {
-      q: q.value || undefined, communityId: communityId.value === 'all' ? undefined : communityId.value,
-      from: from.value || undefined, to: to.value || undefined, pointId: queryText(route.query.pointId) || undefined,
-      page: page.value, pageSize: 30
-    } })
-    if (current === version) result.value = data
+    const query = { q: q.value || undefined, communityId: communityId.value === 'all' ? undefined : communityId.value, typeId: typeId.value === 'all' ? undefined : typeId.value, from: from.value || undefined, to: to.value || undefined, pointId: queryText(route.query.pointId) || undefined, overdue: overdue.value || undefined, temporary: temporary.value || undefined, dueSoon: dueSoon.value || undefined }
+    const [data, totals] = await Promise.all([$fetch<PageDto<InspectionDto>>('/api/inspections', { query: { ...query, rectify: rectify.value === 'all' ? undefined : rectify.value, page: page.value, pageSize: 30 } }), $fetch<InspectionCountsDto>('/api/inspections/counts', { query })])
+    if (current === version) { result.value = data; counts.value = totals }
   } catch (value) { if (current === version) error.value = errorMessage(value) }
   finally { if (current === version) loading.value = false }
 }
-watch(() => route.fullPath, load, { immediate: true })
 function detailLink(record: InspectionDto) { return { path: `/inspections/${record.id}`, query: { returnTo: route.fullPath } } }
+function clearDates() { void navigateTo({ path: '/inspections', query: { ...route.query, from: undefined, to: undefined, page: undefined } }, { replace: true }) }
+watch(() => route.fullPath, load, { immediate: true })
 </script>
-
 <template>
-  <div class="page-stack">
-    <PageHeader title="排查记录" description="正常与发现问题的排查，都会保存在这里。进入记录可导出 Word。">
-      <template #actions><UButton to="/inspections/new" icon="i-lucide-plus" label="新建排查" /></template>
-    </PageHeader>
-    <UCard>
-      <div class="field-grid">
-        <UFormField label="搜索记录"><UInput v-model="q" type="search" icon="i-lucide-search" placeholder="点位、排查人或通知单编号" class="w-full" /></UFormField>
-        <UFormField label="所属社区"><USelect v-model="communityId" :items="communities" class="w-full" /></UFormField>
-        <UFormField label="开始日期"><UInput v-model="from" type="date" class="w-full" /></UFormField>
-        <UFormField label="结束日期"><UInput v-model="to" type="date" class="w-full" /></UFormField>
-      </div>
-      <div class="mt-4 flex items-center justify-between border-t border-default pt-4"><p class="text-xs text-muted">共 <span class="font-semibold text-default">{{ result?.total ?? '—' }}</span> 条排查记录</p><UButton v-if="Object.keys(route.query).length" to="/inspections" label="清空筛选" icon="i-lucide-x" color="neutral" variant="link" class="-my-2 text-xs" /></div>
-    </UCard>
-    <PageState :loading="loading" :error="error" @retry="load">
-      <template v-if="result?.items.length">
-        <UCard class="table-wrap" :ui="{ body: 'p-0 sm:p-0' }">
-          <UTable :data="result.items" :columns="columns">
-            <template #date-cell="{ row }"><NuxtLink :to="detailLink(row.original)" class="text-sm font-medium tabular-nums text-primary">{{ row.original.date }}</NuxtLink></template>
-            <template #pointName-cell="{ row }"><NuxtLink :to="detailLink(row.original)" class="block max-w-64"><p class="truncate font-medium text-highlighted">{{ row.original.pointName }}</p><p class="mt-1.5 text-xs text-muted">{{ row.original.communityName }}</p></NuxtLink></template>
-            <template #result-cell="{ row }"><UBadge :color="row.original.result === 'normal' ? 'success' : 'warning'" variant="subtle">{{ row.original.result === 'normal' ? '正常' : `发现 ${row.original.issueCount} 项问题` }}</UBadge></template>
-            <template #noticeNumber-cell="{ row }"><span class="text-xs text-muted">{{ row.original.noticeNumber || '未填写' }}</span></template>
-            <template #actions-cell="{ row }"><UButton :to="detailLink(row.original)" label="查看记录" trailing-icon="i-lucide-chevron-right" color="neutral" variant="ghost" /></template>
-          </UTable>
-        </UCard>
-        <div class="mobile-records"><NuxtLink v-for="record in result.items" :key="record.id" :to="detailLink(record)" class="record-card"><div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 class="text-base font-medium text-highlighted">{{ record.pointName }}</h2><p class="mt-1.5 text-xs text-muted">{{ record.communityName }}</p></div><UBadge :color="record.result === 'normal' ? 'success' : 'warning'" variant="subtle">{{ record.result === 'normal' ? '正常' : `${record.issueCount} 项问题` }}</UBadge></div><div class="mt-4 flex items-center justify-between border-t border-default pt-3"><span class="text-xs text-muted">{{ record.date }} · {{ record.inspector }}</span><UIcon name="i-lucide-chevron-right" class="size-4 text-dimmed" /></div></NuxtLink></div>
-        <div v-if="result.total > 30" class="flex justify-center"><UPagination :page="page" :total="result.total" :items-per-page="30" :sibling-count="0" @update:page="setPage" /></div>
-      </template>
-      <UCard v-else><EmptyState title="还没有符合条件的排查记录" description="调整日期或社区筛选，也可以现在开始一次排查。"><UButton to="/inspections/new" icon="i-lucide-plus" label="新建排查" /></EmptyState></UCard>
-    </PageState>
+  <div class="page-stack compact-inspections"><PageHeader title="排查记录"><template #actions><UButton label="导出台账" color="neutral" variant="outline" class="desktop-only" @click="exportOpen = true" /><UButton to="/inspections/new" icon="i-lucide-plus" class="header-action"><span class="mobile-only">新增</span><span class="desktop-only">新增排查</span></UButton></template></PageHeader>
+    <div class="chip-row" aria-label="整改状态"><UButton v-for="option in statusOptions" :key="option.value" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="rectify === option.value" @click="rectify = option.value">{{ option.label }} {{ option.count }}</UButton></div>
+    <div class="chip-row"><UButton color="neutral" variant="ghost" class="filter-chip" :aria-pressed="overdue" @click="set('overdue', overdue ? '' : 'true')">仅逾期</UButton><UButton color="neutral" variant="ghost" class="filter-chip" :aria-pressed="temporary" @click="set('temporary', temporary ? '' : 'true')">仅临时点位</UButton><UButton v-if="dueSoon" label="3 天内到期" trailing-icon="i-lucide-x" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="true" @click="set('dueSoon', '')" /></div>
+    <div class="filter-box compact" data-testid="list-filters"><div class="filter-search"><UInput v-model="q" type="search" icon="i-lucide-search" placeholder="搜索点位、排查人、编号" aria-label="搜索排查" class="w-full" /><UButton color="neutral" variant="outline" class="filter-date-toggle" :aria-expanded="datesOpen" @click="datesOpen = !datesOpen">日期<span v-if="from || to" class="date-dot" /></UButton></div><div class="filter-field"><label>社区</label><USelect v-model="communityId" :items="communities" aria-label="社区筛选" class="w-full" /></div><div class="filter-field"><label>类型</label><USelect v-model="typeId" :items="types" aria-label="类型筛选" class="w-full" /></div><div class="filter-dates" :hidden="!datesOpen"><div class="filter-field"><label>开始日期</label><UInput v-model="from" type="date" aria-label="开始日期" class="w-full" /></div><div class="filter-field"><label>结束日期</label><UInput v-model="to" type="date" aria-label="结束日期" class="w-full" /></div></div></div>
+    <div v-if="from || to" class="chip-row"><UButton :label="`${from || '不限'} 至 ${to || '不限'}`" trailing-icon="i-lucide-x" variant="ghost" color="neutral" class="filter-chip" :aria-pressed="true" @click="clearDates" /></div>
+    <div class="filter-tool-row"><span v-if="overdue || dueSoon">涉及 {{ result?.total ?? '—' }} 条排查 · {{ result?.matchingIssueCount ?? 0 }} 项问题</span><span v-else>共 {{ result?.total ?? '—' }} 条</span><div class="flex items-center gap-1"><UButton v-if="Object.keys(route.query).length" to="/inspections" label="清空" color="neutral" variant="link" /><UButton label="导出台账" color="neutral" variant="link" class="mobile-only" @click="exportOpen = true" /></div></div>
+    <PageState :loading="loading" :error="error" @retry="load"><template v-if="result?.items.length"><div class="panel table-wrap"><UTable :data="result.items" :columns="columns" @select="(_event, row) => navigateTo(detailLink(row.original))"><template #date-cell="{ row }"><NuxtLink :to="detailLink(row.original)" class="text-primary">{{ row.original.date }}</NuxtLink></template><template #pointName-cell="{ row }"><NuxtLink :to="detailLink(row.original)" class="block max-w-72"><p class="truncate font-medium">{{ row.original.pointName }} <StatusBadge v-if="row.original.pointTemporary" tone="outline">临时</StatusBadge></p><p class="truncate text-xs text-muted">{{ row.original.communityName }} · {{ row.original.typeName }}</p></NuxtLink></template><template #rectifyStatus-cell="{ row }"><div class="flex items-center gap-1"><StatusBadge :tone="rectifyTone(row.original.rectifyStatus)">{{ rectifyLabel(row.original, true) }}</StatusBadge><StatusBadge v-if="row.original.overdueCount" tone="danger">逾期 {{ overdueDays(row.original.nearestDeadline) }} 天</StatusBadge></div></template><template #noticeNumber-cell="{ row }">{{ row.original.noticeNumber || '—' }}</template></UTable></div><div class="group-list mobile-records"><InspectionRow v-for="record in result.items" :key="record.id" :record="record" :return-to="route.fullPath" /></div><div v-if="result.total > 30" class="flex justify-center"><UPagination :page="page" :total="result.total" :items-per-page="30" :sibling-count="0" @update:page="setPage" /></div></template><div v-else class="panel"><EmptyState title="暂无排查记录"><UButton to="/inspections/new" label="新增排查" /></EmptyState></div></PageState>
+    <LedgerExport v-model:open="exportOpen" kind="inspection" :community-id="communityId === 'all' ? undefined : communityId" />
   </div>
 </template>

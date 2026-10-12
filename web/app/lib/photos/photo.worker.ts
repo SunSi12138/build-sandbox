@@ -26,7 +26,7 @@ scope.onmessage = async (event) => {
     canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
     const context = canvas.getContext('2d', { willReadFrequently: true })
     if (!context) throw new Error('此浏览器无法在后台处理照片。')
-    context.fillStyle = '#ffffff'
+    context.fillStyle = 'white'
     context.fillRect(0, 0, canvas.width, canvas.height)
     context.drawImage(bitmap, 0, 0)
     bitmap.close()
@@ -48,7 +48,13 @@ scope.onmessage = async (event) => {
     await initJpeg({ locateFile: () => jpegWasmUrl })
     // Encoding fresh pixels strips EXIF and produces Word-compatible JPEG.
     const jpeg = await encodeJpeg(pixels, { quality: event.data.quality })
-    scope.postMessage({ kind: 'done', jpeg, width, height }, [jpeg])
+    let thumbnail: ArrayBuffer | undefined
+    try {
+      const thumbRatio = Math.min(1, 360 / Math.max(width, height))
+      const thumbPixels = await resize(pixels, { width: Math.max(1, Math.round(width * thumbRatio)), height: Math.max(1, Math.round(height * thumbRatio)), method: 'lanczos3', fitMethod: 'stretch' })
+      thumbnail = await encodeJpeg(thumbPixels, { quality: 70 })
+    } catch { /* A thumbnail is optional; the original JPEG remains valid. */ }
+    scope.postMessage({ kind: 'done', jpeg, width, height, thumbnail }, thumbnail ? [jpeg, thumbnail] : [jpeg])
   } catch (error) {
     scope.postMessage({ kind: 'fallback', reason: error instanceof Error ? error.message : String(error) })
   } finally {

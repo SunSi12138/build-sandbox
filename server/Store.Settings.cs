@@ -19,6 +19,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var value = new SettingsDto(Text(request.StreetName, "街道全称", 100), Text(request.IssuingUnit, "落款单位", 100),
                 Text(request.DefaultInspector, "默认排查人", 100), Text(request.NoticeTemplate, "通知单正文模板", 12000, true), request.JpegQuality);
             if (value.JpegQuality is < 1 or > 100) throw new ApiException(400, "JPEG 质量必须是 1 至 100 的整数。");
@@ -58,6 +59,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var name = Text(request.Name, "社区名称", 100, true);
             var title = Text(request.Title, "通知单抬头全称", 150, true);
             using (var duplicate = Command("SELECT COUNT(*) FROM communities WHERE name=$name AND id<>$id;", null, ("$name", name), ("$id", id ?? "")))
@@ -75,6 +77,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             using (var used = Command("SELECT (SELECT COUNT(*) FROM points WHERE community_id=$id)+(SELECT COUNT(*) FROM inspections WHERE community_id=$id)+(SELECT COUNT(*) FROM campaigns WHERE community_id=$id);", null, ("$id", id)))
                 if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该社区已被记录引用，不能删除。");
             using var command = Command("DELETE FROM communities WHERE id=$id;", null, ("$id", id));
@@ -106,6 +109,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             var name = Text(request.Name, "点位类型", 100, true);
             using (var duplicate = Command("SELECT COUNT(*) FROM point_types WHERE name=$name AND id<>$id;", null, ("$name", name), ("$id", id ?? "")))
                 if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0) throw new ApiException(409, "已有同名点位类型。");
@@ -122,6 +126,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            PrepareWrite();
             using (var used = Command("SELECT (SELECT COUNT(*) FROM points WHERE type_id=$id)+(SELECT COUNT(*) FROM inspections WHERE type_id=$id);", null, ("$id", id)))
                 if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该类型已被点位或历史排查引用，不能删除；可以修改名称。");
             using var command = Command("DELETE FROM point_types WHERE id=$id;", null, ("$id", id));
