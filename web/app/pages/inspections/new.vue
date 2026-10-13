@@ -111,7 +111,6 @@ function readPhotoList(value: unknown): PhotoUploadDto[] {
 
 function loadLocalDraft() {
   try {
-    localStorage.removeItem('street-eco.inspection-draft.v1')
     const raw = localStorage.getItem(DRAFT_KEY)
     if (!raw) return
     const envelope: unknown = JSON.parse(raw)
