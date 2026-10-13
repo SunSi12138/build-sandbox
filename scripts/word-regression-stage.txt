@@ -1,0 +1,107 @@
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(true, true, true)]
+    public void OptionalRecordSectionsAreConsecutive(bool issues, bool photos, bool notes)
+    {
+        using var files = new TemporaryFiles();
+        var detail = Inspection();
+        detail = detail with { Inspection = detail.Inspection with { Result = issues ? "issues" : "normal", Notes = notes ? "请妥善保管，让每一项记录原样上传。" : "" }, Issues = issues ? detail.Issues : [] };
+        WordPhoto[] images = photos ? [files.Photo('a', "site", 800, 600, inspectionId: detail.Inspection.Id)] : [];
+        using var package = new Package(Render(stream => WordExporter.WriteRecord(stream, detail, Settings(), images)));
+        ValidatePackage(package);
+        var headings = package.Xml("word/document.xml").Descendants(W + "p")
+            .Where(p => (string?)p.Element(W + "pPr")?.Element(W + "pStyle")?.Attribute(W + "val") == "Heading1").Select(Text).ToArray();
+        var expected = new List<string> { "一、发现问题" };
+        if (photos) expected.Add("二、现场照片");
+        if (notes) expected.Add(photos ? "三、备注" : "二、备注");
+        Assert.Equal(expected, headings);
+        if (notes) Assert.Contains(detail.Inspection.Notes, Text(package.Xml("word/document.xml")));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public void CampaignNotesPrecedePhotographsAndOnlyActualSectionsAreNumbered(bool outcome, bool quantities, bool photos)
+    {
+        using var files = new TemporaryFiles();
+        var campaign = Campaign() with { Outcome = outcome ? "成效原文" : "", ParticipantCount = quantities ? 0 : null, VehicleCount = null, GarbageTons = null, AreaSqm = null, Notes = "现场设置垃圾收集点。" };
+        var photo = files.Photo('a', "before", 800, 600);
+        photo = photo with { Photo = photo.Photo with { CampaignId = campaign.Id } };
+        using var package = new Package(Render(stream => WordExporter.WriteCampaignRecord(stream, new(campaign, []), Settings(), photos ? [photo] : [])));
+        ValidatePackage(package);
+        var document = package.Xml("word/document.xml");
+        var headings = document.Descendants(W + "p").Where(p => (string?)p.Element(W + "pPr")?.Element(W + "pStyle")?.Attribute(W + "val") == "Heading1").Select(Text).ToArray();
+        var expected = new List<string> { "一、整治内容" };
+        var number = 2;
+        string[] numerals = ["零", "一", "二", "三", "四"];
+        if (outcome || quantities) expected.Add(numerals[number++] + "、整治成效");
+        expected.Add(numerals[number++] + "、备注");
+        if (photos) expected.Add(numerals[number] + "、整治照片");
+        Assert.Equal(expected, headings);
+        var text = Text(document);
+        Assert.Contains(campaign.Notes, text);
+        if (photos) Assert.True(text.IndexOf(campaign.Notes, StringComparison.Ordinal) < text.IndexOf("、整治照片", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ContinuationRowsRepeatMinimalBusinessContextWithoutChangingLogicalSummary()
+    {
+        var issue = Issue("long-context", new string('核', 3000), "整改要求", "2026-10-12");
+        using var package = new Package(Render(stream => WordExporter.WriteLedger(stream,
+            new("2026-10-01", "2026-10-31", "东苑社区", [issue], [], false), Settings())));
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), t => t.Element(W + "tblGrid")?.Elements().Count() == 9);
+        var rows = table.Elements(W + "tr").Skip(1).SkipLast(1).ToArray();
+        Assert.True(rows.Length > 2);
+        Assert.All(rows, row =>
+        {
+            var cells = row.Elements(W + "tc").ToArray();
+            Assert.Equal("1", Text(cells[0]));
+            Assert.Contains(issue.InspectionDate, Text(cells[1]));
+            Assert.Contains(issue.PointName, Text(cells[2]));
+        });
+        Assert.All(rows.Skip(1), row => Assert.Contains("（续）", Text(row)));
+        Assert.Equal(issue.Description, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(4)))));
+        Assert.Contains("共 1 条", Text(table.Elements(W + "tr").Last()));
+    }
+
+    [Fact]
+    public void PhotoTablesRepeatContextAndUseActionOrderRatherThanBackfilledDates()
+    {
+        using var files = new TemporaryFiles();
+        var detail = ClosedInspection();
+        var issue = detail.Issues[0];
+        IssueActionDto[] actions = [new("f1", "feedback", "2026-10-12", "第一轮", []), new("r1", "return", "2026-10-13", "退回原因", []), new("f2", "feedback", "2026-10-11", "补录第二轮", []), new("v2", "review", "2026-10-14", "闭环", [])];
+        detail = detail with { IssueDetails = [new(issue, detail.Inspection, [], actions)] };
+        var a = files.Photo('a', "site", 1600, 1200, issue.Id);
+        var b = files.Photo('b', "after", 1200, 1600, issue.Id);
+        var c = files.Photo('c', "after", 1600, 200, issue.Id);
+        var d = files.Photo('d', "review", 200, 1600, issue.Id);
+        var e = files.Photo('e', "after", 1600, 1200, issue.Id);
+        WordPhoto[] photos = [a, b with { Photo = b.Photo with { ActionId = "f1" } }, c with { Photo = c.Photo with { ActionId = "f2" } }, d with { Photo = d.Photo with { ActionId = "v2" } }, e];
+        using var package = new Package(Render(stream => WordExporter.WriteRectificationRecord(stream, detail, Settings(), photos)));
+        ValidatePackage(package);
+        var document = package.Xml("word/document.xml");
+        var text = Text(document);
+        Assert.Contains("第 1 次反馈 · 2026-10-12", text);
+        Assert.Contains("第 2 次反馈 · 2026-10-11", text);
+        Assert.Contains("未关联办理轮次", text);
+        Assert.Equal(5, package.Media.Length);
+        Assert.Equal(5, document.Descendants(W + "drawing").Count());
+        foreach (var table in document.Descendants(W + "tbl").Where(t => t.Descendants(W + "drawing").Any()))
+        {
+            var header = table.Elements(W + "tr").First();
+            Assert.NotNull(header.Element(W + "trPr")?.Element(W + "tblHeader"));
+            Assert.Contains(issue.PointName, Text(header));
+            Assert.Contains(issue.InspectionDate, Text(header));
+            Assert.Contains("问题 1", Text(header));
+        }
+    }
