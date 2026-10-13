@@ -120,7 +120,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       const paused = pauseThumbnail()
       const photo = await uploadPaused(page.getByTestId('photo-file-input').first(), paused, 'unmount.jpg')
       await page.evaluate(() => { location.hash = '/points' })
-      const leave = page.getByRole('dialog', { name: '离开页面？', exact: true })
+      const leave = page.getByRole('dialog', { name: '照片尚未上传完成', exact: true })
       await leave.getByRole('button', { name: '离开', exact: true }).click()
       await page.waitForURL('**/#/points')
       paused.release()
