@@ -174,9 +174,7 @@ public sealed partial class Store
         app.MapGet("/api/inspections/{id}/export/record", record);
         app.MapGet("/api/inspections/{id}/export/notice", notice);
         app.MapGet("/api/inspections/{id}/export/rectification", rectification);
-        app.MapGet("/api/inspections/{id}/export/rectification-record", rectification);
         app.MapGet("/api/campaigns/{id}/export/record", campaign);
-        app.MapGet("/api/exports/ledger", ledger);
         app.MapGet("/api/exports/rectification-ledger", ledger);
         app.MapGet("/api/exports/inspection-ledger", inspectionLedger);
         app.MapGet("/api/exports/campaign-ledger", campaignLedger);

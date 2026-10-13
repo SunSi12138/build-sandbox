@@ -140,7 +140,7 @@ class WordSmoke(api_smoke.ApiSmoke):
 
     def ledger(self):
         query = urllib.parse.urlencode({"from": (self.today - dt.timedelta(days=3)).isoformat(), "to": self.today.isoformat(), "communityId": self.community["id"]})
-        self.ledger_route = "/api/exports/ledger?" + query
+        self.ledger_route = "/api/exports/rectification-ledger?" + query
         text, photos, document = self.download(self.ledger_route + "&photos=true", "ledger-photos.docx")
         require(photos == 5 and "复查" in text and "整改后" in text, "Ledger before/after/review photos are incomplete or duplicated")
         require("共 2 条，已闭环 1，待复查 0，待整改 1，其中逾期 0" in text, "Ledger summary is wrong")
@@ -148,8 +148,8 @@ class WordSmoke(api_smoke.ApiSmoke):
         require(size.get(W + "orient") == "landscape" and size.get(W + "w") == "16838", "Ledger must be landscape A4")
         _, photos, _ = self.download(self.ledger_route + "&photos=false", "ledger-no-photos.docx")
         require(photos == 0, "No-photo ledger unexpectedly embedded images")
-        self.request("GET", "/api/exports/ledger?from=invalid&to=2026-10-10", expected=400)
-        self.request("GET", "/api/exports/ledger?from=2026-12-31&to=2026-01-01", expected=400)
+        self.request("GET", "/api/exports/rectification-ledger?from=invalid&to=2026-10-10", expected=400)
+        self.request("GET", "/api/exports/rectification-ledger?from=2026-12-31&to=2026-01-01", expected=400)
         self.request("GET", self.ledger_route.replace(self.community["id"], "not-found"), expected=400)
 
     def long_text(self):

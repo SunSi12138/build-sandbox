@@ -33,7 +33,8 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
     const started = new Promise(resolve => { resolveStarted = resolve })
     const gate = new Promise(resolve => { release = resolve })
     const handler = async route => {
-      const upstream = await route.fetch()
+      const url = new URL(route.request().url())
+      const upstream = await route.fetch({ url: directOrigin + url.pathname + url.search })
       resolveStarted()
       await gate
       await route.fulfill({ response: upstream }).catch(() => {})
@@ -192,7 +193,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       assert(fields.length >= 10)
       assert(fields.every(field => field.disabled), JSON.stringify(fields))
       await page.evaluate(() => { location.hash = '/campaigns' })
-      assert(page.url().includes('/campaigns/new'))
+      await page.waitForURL('**/#/campaigns/new')
       await expect(page.getByRole('alert').filter({ hasText: '测试保存失败' })).toBeVisible()
       await expect(page.getByTestId('campaign-name')).toBeEnabled()
       await expect(page.getByTestId('campaign-name')).toHaveValue('慢请求整治')

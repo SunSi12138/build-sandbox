@@ -120,21 +120,8 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            PrepareWrite();
             var issue = GetIssue(id);
-            if (issue.Status != "pending") throw new ApiException(409, "该问题当前不是待整改状态，不能重复记录反馈。");
-            var date = ActionDate(request.Date, issue.InspectionDate, "反馈日期");
-            var notes = Text(request.Notes, "反馈说明", 8000, true);
-            var actionId = NewId();
-            using (var transaction = _db.BeginTransaction())
-            {
-                using (var action = Command("INSERT INTO issue_actions(id,issue_id,kind,action_date,notes) VALUES($id,$issue,'feedback',$date,$notes);", transaction,
-                    ("$id", actionId), ("$issue", id), ("$date", date), ("$notes", notes))) action.ExecuteNonQuery();
-                using (var update = Command("UPDATE issues SET status='feedback',feedback_date=$date,feedback_notes=$notes,review_date=NULL,review_conclusion='',closed_date=NULL WHERE id=$id;", transaction,
-                    ("$id", id), ("$date", date), ("$notes", notes))) update.ExecuteNonQuery();
-                AttachPhotos(request.PhotoIds, "after", null, id, transaction, actionId);
-                transaction.Commit();
-            }
+            RecordInspectionFeedback(issue.InspectionId, new(request.Date, [new(id, request.Notes, request.PhotoIds)]));
             return GetIssueDetail(id);
         }
     }
@@ -143,21 +130,8 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            PrepareWrite();
             var issue = GetIssue(id);
-            if (issue.Status != "feedback") throw new ApiException(409, "请先记录社区反馈，再复查闭环。");
-            var date = ActionDate(request.Date, issue.FeedbackDate ?? issue.InspectionDate, "复查日期");
-            var conclusion = Text(request.Conclusion, "复查结论", 8000, true);
-            var actionId = NewId();
-            using (var transaction = _db.BeginTransaction())
-            {
-                using (var action = Command("INSERT INTO issue_actions(id,issue_id,kind,action_date,notes) VALUES($id,$issue,'review',$date,$notes);", transaction,
-                    ("$id", actionId), ("$issue", id), ("$date", date), ("$notes", conclusion))) action.ExecuteNonQuery();
-                using (var update = Command("UPDATE issues SET status='closed',review_date=$date,review_conclusion=$notes,closed_date=$date WHERE id=$id;", transaction,
-                    ("$id", id), ("$date", date), ("$notes", conclusion))) update.ExecuteNonQuery();
-                AttachPhotos(request.PhotoIds, "review", null, id, transaction, actionId);
-                transaction.Commit();
-            }
+            ReviewInspection(issue.InspectionId, new(request.Date, [new(id, request.Conclusion, request.PhotoIds)]));
             return GetIssueDetail(id);
         }
     }

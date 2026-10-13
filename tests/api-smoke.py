@@ -442,7 +442,7 @@ class ApiSmoke:
         self.upload()
         current = self.fingerprint()
         preview = self.json("PUT", "/api/backups/restore/prepare", raw=backup, content_type="application/zip")
-        require(preview["pointCount"] == len(baseline["database"]["points"]) and preview["photoCount"] == len(photo_rows), "Restore preview counts are incorrect")
+        require(preview["campaignCount"] == len(baseline["database"]["campaigns"]) and preview["pointCount"] == len(baseline["database"]["points"]) and preview["photoCount"] == len(photo_rows), "Restore preview counts are incorrect")
         self.json("POST", "/api/backups/restore", {"token": preview["token"]}, expected=400)
         require(self.fingerprint() == current, "Restore without a second confirmation changed current data")
         self.json("POST", "/api/backups/restore", {"token": "0" * 32, "confirm": True}, expected=(404, 410))
@@ -523,13 +523,10 @@ class ApiSmoke:
 
     def test_interrupted_restore(self) -> None:
         require(self.process is None, "Restore-crash fixtures require the test server to be stopped")
-        for legacy, committed in ((False, False), (False, True), (True, False), (True, True)):
+        for committed in (False, True):
             before = self.fingerprint()
-            storage_root = self.data if legacy else self.install
-            if legacy:
-                for name in ("photos", "backup"):
-                    (self.install / name).rename(self.data / name)
-            backup_name = "before-restore-smoke-" + ("legacy-" if legacy else "v2-") + ("committed" if committed else "uncommitted")
+            storage_root = self.install
+            backup_name = "before-restore-smoke-" + "v2-" + ("committed" if committed else "uncommitted")
             previous = storage_root / "backup" / backup_name
             previous.mkdir()
             for suffix in ("", "-wal", "-shm"):
@@ -548,7 +545,7 @@ class ApiSmoke:
                 database.execute("UPDATE settings SET street_name=? WHERE id=1", (marker,))
                 database.commit()
             replacement = self.fingerprint(storage_root / "photos")
-            journal = self.data / ".restore-journal.json" if legacy else self.install / "temp" / "restore-journal.json"
+            journal = self.install / "temp" / "restore-journal.json"
             journal.parent.mkdir(exist_ok=True)
             journal.write_text(json.dumps({"backupName": backup_name, "committed": committed}), encoding="utf-8")
             self.start(seed=True)
@@ -790,40 +787,38 @@ class ApiSmoke:
         wait_for_listen(["127.0.0.1"])
         require(self.fingerprint() == before, "Listener restart and fallback lost business data")
 
-    def test_legacy_upgrade_and_restore(self) -> None:
-        require(self.process is None, "Legacy-layout fixtures require a stopped temporary server")
-        fixture = Path(__file__).resolve().parents[1] / "server" / "StreetEcoTool.Tests" / "Fixtures" / "schema-v1"
-        require((fixture / "app.db").is_file(), "The real schema-v1 database fixture is missing")
-        # Replace only this test's isolated installation with the known v1 fixture.
-        shutil.rmtree(self.data)
-        shutil.rmtree(self.install / "photos")
-        self.data.mkdir()
-        shutil.copy2(fixture / "app.db", self.data / "app.db")
-        shutil.copytree(fixture / "photos", self.data / "photos")
-        (self.data / "backup").mkdir()
-        (self.data / "backup" / "before-legacy-marker.db").write_bytes(b"legacy-backup-marker")
+    def test_unsupported_data_is_unchanged(self) -> None:
+        require(self.process is None, "Unsupported fixtures require a stopped test server")
+        database = self.data / "app.db"
+        original = database.read_bytes()
+        def hashes():
+            return {str(path.relative_to(self.install)): hashlib.sha256(path.read_bytes()).hexdigest()
+                    for folder in (self.data, self.install / "photos", self.install / "backup", self.install / "temp")
+                    for path in folder.rglob("*") if path.is_file()}
+        def rejected():
+            before = hashes()
+            result = subprocess.run([str(self.executable), "--no-browser", "--port", self.origin.rsplit(":", 1)[1]], cwd=self.temp,
+                                    capture_output=True, timeout=15)
+            require(result.returncode != 0, "Unsupported data started successfully")
+            require(hashes() == before, "Refused data or photos were modified")
+            text = (result.stdout + result.stderr).decode("utf-8", errors="replace")
+            require("不支持" in text or "不受支持" in text, "Unsupported data needs an explicit explanation")
+        for version in (1, 3):
+            with contextlib.closing(sqlite3.connect(database)) as connection:
+                connection.execute(f"PRAGMA user_version={version}")
+                connection.commit()
+            rejected()
+            database.write_bytes(original)
+        old = self.data / "photos"
+        old.mkdir()
+        (old / "preserve.jpg").write_bytes(b"do-not-delete")
+        rejected()
+        (old / "preserve.jpg").unlink(); old.rmdir()
+        journal = self.data / ".restore-journal.json"
+        journal.write_text('{"backupName":"before-restore-legacy","committed":false}')
+        rejected(); journal.unlink()
         self.start()
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 2, "Legacy database was not migrated to schema 2")
-        historic = self.json("GET", "/api/inspections/inspection-v1")
-        require(historic["inspection"]["pointName"] == "旧版餐饮点" and historic["inspection"]["noticeNumber"] == "旧编号-001", "Version 1 inspection snapshot or number was lost")
-        require(historic["issueDetails"][0]["actions"][0]["notes"] == "已完成维修。", "Version 1 action history was lost")
-        for number in (1, 2, 3):
-            identifier = f"{number:032x}"
-            _, payload = self.request("GET", "/photos/" + identifier + "?size=thumb")
-            require(payload == (fixture / "photos" / "202610" / (identifier + ".jpg")).read_bytes(), "Legacy photo bytes or thumbnail fallback changed")
-        require(not (self.data / "photos").exists() and (self.install / "backup" / "before-legacy-marker.db").read_bytes() == b"legacy-backup-marker", "Old directories were not merged into version 2 locations")
-        require(self.sql_rows("PRAGMA foreign_key_check") == [], "Migrated version 1 relationships are invalid")
-        migrated_backups = list((self.install / "backup").glob("before-migrate-v1-*.db"))
-        require(migrated_backups, "Version 1 migration did not preserve its original database")
-        archive_entries = {"app.db": (fixture / "app.db").read_bytes(), "manifest.json": (fixture / "manifest.json").read_bytes()}
-        for file in (fixture / "photos").rglob("*.jpg"):
-            archive_entries["photos/" + file.relative_to(fixture / "photos").as_posix()] = file.read_bytes()
-        preview = self.json("PUT", "/api/backups/restore/prepare", raw=self.make_zip(archive_entries), content_type="application/zip")
-        require(preview["schemaVersion"] == 1 and preview["photoCount"] == 4, "Version 1 restore preview miscounted or rejected the old schema")
-        restored = self.json("POST", "/api/backups/restore", {"token": preview["token"], "confirm": True})
-        require(restored["ok"] and self.sql_rows("PRAGMA user_version")[0][0] == 2, "Restoring a version 1 backup did not migrate the reopened database")
-        require(self.sql_rows("SELECT COUNT(*) FROM photos")[0][0] == 4, "Version 1 restore lost a photo row")
-        require(self.sql_rows("PRAGMA foreign_key_check") == [], "Version 1 restored relationships are invalid")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 2, "Current schema failed to reopen")
         self.stop()
 
     def run(self) -> None:
@@ -839,7 +834,7 @@ class ApiSmoke:
             ("consistent backup, restore confirmation, invalid ZIP and failed-preservation safety", self.test_backups),
             ("orphan cleanup, future-record reminders, graceful restart and idempotent demo seed", self.test_cleanup_and_restart),
             ("restart recovery before and after restore commit, with old evidence retained", self.test_interrupted_restore),
-            ("real version 1 database upgrade, old photo directories and version 1 backup restore", self.test_legacy_upgrade_and_restore),
+            ("unsupported versions and legacy layout are rejected without changing files", self.test_unsupported_data_is_unchanged),
         ):
             self.case(name, action)
         self.report["passed"] = True

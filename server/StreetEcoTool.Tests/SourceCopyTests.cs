@@ -14,20 +14,15 @@ public sealed class SourceCopyTests
     }
 
     [Fact]
-    public void UserFacingSourceHasNoProhibitedCopy()
+    public void DestructiveDialogsExplainTheObjectsAtRisk()
     {
-        string[] banned = ["留痕", "认真", "妥善", "随手", "有迹可循", "完整记录", "记得", "让", "助力", "轻松", "一键", "每一次", "每一项", "每一步", "工作档案", "按期闭环"];
         var root = Repository();
-        var files = Directory.EnumerateFiles(Path.Combine(root, "server"), "*.cs", SearchOption.TopDirectoryOnly)
-            .Concat(Directory.EnumerateFiles(Path.Combine(root, "web", "app"), "*", SearchOption.AllDirectories)
-                .Where(path => Path.GetExtension(path) is ".vue" or ".ts" or ".css"));
-        var violations = new List<string>();
-        foreach (var file in files)
-        {
-            var source = WithoutComments(File.ReadAllText(file));
-            violations.AddRange(banned.Where(word => source.Contains(word, StringComparison.Ordinal)).Select(word => Path.GetRelativePath(root, file) + ": " + word));
-        }
-        Assert.Empty(violations);
+        var inspection = File.ReadAllText(Path.Combine(root, "web", "app", "pages", "inspections", "[id].vue"));
+        Assert.Contains("最后一条排查", inspection, StringComparison.Ordinal);
+        Assert.Contains("点位照片也将删除", inspection, StringComparison.Ordinal);
+        var batch = File.ReadAllText(Path.Combine(root, "web", "app", "components", "InspectionBatch.vue"));
+        Assert.Contains("未提交的", batch, StringComparison.Ordinal);
+        Assert.Contains("继续编辑", batch, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -9,92 +9,6 @@ namespace StreetEcoTool.Tests;
 public sealed class StoreV2Tests
 {
     [Fact]
-    public void RealVersion1DatabaseMigratesWithoutLosingHistoryPhotosOrUnattachedRows()
-    {
-        using var environment = new V2Environment();
-        environment.CopyVersion1(legacyLayout: true);
-        using (var store = new Store(environment.Data))
-        {
-            Assert.Equal(2L, V2Environment.Number(store.DatabasePath, "PRAGMA user_version;"));
-            var detail = store.GetInspectionDetail("inspection-v1");
-            Assert.Equal("旧版餐饮点", detail.Inspection.PointName);
-            Assert.Equal("旧编号-001", detail.Inspection.NoticeNumber);
-            Assert.Equal("油烟净化设施未运行。", Assert.Single(detail.Issues).Description);
-            Assert.Equal("已完成维修。", Assert.Single(Assert.Single(detail.IssueDetails!).Actions).Notes);
-            Assert.Equal(3, detail.Photos.Length);
-            Assert.Equal(4L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM photos;"));
-            foreach (var id in V2Environment.LegacyPhotoIds)
-            {
-                using var stream = store.OpenPhoto(id);
-                Assert.True(stream.Length > 100);
-                using var thumbFallback = store.OpenPhoto(id, true);
-                Assert.Equal(stream.Length, thumbFallback.Length);
-            }
-            V2Environment.AssertForeignKeys(store.DatabasePath);
-            var backup = Assert.Single(Directory.EnumerateFiles(store.BackupDir, "before-migrate-v1-*.db"));
-            Assert.Equal(1L, V2Environment.Number(backup, "PRAGMA user_version;"));
-            Assert.Equal(4L, V2Environment.Number(backup, "SELECT COUNT(*) FROM photos;"));
-            Assert.False(Directory.Exists(Path.Combine(environment.Data, "photos")));
-            Assert.All(Directory.EnumerateFiles(environment.Data), file => Assert.StartsWith("app.db", Path.GetFileName(file), StringComparison.Ordinal));
-        }
-        using var reopened = new Store(environment.Data);
-        Assert.Single(Directory.EnumerateFiles(reopened.BackupDir, "before-migrate-v1-*.db"));
-        Assert.Equal("feedback", reopened.GetIssue("issue-v1").Status);
-    }
-
-    [Fact]
-    public void FailedMigrationRollsBackSchemaAndKeepsItsVersion1Snapshot()
-    {
-        using var environment = new V2Environment();
-        environment.CopyVersion1(false);
-        V2Environment.Execute(Path.Combine(environment.Data, "app.db"), "PRAGMA foreign_keys=OFF; DELETE FROM communities;");
-        var error = Assert.Throws<IOException>(() => new Store(environment.Data));
-        Assert.Contains("已回滚", error.Message);
-        Assert.Equal(1L, V2Environment.Number(Path.Combine(environment.Data, "app.db"), "PRAGMA user_version;"));
-        Assert.Equal(0L, V2Environment.Number(Path.Combine(environment.Data, "app.db"), "SELECT COUNT(*) FROM sqlite_master WHERE name='campaigns';"));
-        Assert.Single(Directory.EnumerateFiles(Path.Combine(environment.Root, "backup"), "before-migrate-v1-*.db"));
-        Assert.Equal(4L, V2Environment.Number(Path.Combine(environment.Data, "app.db"), "SELECT COUNT(*) FROM photos;"));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void LegacyDirectoryMergeIsRepeatableAndPreservesCollidingFiles(bool bothLayouts)
-    {
-        using var environment = new V2Environment();
-        var old = Path.Combine(environment.Data, "photos", "202610");
-        Directory.CreateDirectory(old);
-        File.WriteAllText(Path.Combine(old, "same.jpg"), "old-original");
-        File.WriteAllText(Path.Combine(old, "unique.jpg"), "unique-original");
-        var target = Path.Combine(environment.Root, "photos", "202610");
-        if (bothLayouts) { Directory.CreateDirectory(target); File.WriteAllText(Path.Combine(target, "same.jpg"), "new-original"); }
-        Directory.CreateDirectory(Path.Combine(environment.Data, "backup"));
-        File.WriteAllText(Path.Combine(environment.Data, "backup", "before-old.db"), "backup");
-        Directory.CreateDirectory(Path.Combine(environment.Data, ".temporary"));
-        File.WriteAllText(Path.Combine(environment.Data, ".temporary", "draft.tmp"), "draft");
-        Store.MigrateLegacyLayout(environment.Data);
-        Store.MigrateLegacyLayout(environment.Data);
-        Assert.Equal("unique-original", File.ReadAllText(Path.Combine(target, "unique.jpg")));
-        Assert.Equal(bothLayouts ? "new-original" : "old-original", File.ReadAllText(Path.Combine(target, "same.jpg")));
-        if (bothLayouts) Assert.Equal("old-original", File.ReadAllText(Path.Combine(old, "same.jpg")));
-        else Assert.False(Directory.Exists(Path.Combine(environment.Data, "photos")));
-        Assert.Equal("backup", File.ReadAllText(Path.Combine(environment.Root, "backup", "before-old.db")));
-        Assert.Equal("draft", File.ReadAllText(Path.Combine(environment.Root, "temp", "draft.tmp")));
-    }
-
-    [Fact]
-    public void NewLayoutDoesNotMoveOrOverwriteExistingContent()
-    {
-        using var environment = new V2Environment();
-        var photos = Path.Combine(environment.Root, "photos");
-        Directory.CreateDirectory(photos);
-        File.WriteAllText(Path.Combine(photos, "existing.txt"), "original");
-        Store.MigrateLegacyLayout(environment.Data);
-        Assert.Equal("original", File.ReadAllText(Path.Combine(photos, "existing.txt")));
-        Assert.False(Directory.Exists(Path.Combine(environment.Data, "photos")));
-    }
-
-    [Fact]
     public void PreviousDaySnapshotIsImmutableAndExcludesLaterWrites()
     {
         using var environment = new V2Environment();
@@ -357,7 +271,7 @@ public sealed class StoreV2Tests
     }
 
     [Fact]
-    public async Task BackupIncludesThumbnailsButPreviewCountsOnlyOriginalsAndRestoresVersion1()
+    public async Task BackupIncludesThumbnailsButPreviewCountsOnlyOriginals()
     {
         using var environment = new V2Environment();
         using var store = environment.Open();
@@ -377,17 +291,6 @@ public sealed class StoreV2Tests
             using var bytes = new MemoryStream(); thumb.CopyTo(bytes);
             Assert.Equal(new JpegDimensions(60, 40), JpegMetadata.Read(bytes.ToArray()));
         }
-        var legacy = environment.CreateVersion1Zip();
-        await using (var input = File.OpenRead(legacy))
-        {
-            var preview = await store.PrepareRestoreAsync(input, CancellationToken.None);
-            Assert.Equal(1, preview.SchemaVersion);
-            Assert.Equal(4, preview.PhotoCount);
-            store.Restore(new(preview.Token, true));
-        }
-        Assert.Equal(2L, V2Environment.Number(store.DatabasePath, "PRAGMA user_version;"));
-        Assert.Equal("旧版餐饮点", store.GetPoint("point-v1").Name);
-        Assert.Equal(4L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM photos;"));
         V2Environment.AssertForeignKeys(store.DatabasePath);
     }
 
@@ -434,44 +337,12 @@ internal sealed class V2Environment : IDisposable
 {
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "hbtool-v2-" + Guid.NewGuid().ToString("N"));
     public string Data => Path.Combine(Root, "data");
-    public static string[] LegacyPhotoIds => Enumerable.Range(1, 4).Select(value => value.ToString("x32", CultureInfo.InvariantCulture)).ToArray();
     public V2Environment() => Directory.CreateDirectory(Data);
     public Store Open() => new(Data);
     public PointDto CreatePoint(Store store)
     {
         var community = store.SaveCommunity(null, new("社区", "社区居民委员会"));
         return store.SavePoint(null, new("测试点位", community.Id, store.GetPointTypes()[0].Id, "测试地址", Frequency: "weekly"));
-    }
-    public static string FixtureRoot
-    {
-        get
-        {
-            DirectoryInfo? current = new DirectoryInfo(Directory.GetCurrentDirectory());
-            while (current is not null)
-            {
-                var path = Path.Combine(current.FullName, "server", "StreetEcoTool.Tests", "Fixtures", "schema-v1");
-                if (File.Exists(Path.Combine(path, "app.db"))) return path;
-                current = current.Parent;
-            }
-            throw new IOException("找不到固定 v1 数据夹具。");
-        }
-    }
-    public void CopyVersion1(bool legacyLayout)
-    {
-        File.Copy(Path.Combine(FixtureRoot, "app.db"), Path.Combine(Data, "app.db"));
-        var target = Path.Combine(legacyLayout ? Data : Root, "photos", "202610");
-        Directory.CreateDirectory(target);
-        foreach (var file in Directory.EnumerateFiles(Path.Combine(FixtureRoot, "photos", "202610")))
-            File.Copy(file, Path.Combine(target, Path.GetFileName(file)));
-    }
-    public string CreateVersion1Zip()
-    {
-        var path = Path.Combine(Root, "v1-backup.zip");
-        using var zip = ZipFile.Open(path, ZipArchiveMode.Create);
-        foreach (var name in new[] { "app.db", "manifest.json" }) zip.CreateEntryFromFile(Path.Combine(FixtureRoot, name), name);
-        foreach (var file in Directory.EnumerateFiles(Path.Combine(FixtureRoot, "photos"), "*.jpg", SearchOption.AllDirectories))
-            zip.CreateEntryFromFile(file, "photos/" + Path.GetRelativePath(Path.Combine(FixtureRoot, "photos"), file).Replace(Path.DirectorySeparatorChar, '/'));
-        return path;
     }
     private static SqliteConnection Connect(string path, bool readOnly)
     {

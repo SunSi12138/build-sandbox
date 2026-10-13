@@ -319,9 +319,8 @@ try {
     await page.goto(origin + '/#/points?q=' + encodeURIComponent(point.name), { waitUntil: 'networkidle' })
     await page.reload({ waitUntil: 'networkidle' }); await waitForText(point.name)
     assert(page.url().includes(encodeURIComponent(point.name)))
-    await page.goto(origin + '/#/issues?status=pending&overdue=true', { waitUntil: 'networkidle' })
+    await page.goto(origin + '/#/inspections?rectify=pending&overdue=true', { waitUntil: 'networkidle' })
     await page.waitForURL('**/#/inspections?**'); assert(page.url().includes('rectify=pending'))
-    await page.goto(origin + '/#/exports', { waitUntil: 'networkidle' }); await page.waitForURL('**/#/inspections')
     await page.setViewportSize({ width: 375, height: 812 })
   })
 
@@ -404,7 +403,7 @@ try {
   })
 
   await test('Merged issue page: feedback, optional-photo review, return and history', async () => {
-    await page.goto(origin + '/#/issues/' + issueId, { waitUntil: 'networkidle' })
+    await page.goto(origin + '/#/inspections/' + inspectionId + '?issue=' + issueId, { waitUntil: 'networkidle' })
     await page.waitForURL('**/#/inspections/' + inspectionId + '?issue=' + issueId)
     await page.getByTestId('batch-feedback').click()
     let dialog = page.getByRole('dialog', { name: '记录反馈', exact: true })
