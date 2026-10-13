@@ -50,6 +50,14 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Native AOT render self-test returned $($process.ExitCode)" }
           Write-Host 'Native AOT print renderer self-test passed.'
 
+      - name: CPU rendering benchmark (published native AOT)
+        shell: pwsh
+        run: |
+          $report = './artifacts/benchmark.txt'
+          $process = Start-Process -FilePath './artifacts/publish/Spotlighter.exe' -ArgumentList @('--benchmark', $report) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Benchmark failed with exit code $($process.ExitCode)" }
+          Get-Content $report
+
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:

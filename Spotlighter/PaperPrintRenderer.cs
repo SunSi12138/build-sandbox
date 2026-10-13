@@ -1,127 +1,178 @@
 using System;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
+using System.Threading.Tasks;
 
 namespace Spotlighter;
 
 /// <summary>
-/// Re-renders captured desktop pixels as ink on fibrous paper, then applies
-/// a soft-area lamp, anisotropic penumbra, wide bounce light and cone scattering.
-/// Unlike an alpha-tinted overlay, this changes the actual captured RGB values.
+/// Two-stage renderer: static printed-paper reflectance is calculated only
+/// when the captured desktop changes; mouse movements only relight this cache.
+/// AVX2 multiplies eight premultiplied BGRA pixels per batch. Falls back to a
+/// bit-identical scalar path on pre-AVX2 hardware.
 /// </summary>
 internal static unsafe class PaperPrintRenderer
 {
-    internal static void Render(uint* source, uint* output, byte[] paper,
-        int width, int height, float aimX, float aimY)
+    private static readonly Vector256<int> Ramp = Vector256.Create(0, 1, 2, 3, 4, 5, 6, 7);
+    private static readonly Vector256<uint> Mask = Vector256.Create(255u);
+    private static readonly Vector256<uint> Opaque = Vector256.Create(0xff000000u);
+    private static readonly int WorkerCount = Math.Clamp(Environment.ProcessorCount, 1, 8);
+
+    internal static bool HasAvx2 => Avx2.IsSupported;
+
+    internal static void PrepareMaterial(uint* source, uint* material, byte[] paper,
+        int width, int height)
     {
-        float lampX = width * 0.5f;
-        float lampY = 78f;
-        aimX = Math.Clamp(aimX, 0f, width - 1f);
-        aimY = Math.Clamp(aimY, 0f, height - 1f);
-
-        float rayX = aimX - lampX;
-        float rayY = aimY - lampY;
-        float rayLen2 = Math.Max(1f, rayX * rayX + rayY * rayY);
-        float invRayLen2 = 1f / rayLen2;
-        float invRayLen = 1f / MathF.Sqrt(rayLen2);
-
-        float radiusX = Math.Clamp(width * 0.22f, 220f, 540f);
-        float radiusY = Math.Clamp(height * 0.26f, 185f, 440f);
-        float invRadiusX2 = 1f / (radiusX * radiusX);
-        float invRadiusY2 = 1f / (radiusY * radiusY);
-
-        fixed (byte* texture = paper)
+        nint inputPointer = (nint)source;
+        nint outputPointer = (nint)material;
+        Parallel.For(0, WorkerCount, worker =>
         {
-            for (int y = 0; y < height; y++)
+            uint* input = (uint*)inputPointer;
+            uint* output = (uint*)outputPointer;
+            int firstY = worker * height / WorkerCount;
+            int lastY = (worker + 1) * height / WorkerCount;
+            for (int y = firstY; y < lastY; y++)
             {
-                int row = y * width;
-                float yFocus = y - aimY;
-                float yLamp = y - lampY;
-                float yFocus2 = yFocus * yFocus * invRadiusY2;
-                float projY = yLamp * rayY;
-                float crossY = yLamp * rayX;
-                for (int x = 0; x < width; x++)
+                int index = y * width;
+                int end = index + width;
+                for (; index < end; index++)
                 {
-                    int index = row + x;
-                    float xFocus = x - aimX;
-                    float xLamp = x - lampX;
-                    float d2 = xFocus * xFocus * invRadiusX2 + yFocus2;
+                    uint color = input[index];
+                    int red = (int)((color >> 16) & 255u);
+                    int green = (int)((color >> 8) & 255u);
+                    int blue = (int)(color & 255u);
+                    int luminance = (red * 77 + green * 150 + blue * 29) >> 8;
+                    int pigment = 255 - luminance;
+                    int tooth = paper[index] - 128;
 
-                    // Finite-area source + multiple-scattering approximation.
-                    // Broad bounce prevents the surroundings from collapsing to pure black.
-                    float direct = 1f / (1f + d2 * (0.42f + 0.83f * d2));
-                    float bounce = 1f / (1f + 0.17f * d2);
-                    float axis = (xLamp * rayX + projY) * invRayLen2;
+                    // Matte, almost-neutral cellulose. Shadows are ink pigment,
+                    // not a uniformly brown translucent filter. Preserve a little
+                    // chromatic information for charts, icons and syntax colours.
+                    int fibre = (tooth * luminance >> 8) / 3;
+                    int pr = 239 + fibre - (pigment * 206 >> 8)
+                        + ((red - luminance) * 15 >> 7);
+                    int pg = 237 + fibre - (pigment * 207 >> 8)
+                        + ((green - luminance) * 14 >> 7);
+                    int pb = 233 + fibre - (pigment * 202 >> 8)
+                        + ((blue - luminance) * 11 >> 7);
+                    output[index] = 0xff000000u |
+                        (uint)(ClampByte(pr) << 16 | ClampByte(pg) << 8 | ClampByte(pb));
+                }
+            }
+        });
+    }
 
-                    // Scattering in the dust-filled cone: anisotropic and bounded.
-                    float haze = 0f;
-                    if (axis > 0f && axis < 1.18f)
+    internal static void Shade(uint* material, uint* output, LightField light,
+        int width, int height, bool allowAvx2 = true)
+    {
+        bool simd = allowAvx2 && Avx2.IsSupported;
+        nint materialPointer = (nint)material;
+        nint outputPointer = (nint)output;
+        int columns = light.Columns;
+        ushort[] gains = light.Gains;
+
+        Parallel.For(0, WorkerCount, worker =>
+        {
+            uint* source = (uint*)materialPointer;
+            uint* target = (uint*)outputPointer;
+            int firstY = worker * height / WorkerCount;
+            int lastY = (worker + 1) * height / WorkerCount;
+
+            for (int y = firstY; y < lastY; y++)
+            {
+                int gridY = y / LightField.Cell;
+                int fy = y - gridY * LightField.Cell;
+                int baseGrid = gridY * columns;
+                int row = y * width;
+
+                for (int gridX = 0, x = 0; x < width; gridX++, x += LightField.Cell)
+                {
+                    int offset = baseGrid + gridX;
+                    int left = (gains[offset] * (LightField.Cell - fy)
+                        + gains[offset + columns] * fy + 8) >> 4;
+                    int right = (gains[offset + 1] * (LightField.Cell - fy)
+                        + gains[offset + columns + 1] * fy + 8) >> 4;
+                    int slope = right - left;
+                    int count = Math.Min(LightField.Cell, width - x);
+                    int k = 0;
+
+                    if (simd)
                     {
-                        float perp = (xLamp * rayY - crossY) * invRayLen;
-                        float opening = 19f + 155f * axis;
-                        float scatter = 1f - perp * perp / (opening * opening);
-                        if (scatter > 0f)
+                        for (; k + 8 <= count; k += 8)
                         {
-                            scatter *= scatter;
-                            float entrance = MathF.Min(1f, axis * 8f);
-                            float exit = MathF.Min(1f, (1.18f - axis) * 9f);
-                            haze = scatter * entrance * exit;
+                            // Ramped per-lane gain, so even fine penumbras have
+                            // no 8-pixel block boundaries or staircase artefacts.
+                            Vector256<int> factors = Avx2.ShiftRightArithmetic(
+                                Avx2.Add(Vector256.Create(left * 16 + slope * k + 8),
+                                    Avx2.MultiplyLow(Vector256.Create(slope), Ramp)), 4);
+                            ShadeEight(source + row + x + k, target + row + x + k, factors);
                         }
                     }
 
-                    float illumination = Math.Clamp(
-                        0.205f + 0.665f * direct + 0.175f * bounce + 0.125f * haze,
-                        0f, 1.06f);
-                    int grain = texture[index] - 128;
-                    float warmth = 0.970f + 0.025f * direct;
-                    float microShadow = grain * 0.00035f;
-                    illumination = Math.Clamp(illumination + microShadow, 0f, 1.09f);
-
-                    if (source == null)
+                    for (; k < count; k++)
                     {
-                        // Failsafe when capture-exclusion is not supported. Still click-through,
-                        // but intentionally does NOT claim a true pixel-level print transform.
-                        float alpha = Math.Clamp(0.86f - illumination * 0.55f, 0.20f, 0.83f);
-                        float lightTint = Math.Clamp(direct + haze * 0.25f, 0f, 1f);
-                        int a = ClampByte(alpha * 255f);
-                        int overlayRed = ClampByte((35f + lightTint * 200f + grain * 0.45f) * alpha);
-                        int overlayGreen = ClampByte((28f + lightTint * 184f + grain * 0.4f) * alpha);
-                        int overlayBlue = ClampByte((21f + lightTint * 153f + grain * 0.35f) * alpha);
-                        output[index] = (uint)(a << 24 | overlayRed << 16 | overlayGreen << 8 | overlayBlue);
-                        continue;
+                        int gain = (left * 16 + slope * k + 8) >> 4;
+                        target[row + x + k] = ShadePixel(source[row + x + k], gain);
                     }
-
-                    uint original = source[index];
-                    int blue0 = (int)(original & 255u);
-                    int green0 = (int)((original >> 8) & 255u);
-                    int red0 = (int)((original >> 16) & 255u);
-                    int luminance = (red0 * 54 + green0 * 183 + blue0 * 19) >> 8;
-                    int darkness = 255 - luminance;
-
-                    // Pigment absorption on a warm cellulose substrate. Retain a restrained
-                    // trace of the source hue so charts and UI affordances are legible.
-                    float inkR = 243f + grain * 0.48f - darkness * 0.825f
-                        + (red0 - luminance) * 0.092f;
-                    float inkG = 232f + grain * 0.44f - darkness * 0.815f
-                        + (green0 - luminance) * 0.078f;
-                    float inkB = 210f + grain * 0.38f - darkness * 0.725f
-                        + (blue0 - luminance) * 0.062f;
-
-                    // Print granulation: fibres distort ink absorption more where pigment
-                    // coverage is strong, without destroying one-pixel text glyphs.
-                    float inkTooth = grain * darkness * (1f / 255f) * 0.055f;
-                    float glow = MathF.Max(0f, direct - 0.60f) * 12f + haze * 3f;
-                    int red = ClampByte((inkR - inkTooth) * illumination + glow * 1.03f);
-                    int green = ClampByte((inkG - inkTooth) * illumination * warmth + glow * 0.82f);
-                    int blue = ClampByte((inkB - inkTooth * 0.85f) * illumination * (warmth - 0.032f) + glow * 0.55f);
-
-                    output[index] = 0xff000000u | (uint)(red << 16 | green << 8 | blue);
                 }
             }
-        }
-
-        // A physically legible brass shade and articulated highlight, drawn
-        // after tone mapping and attached to the actual light origin.
-        LampPainter.Draw(output, width, height, aimX, aimY);
+        });
     }
 
-    private static int ClampByte(float value) => (int)Math.Clamp(value, 0f, 255f);
+    internal static void ShadeFallback(uint* output, byte[] paper, LightField light,
+        int width, int height)
+    {
+        // On systems where WDA_EXCLUDEFROMCAPTURE is unsupported, keep all
+        // applications accessible and do not repeatedly capture the overlay.
+        // Unlike the full mode, this fallback cannot remap actual desktop RGB.
+        nint outputPointer = (nint)output;
+        Parallel.For(0, WorkerCount, worker =>
+        {
+            uint* result = (uint*)outputPointer;
+            int firstY = worker * height / WorkerCount;
+            int lastY = (worker + 1) * height / WorkerCount;
+            for (int y = firstY; y < lastY; y++)
+            {
+                int row = y * width;
+                for (int x = 0; x < width; x++)
+                {
+                    int index = row + x;
+                    int gain = light.Sample(x, y);
+                    int alpha = Math.Clamp(245 - (gain * 162 >> 8), 76, 235);
+                    int grain = (paper[index] - 128) / 6;
+                    int r = Math.Clamp((36 + grain) * alpha / 255, 0, alpha);
+                    int g = Math.Clamp((37 + grain) * alpha / 255, 0, alpha);
+                    int b = Math.Clamp((40 + grain) * alpha / 255, 0, alpha);
+                    result[index] = (uint)(alpha << 24 | r << 16 | g << 8 | b);
+                }
+            }
+        });
+    }
+
+    private static void ShadeEight(uint* input, uint* output, Vector256<int> factors)
+    {
+        Vector256<uint> pixel = Vector256.Load(input);
+        Vector256<uint> red = Avx2.And(Avx2.ShiftRightLogical(pixel, 16), Mask);
+        Vector256<uint> green = Avx2.And(Avx2.ShiftRightLogical(pixel, 8), Mask);
+        Vector256<uint> blue = Avx2.And(pixel, Mask);
+
+        red = Avx2.ShiftRightLogical(Avx2.MultiplyLow(red.AsInt32(), factors).AsUInt32(), 8);
+        green = Avx2.ShiftRightLogical(Avx2.MultiplyLow(green.AsInt32(), factors).AsUInt32(), 8);
+        blue = Avx2.ShiftRightLogical(Avx2.MultiplyLow(blue.AsInt32(), factors).AsUInt32(), 8);
+
+        Vector256<uint> rgb = Avx2.Or(
+            Avx2.Or(Avx2.ShiftLeftLogical(red, 16), Avx2.ShiftLeftLogical(green, 8)),
+            Avx2.Or(blue, Opaque));
+        rgb.Store(output);
+    }
+
+    private static uint ShadePixel(uint color, int gain)
+    {
+        int red = (int)((color >> 16) & 255u) * gain >> 8;
+        int green = (int)((color >> 8) & 255u) * gain >> 8;
+        int blue = (int)(color & 255u) * gain >> 8;
+        return 0xff000000u | (uint)(red << 16 | green << 8 | blue);
+    }
+
+    private static int ClampByte(int value) => Math.Clamp(value, 0, 255);
 }

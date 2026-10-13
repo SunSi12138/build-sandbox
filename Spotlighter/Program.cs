@@ -22,7 +22,7 @@ internal static unsafe class Program
     private static nint _module, _messageWindow, _hook, _classNamePtr;
     private static Native.NOTIFYICONDATA _tray;
     private static bool _trayAdded, _exiting, _active, _ctrlHeld, _otherKeySeen, _triggered;
-    private static long _ctrlSince, _lastRender;
+    private static long _ctrlSince, _lastRender, _lastRenderCost;
     private static DesktopSurface? _surface;
     private static float _aimX, _aimY;
 
@@ -32,6 +32,11 @@ internal static unsafe class Program
         if (args.Length == 1 && args[0] == "--self-test")
         {
             Environment.ExitCode = SelfTest.Run();
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--benchmark")
+        {
+            Environment.ExitCode = SelfTest.Benchmark(args[1]);
             return;
         }
         if (!OperatingSystem.IsWindows()) return;
@@ -82,7 +87,7 @@ internal static unsafe class Program
         _hook = Native.SetWindowsHookExW(Native.WH_KEYBOARD_LL, KeyboardCallback, _module, 0);
         if (_hook == 0)
             throw new InvalidOperationException("Global keyboard hook is unavailable.");
-        if (Native.SetTimer(_messageWindow, TimerId, 25, 0) == 0)
+        if (Native.SetTimer(_messageWindow, TimerId, 16, 0) == 0)
             throw new InvalidOperationException("Unable to start the window timer.");
     }
 
@@ -185,7 +190,8 @@ internal static unsafe class Program
 
         // Full native-resolution print processing is CPU intensive; cap it by area.
         long pixels = (long)_surface.Width * _surface.Height;
-        int interval = pixels >= 7_000_000 ? 95 : pixels >= 3_000_000 ? 65 : 37;
+        int targetInterval = pixels >= 7_000_000 ? 33 : pixels >= 3_000_000 ? 25 : 16;
+        int interval = Math.Max(targetInterval, (int)Math.Min(145, _lastRenderCost * 1.30));
         if (now - _lastRender < interval) return;
         _lastRender = now;
         try
@@ -195,7 +201,9 @@ internal static unsafe class Program
                 _aimX += (position.X - _aimX) * 0.23f;
                 _aimY += (position.Y - _aimY) * 0.23f;
             }
+            long started = Environment.TickCount64;
             _surface.Render(_aimX, _aimY);
+            _lastRenderCost = Math.Max(1, Environment.TickCount64 - started);
         }
         catch (Exception e)
         {

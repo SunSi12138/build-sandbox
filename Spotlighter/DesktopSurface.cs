@@ -3,8 +3,9 @@ using System;
 namespace Spotlighter;
 
 /// <summary>
-/// Owns a click-through, topmost layered window and two top-down BGRA DIBs.
-/// The window is excluded from desktop capture to avoid feedback recursion.
+/// GDI desktop capture is deliberately decoupled from print material creation
+/// and from high-frequency mouse-follow lighting. The latter is SIMD accelerated.
+/// One Native AOT layered window remains click-through and capture-excluded.
 /// </summary>
 internal sealed unsafe class DesktopSurface : IDisposable
 {
@@ -15,9 +16,13 @@ internal sealed unsafe class DesktopSurface : IDisposable
     private readonly nint _oldCaptureBitmap, _oldOutputBitmap;
     private readonly nint _captureBits, _outputBits;
     private readonly byte[] _paper;
+    private readonly uint[] _material;
+    private readonly LightField _light;
     private bool _excluded;
+    private bool _hasMaterial;
     private bool _visible;
     private bool _disposed;
+    private long _lastCapture;
 
     internal int Left { get; }
     internal int Top { get; }
@@ -55,7 +60,7 @@ internal sealed unsafe class DesktopSurface : IDisposable
                 {
                     biSize = (uint)sizeof(Native.BITMAPINFOHEADER),
                     biWidth = Width,
-                    biHeight = -Height, // top-down BGRA
+                    biHeight = -Height,
                     biPlanes = 1,
                     biBitCount = 32,
                     biCompression = Native.BI_RGB
@@ -71,6 +76,8 @@ internal sealed unsafe class DesktopSurface : IDisposable
             _oldCaptureBitmap = Native.SelectObject(_captureDc, _captureBitmap);
             _oldOutputBitmap = Native.SelectObject(_outputDc, _outputBitmap);
             _paper = PaperTexture.Generate(Width, Height);
+            _material = new uint[checked(Width * Height)];
+            _light = new LightField(Width, Height);
             _excluded = Native.SetWindowDisplayAffinity(_window, Native.WDA_EXCLUDEFROMCAPTURE);
         }
         catch
@@ -83,12 +90,19 @@ internal sealed unsafe class DesktopSurface : IDisposable
     internal void Activate()
     {
         if (_visible) return;
-        // Capture once before the overlay becomes visible.
-        Render(Left + Width * 0.5f, Top + Height * 0.5f);
+        _lastCapture = 0;
+        Native.GetCursorPos(out Native.POINT cursor);
+        Render(cursor.X, cursor.Y); // before the overlay becomes visible
         Native.ShowWindow(_window, Native.SW_SHOWNA);
         Native.SetWindowPos(_window, Native.HWND_TOPMOST, Left, Top, Width, Height,
             Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
-        _excluded = Native.SetWindowDisplayAffinity(_window, Native.WDA_EXCLUDEFROMCAPTURE);
+        bool excludeAfterShow = Native.SetWindowDisplayAffinity(_window, Native.WDA_EXCLUDEFROMCAPTURE);
+        if (excludeAfterShow && !_excluded)
+        {
+            _excluded = true;
+            _lastCapture = 0;
+            Render(cursor.X, cursor.Y);
+        }
         _visible = true;
     }
 
@@ -102,22 +116,64 @@ internal sealed unsafe class DesktopSurface : IDisposable
     internal void Render(float aimScreenX, float aimScreenY)
     {
         if (_disposed) return;
-        bool captureWorks = _excluded && Native.BitBlt(
-            _captureDc, 0, 0, Width, Height, _screenDc, Left, Top,
-            Native.SRCCOPY | Native.CAPTUREBLT);
+        long now = Environment.TickCount64;
+        long area = (long)Width * Height;
+        // Capture GDI at a measured, lower rate; moving a lamp only relights
+        // the cached paper pixels. Huge desktop captures can otherwise
+        // dominate GPU/CPU bandwidth even with a very fast SIMD shader.
+        int captureInterval = area >= 7_000_000 ? 145 : area >= 3_000_000 ? 112 : 78;
 
-        PaperPrintRenderer.Render(
-            captureWorks ? (uint*)_captureBits : null,
-            (uint*)_outputBits, _paper, Width, Height,
-            aimScreenX - Left, aimScreenY - Top);
+        if (_excluded && (!_hasMaterial || _lastCapture == 0 || now - _lastCapture >= captureInterval))
+        {
+            if (Native.BitBlt(_captureDc, 0, 0, Width, Height,
+                    _screenDc, Left, Top, Native.SRCCOPY | Native.CAPTUREBLT))
+            {
+                fixed (uint* materialPointer = _material)
+                {
+                    PaperPrintRenderer.PrepareMaterial(
+                        (uint*)_captureBits, materialPointer, _paper, Width, Height);
+                }
+                _hasMaterial = true;
+                _lastCapture = now;
+            }
+            else
+            {
+                _hasMaterial = false;
+            }
+        }
 
+        float focusX = aimScreenX - Left;
+        float focusY = aimScreenY - Top;
+        _light.Update(focusX, focusY);
+
+        if (_excluded && _hasMaterial)
+        {
+            fixed (uint* materialPointer = _material)
+            {
+                PaperPrintRenderer.Shade(
+                    materialPointer, (uint*)_outputBits, _light, Width, Height);
+            }
+        }
+        else
+        {
+            PaperPrintRenderer.ShadeFallback((uint*)_outputBits,
+                _paper, _light, Width, Height);
+        }
+
+        LampPainter.Draw((uint*)_outputBits, Width, Height, focusX, focusY);
         Native.POINT destination = new(Left, Top);
         Native.POINT origin = new(0, 0);
         Native.SIZE size = new(Width, Height);
-        Native.BLENDFUNCTION blend = new() { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
+        Native.BLENDFUNCTION blend = new()
+        {
+            BlendOp = 0,
+            BlendFlags = 0,
+            SourceConstantAlpha = 255,
+            AlphaFormat = 1
+        };
         if (!Native.UpdateLayeredWindow(_window, _screenDc, ref destination, ref size,
                 _outputDc, ref origin, 0, ref blend, Native.ULW_ALPHA))
-            throw new InvalidOperationException("UpdateLayeredWindow failed. Graphics resource or display mode unsupported.");
+            throw new InvalidOperationException("UpdateLayeredWindow failed. The display mode might be unsupported.");
     }
 
     public void Dispose()
@@ -125,8 +181,10 @@ internal sealed unsafe class DesktopSurface : IDisposable
         if (_disposed) return;
         _disposed = true;
         if (_window != 0) Native.DestroyWindow(_window);
-        if (_captureDc != 0 && _oldCaptureBitmap != 0) Native.SelectObject(_captureDc, _oldCaptureBitmap);
-        if (_outputDc != 0 && _oldOutputBitmap != 0) Native.SelectObject(_outputDc, _oldOutputBitmap);
+        if (_captureDc != 0 && _oldCaptureBitmap != 0)
+            Native.SelectObject(_captureDc, _oldCaptureBitmap);
+        if (_outputDc != 0 && _oldOutputBitmap != 0)
+            Native.SelectObject(_outputDc, _oldOutputBitmap);
         if (_captureBitmap != 0) Native.DeleteObject(_captureBitmap);
         if (_outputBitmap != 0) Native.DeleteObject(_outputBitmap);
         if (_captureDc != 0) Native.DeleteDC(_captureDc);
