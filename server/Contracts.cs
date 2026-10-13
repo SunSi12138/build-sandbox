@@ -39,6 +39,8 @@ public sealed record InspectionQuery(string? PointId = null, string? CommunityId
 public sealed record IssueQuery(string? Status = null, string? CommunityId = null, string? PointId = null, string? InspectionId = null, bool Overdue = false, bool DueSoon = false, string? From = null, string? To = null, string? Q = null, int Page = 1, int PageSize = 30);
 
 
+public sealed record PointPhotosRequest(string[] PhotoIds);
+public sealed record PointStatusRequest(bool? Disabled);
 public sealed record PointPromoteRequest(string Frequency = "irregular");
 public sealed record InspectionUpdateRequest(string Date, string Inspector, string? NoticeNumber = null, string? Notes = null);
 public sealed record InspectionCountsDto(int All, int None, int Pending, int Feedback, int Closed, int IssueCount);

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { PointDetailDto, PointWriteRequest, PhotoUploadDto } from '~/types/api'
+import type { PointDetailDto, PhotoUploadDto } from '~/types/api'
 import { coordinatesText, errorMessage, frequencyLabel, queryText, statusLabel, statusColor } from '~/utils/format'
 const route = useRoute(), toast = useToast()
 const { bootstrap } = useAppData()
@@ -9,10 +9,20 @@ const id = computed(() => queryText(route.params.id))
 const back = computed(() => { const value = queryText(route.query.returnTo); return /^\/points\/?(?:\?|$)/.test(value) ? value : '/points' })
 useHead({ title: computed(() => `${detail.value?.point.name || '点位详情'} · 街道生态环保`) })
 async function load() { if (!id.value) return; loading.value = true; error.value = ''; try { detail.value = await $fetch<PointDetailDto>(`/api/points/${id.value}`); photos.value = detail.value.photos?.map(p => ({ id: p.id, width: p.width, height: p.height })) ?? [] } catch (value) { error.value = errorMessage(value) } finally { loading.value = false } }
-function pointBody(): PointWriteRequest { const point = detail.value!.point; return { name: point.name, communityId: point.communityId, typeId: point.typeId, address: point.address, contact: point.contact, phone: point.phone, frequency: point.frequency, notes: point.notes, disabled: point.disabled, temporary: point.temporary, longitude: point.longitude, latitude: point.latitude, photoIds: photos.value.map(photo => photo.id) } }
-async function updatePhotos(value: PhotoUploadDto[]) { photos.value = value; photoError.value = ''; try { await $fetch(`/api/points/${id.value}`, { method: 'PUT', body: pointBody(), retry: 0 }) } catch (value) { photoError.value = errorMessage(value) } }
+let photoRequestVersion = 0
+async function updatePhotos(value: PhotoUploadDto[]) {
+  photos.value = value
+  const version = ++photoRequestVersion
+  const pointId = id.value
+  photoError.value = ''
+  try {
+    await $fetch(`/api/points/${pointId}/photos`, { method: 'PUT', body: { photoIds: value.map(photo => photo.id) }, retry: 0 })
+  } catch (error) {
+    if (version === photoRequestVersion && pointId === id.value) photoError.value = errorMessage(error)
+  }
+}
 async function saved() { toast.add({ title: '已保存', color: 'success', duration: 2000 }); await load() }
-async function toggleDisabled() { if (!detail.value || changing.value) return; changing.value = true; try { await $fetch(`/api/points/${id.value}`, { method: 'PUT', body: { ...pointBody(), disabled: !detail.value.point.disabled }, retry: 0 }); await saved() } catch (value) { toast.add({ title: errorMessage(value), color: 'error', duration: 0 }) } finally { changing.value = false } }
+async function toggleDisabled() { if (!detail.value || changing.value) return; changing.value = true; try { await $fetch(`/api/points/${id.value}/status`, { method: 'PUT', body: { disabled: !detail.value.point.disabled }, retry: 0 }); await saved() } catch (value) { toast.add({ title: errorMessage(value), color: 'error', duration: 0 }) } finally { changing.value = false } }
 async function remove() { deleting.value = true; deleteError.value = ''; try { await $fetch(`/api/points/${id.value}`, { method: 'DELETE', query: { confirm: true }, retry: 0 }); deleteOpen.value = false; toast.add({ title: '已删除', duration: 2000 }); await navigateTo(back.value) } catch (value) { deleteError.value = errorMessage(value) } finally { deleting.value = false } }
 const menu = computed(() => [ ...(detail.value?.point.temporary ? [{ label: '转为常态点位', onSelect: () => { promoteOpen.value = true } }] : []), { label: detail.value?.point.disabled ? '启用点位' : '停用点位', onSelect: () => { void toggleDisabled() } }, { label: '删除点位', color: 'error' as const, onSelect: () => { deleteError.value = ''; deleteOpen.value = true } } ])
 watch(id, load, { immediate: true })

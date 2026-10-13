@@ -207,6 +207,7 @@ internal static class Startup
             }
         });
         builder.Logging.ClearProviders();
+        builder.Logging.SetMinimumLevel(LogLevel.Warning);
         builder.Logging.AddSimpleConsole(log => { log.SingleLine = true; log.TimestampFormat = "HH:mm:ss "; });
         builder.Services.ConfigureHttpJsonOptions(json =>
         {

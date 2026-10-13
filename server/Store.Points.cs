@@ -118,6 +118,38 @@ public sealed partial class Store
         return actualId;
     }
 
+    // Photo completion must never replay a stale point edit. This operation is
+    // additive/idempotent for this owner; removal remains an explicit DELETE.
+    public PointDto AttachPointPhotos(string id, PointPhotosRequest request)
+    {
+        lock (_gate)
+        {
+            PrepareWrite();
+            _ = GetPointInternal(id);
+            if (request.PhotoIds is null) throw new ApiException(400, "请提供照片编号列表。");
+            using (var transaction = _db.BeginTransaction())
+            {
+                AttachPhotos(request.PhotoIds, "point", null, null, transaction, pointId: id);
+                transaction.Commit();
+            }
+            return GetPointInternal(id);
+        }
+    }
+
+    public PointDto SetPointDisabled(string id, PointStatusRequest request)
+    {
+        lock (_gate)
+        {
+            PrepareWrite();
+            _ = GetPointInternal(id);
+            if (request.Disabled is null) throw new ApiException(400, "请提供停用状态。");
+            using var command = Command("UPDATE points SET disabled=$disabled WHERE id=$id;", null,
+                ("$id", id), ("$disabled", request.Disabled.Value ? 1 : 0));
+            RequireChanged(command.ExecuteNonQuery(), "点位");
+            return GetPointInternal(id);
+        }
+    }
+
     private static void ValidateFrequency(string frequency)
     {
         if (frequency is not ("weekly" or "monthly" or "quarterly" or "irregular")) throw new ApiException(400, "排查频次无效。");

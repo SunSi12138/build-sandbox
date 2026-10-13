@@ -15,6 +15,9 @@ interface CampaignState {
 const state = reactive<CampaignState>({ name: '', typeId: '', communityId: '', location: '', date: todayLocal(), endDate: '', organizer: '', participants: '', participantCount: '', vehicleCount: '', garbageTons: '', areaSqm: '', content: '', outcome: '', notes: '', beforePhotos: [], processPhotos: [], afterPhotos: [] })
 const saving = ref(false), loading = ref(true), error = ref(''), savedAt = ref(''), storageFailed = ref(false), leaveOpen = ref(false)
 const phaseBusy = reactive({ before: false, process: false, after: false })
+const phaseFailed = reactive({ before: false, process: false, after: false })
+const photosFailed = computed(() => Object.values(phaseFailed).some(Boolean))
+const formDisabled = computed(() => loading.value || saving.value)
 const photosBusy = computed(() => Object.values(phaseBusy).some(Boolean))
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.campaignTypes ?? []).map(item => ({ label: item.name, value: item.id })))
@@ -94,10 +97,11 @@ async function save() {
 }
 function beforeUnload(event: BeforeUnloadEvent) {
   persist()
-  if (!completed && (photosBusy.value || Boolean(props.initial && JSON.stringify(state) !== original))) { event.preventDefault(); event.returnValue = '' }
+  if (!completed && (saving.value || photosBusy.value || Boolean(props.initial && JSON.stringify(state) !== original))) { event.preventDefault(); event.returnValue = '' }
 }
 function finishLeave(leave: boolean) { leaveOpen.value = false; leaveResolve?.(leave); leaveResolve = undefined }
 onBeforeRouteLeave(() => {
+  if (saving.value) return false
   if (completed || (!photosBusy.value && (!props.initial || JSON.stringify(state) === original))) return true
   leaveOpen.value = true
   return new Promise<boolean>(resolve => { leaveResolve = resolve })
@@ -109,28 +113,28 @@ onBeforeUnmount(() => { persist(); window.removeEventListener('beforeunload', be
   <p v-if="!loading && (!communities.length || !types.length)" class="text-sm text-warning">请先维护社区和整治类型</p>
   <UForm :state="state" :validate="validate" class="form-sections" @submit="save">
     <section class="form-section"><h2>基本信息</h2><div class="field-grid">
-      <UFormField label="整治名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="campaign-name" /></UFormField>
-      <UFormField label="整治类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" data-testid="campaign-type" /></UFormField>
-      <UFormField label="所属社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" data-testid="campaign-community" /></UFormField>
-      <UFormField label="整治地点" name="location" required class="field-full"><UInput v-model="state.location" maxlength="1000" class="w-full" data-testid="campaign-location" /></UFormField>
-      <UFormField label="整治日期" name="date" required><UInput v-model="state.date" type="date" class="w-full" data-testid="campaign-date" /></UFormField>
-      <UFormField label="结束日期" name="endDate"><UInput v-model="state.endDate" type="date" :min="state.date" class="w-full" /></UFormField>
-      <UFormField label="组织单位" name="organizer" class="field-full"><UInput v-model="state.organizer" maxlength="200" class="w-full" /></UFormField>
-      <UFormField label="参加单位及人员" name="participants" class="field-full"><UTextarea v-model="state.participants" :rows="2" maxlength="2000" class="w-full" /></UFormField>
-      <UFormField label="参加人数（人）" name="participantCount"><UInput v-model="state.participantCount" type="number" inputmode="numeric" min="0" step="1" class="w-full" data-testid="campaign-people" /></UFormField>
-      <UFormField label="出动车辆（辆）" name="vehicleCount"><UInput v-model="state.vehicleCount" type="number" inputmode="numeric" min="0" step="1" class="w-full" /></UFormField>
-      <UFormField label="清运垃圾（吨）" name="garbageTons"><UInput v-model="state.garbageTons" type="number" inputmode="decimal" min="0" step="0.01" class="w-full" data-testid="campaign-garbage" /></UFormField>
-      <UFormField label="清理面积（㎡）" name="areaSqm"><UInput v-model="state.areaSqm" type="number" inputmode="decimal" min="0" step="0.01" class="w-full" /></UFormField>
+      <UFormField label="整治名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="campaign-name"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="整治类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" data-testid="campaign-type"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="所属社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" data-testid="campaign-community"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="整治地点" name="location" required class="field-full"><UInput v-model="state.location" maxlength="1000" class="w-full" data-testid="campaign-location"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="整治日期" name="date" required><UInput v-model="state.date" type="date" class="w-full" data-testid="campaign-date"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="结束日期" name="endDate"><UInput v-model="state.endDate" type="date" :min="state.date" class="w-full"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="组织单位" name="organizer" class="field-full"><UInput v-model="state.organizer" maxlength="200" class="w-full"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="参加单位及人员" name="participants" class="field-full"><UTextarea v-model="state.participants" :rows="2" maxlength="2000" class="w-full"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="参加人数（人）" name="participantCount"><UInput v-model="state.participantCount" type="number" inputmode="numeric" min="0" step="1" class="w-full" data-testid="campaign-people"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="出动车辆（辆）" name="vehicleCount"><UInput v-model="state.vehicleCount" type="number" inputmode="numeric" min="0" step="1" class="w-full"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="清运垃圾（吨）" name="garbageTons"><UInput v-model="state.garbageTons" type="number" inputmode="decimal" min="0" step="0.01" class="w-full" data-testid="campaign-garbage"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="清理面积（㎡）" name="areaSqm"><UInput v-model="state.areaSqm" type="number" inputmode="decimal" min="0" step="0.01" class="w-full"  :disabled="formDisabled" /></UFormField>
     </div></section>
     <section class="form-section"><h2>整治情况</h2><div class="field-grid">
-      <UFormField label="整治内容" name="content" required class="field-full"><UTextarea v-model="state.content" :rows="4" maxlength="12000" class="w-full" data-testid="campaign-content" /></UFormField>
-      <UFormField label="整治成效" name="outcome" class="field-full"><UTextarea v-model="state.outcome" :rows="3" maxlength="12000" class="w-full" /></UFormField>
-      <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="2" maxlength="8000" class="w-full" /></UFormField>
+      <UFormField label="整治内容" name="content" required class="field-full"><UTextarea v-model="state.content" :rows="4" maxlength="12000" class="w-full" data-testid="campaign-content"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="整治成效" name="outcome" class="field-full"><UTextarea v-model="state.outcome" :rows="3" maxlength="12000" class="w-full"  :disabled="formDisabled" /></UFormField>
+      <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="2" maxlength="8000" class="w-full"  :disabled="formDisabled" /></UFormField>
     </div></section>
-    <section class="form-section" data-testid="campaign-before"><h2>整治前照片</h2><PhotoUploader v-model="state.beforePhotos" phase="before" label="整治前" :max="20" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="phaseBusy.before = $event" /></section>
-    <section class="form-section" data-testid="campaign-process"><h2>整治中照片</h2><PhotoUploader v-model="state.processPhotos" phase="process" label="整治中" :max="20" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="phaseBusy.process = $event" /></section>
-    <section class="form-section" data-testid="campaign-after"><h2>整治后照片</h2><PhotoUploader v-model="state.afterPhotos" phase="after" label="整治后" :max="20" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="phaseBusy.after = $event" /></section>
-    <div class="form-actions"><span class="draft-state" aria-live="polite">{{ photosBusy ? '照片上传中' : props.initial ? '编辑整治' : storageFailed ? '草稿未保存' : savedAt ? `草稿已保存 ${savedAt}` : '草稿' }}</span><UButton type="submit" label="保存" :loading="saving" :disabled="loading || photosBusy || !communities.length || !types.length" data-testid="campaign-save" /></div>
+    <section class="form-section" data-testid="campaign-before"><h2>整治前照片</h2><PhotoUploader v-model="state.beforePhotos" phase="before" label="整治前" :max="20" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="phaseBusy.before = $event" @failed="phaseFailed.before = $event" /></section>
+    <section class="form-section" data-testid="campaign-process"><h2>整治中照片</h2><PhotoUploader v-model="state.processPhotos" phase="process" label="整治中" :max="20" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="phaseBusy.process = $event" @failed="phaseFailed.process = $event" /></section>
+    <section class="form-section" data-testid="campaign-after"><h2>整治后照片</h2><PhotoUploader v-model="state.afterPhotos" phase="after" label="整治后" :max="20" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="phaseBusy.after = $event" @failed="phaseFailed.after = $event" /></section>
+    <div class="form-actions"><span class="draft-state" aria-live="polite">{{ photosFailed ? '有照片未完成，请重试或移除' : photosBusy ? '照片处理中' : props.initial ? '编辑整治' : storageFailed ? '草稿未保存' : savedAt ? `草稿已保存 ${savedAt}` : '草稿' }}</span><UButton type="submit" label="保存" :loading="saving" :disabled="loading || photosBusy || !communities.length || !types.length" data-testid="campaign-save" /></div>
   </UForm>
   <UModal v-model:open="leaveOpen" title="离开页面？" :description="photosBusy ? '离开后将中断照片上传' : '未保存的更改将丢失'" :dismissible="false" :close="false"><template #footer><UButton label="取消" color="neutral" variant="outline" @click="finishLeave(false)" /><UButton label="离开" color="error" @click="finishLeave(true)" /></template></UModal>
 </template>

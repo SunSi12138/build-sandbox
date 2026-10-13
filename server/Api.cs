@@ -82,6 +82,12 @@ public static class Api
         app.MapGet("/api/points/{id}", point);
         app.MapPost("/api/points", createPoint);
         app.MapPut("/api/points/{id}", updatePoint);
+        RequestDelegate pointPhotos = async context => await Write(context,
+            store.AttachPointPhotos(Id(context), await Read(context, AppJsonContext.Default.PointPhotosRequest)), AppJsonContext.Default.PointDto);
+        RequestDelegate pointStatus = async context => await Write(context,
+            store.SetPointDisabled(Id(context), await Read(context, AppJsonContext.Default.PointStatusRequest)), AppJsonContext.Default.PointDto);
+        app.MapPut("/api/points/{id}/photos", pointPhotos);
+        app.MapPut("/api/points/{id}/status", pointStatus);
         app.MapDelete("/api/points/{id}", deletePoint);
         RequestDelegate promotePoint = async context => await Write(context, store.PromotePoint(Id(context), await Read(context, AppJsonContext.Default.PointPromoteRequest)), AppJsonContext.Default.PointDto);
         app.MapPost("/api/points/{id}/promote", promotePoint);
