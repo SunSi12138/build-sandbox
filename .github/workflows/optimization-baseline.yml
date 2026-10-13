@@ -48,33 +48,17 @@ jobs:
           retention-days: 7
       - name: Package isolated SDK and package cache (no credentials)
         run: |
-          tar -czf "$RUNNER_TEMP/verification-dotnet.tar.gz" -C .verification dotnet nuget
+          tar -czf "$RUNNER_TEMP/verification-dotnet.tar.gz" -C .verification dotnet
+          tar -czf "$RUNNER_TEMP/verification-nuget.tar.gz" -C .verification nuget
       - uses: actions/upload-artifact@v7
         with:
-          name: optimization-dotnet-tools
+          name: optimization-dotnet-sdk
           path: ${{ runner.temp }}/verification-dotnet.tar.gz
           compression-level: 0
           retention-days: 3
-  web-tools:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - run: npm ci
-        working-directory: web
-      - name: Package locked local development dependencies
-        run: |
-          mkdir -p .verification/bin
-          cp "$(command -v node)" .verification/bin/node
-          tar -czf "$RUNNER_TEMP/verification-web.tar.gz" web/node_modules .verification/bin
       - uses: actions/upload-artifact@v7
         with:
-          name: optimization-web-tools
-          path: ${{ runner.temp }}/verification-web.tar.gz
+          name: optimization-nuget-cache
+          path: ${{ runner.temp }}/verification-nuget.tar.gz
           compression-level: 0
           retention-days: 3
