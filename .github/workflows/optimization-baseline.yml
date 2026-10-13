@@ -1,0 +1,80 @@
+name: Optimization baseline (temporary)
+
+on:
+  push:
+    branches: [hbtool]
+    paths: ['.github/workflows/optimization-baseline.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    env:
+      DOTNET_INSTALL_DIR: ${{ github.workspace }}/.verification/dotnet
+      NUGET_PACKAGES: ${{ github.workspace }}/.verification/nuget
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Freeze source before behavior changes
+        run: |
+          mkdir -p baseline
+          git archive --format=tar.gz --output=baseline/source.tar.gz HEAD
+          git rev-parse HEAD > baseline/commit.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: optimization-source
+          path: baseline/
+          retention-days: 7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Baseline unit tests and AOT
+        run: |
+          dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory baseline/tests -warnaserror
+          dotnet publish server/StreetEcoTool.csproj -c Release -r linux-x64 -o baseline/publish -p:PublishAot=true -p:SelfContained=true -warnaserror
+          python3 tests/api-smoke.py --executable baseline/publish/StreetEcoTool --report baseline/tests/api-smoke-report.json
+          python3 tests/word-smoke.py --executable baseline/publish/StreetEcoTool --report baseline/tests/word-smoke-report.json
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: optimization-baseline-tests
+          path: baseline/
+          retention-days: 7
+      - name: Package isolated SDK and package cache (no credentials)
+        run: |
+          tar -czf "$RUNNER_TEMP/verification-dotnet.tar.gz" -C .verification dotnet nuget
+      - uses: actions/upload-artifact@v7
+        with:
+          name: optimization-dotnet-tools
+          path: ${{ runner.temp }}/verification-dotnet.tar.gz
+          compression-level: 0
+          retention-days: 3
+  web-tools:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - run: npm ci
+        working-directory: web
+      - name: Package locked local development dependencies
+        run: |
+          mkdir -p .verification/bin
+          cp "$(command -v node)" .verification/bin/node
+          tar -czf "$RUNNER_TEMP/verification-web.tar.gz" web/node_modules .verification/bin
+      - uses: actions/upload-artifact@v7
+        with:
+          name: optimization-web-tools
+          path: ${{ runner.temp }}/verification-web.tar.gz
+          compression-level: 0
+          retention-days: 3
