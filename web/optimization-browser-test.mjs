@@ -123,9 +123,13 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       const leave = page.getByRole('dialog', { name: '照片尚未上传完成', exact: true })
       await leave.getByRole('button', { name: '离开', exact: true }).click()
       await page.waitForURL('**/#/points')
+      // Hash changes before the route guard resolves. Wait for actual navigation
+      // and unmount; releasing the response on hash alone races acceptance.
+      await expect(page.getByRole('heading', { name: '点位管理', exact: true })).toBeVisible()
+      await expect(page.getByTestId('inspection-save')).toHaveCount(0)
       paused.release()
       await page.unroute('**/api/photos/*/thumb', paused.handler)
-      await expect.poll(() => serverPhotoStatus(photo.id)).toBe(404)
+      await expect.poll(() => serverPhotoStatus(photo.id), { timeout: 10000 }).toBe(404)
       assert(!JSON.stringify(await draft()).includes(photo.id))
     })
 

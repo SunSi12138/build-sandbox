@@ -710,7 +710,7 @@ public static class WordExporter
                 asset = new(photo.Photo.Id, "rPhoto" + number, "media/image" + number + ".jpg", photo.FilePath, dimensions);
                 _assets.Add(asset);
             }
-            var scale = Math.Min(maximumWidth / (double)asset.Dimensions.Width, (_landscape ? 3400 : 5100) / (double)asset.Dimensions.Height);
+            var scale = Math.Min(maximumWidth / (double)asset.Dimensions.Width, (_landscape ? 3000 : 5100) / (double)asset.Dimensions.Height);
             var cx = Math.Max(1, (long)Math.Round(asset.Dimensions.Width * scale * 635));
             var cy = Math.Max(1, (long)Math.Round(asset.Dimensions.Height * scale * 635));
             Start("p"); Start("pPr"); Value("pStyle", "Photo"); Spacing("Photo"); Start("ind"); Attr("firstLine", "0"); End(); Value("jc", "center"); End();
