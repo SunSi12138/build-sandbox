@@ -317,12 +317,10 @@ internal sealed unsafe class GpuOverlay : IDesktopOverlay
         try
         {
             nint backBuffer = 0;
-            fixed (Guid* guid = &textureGuid)
-            {
-                Check(((delegate* unmanaged[Stdcall]<nint, uint, Guid*, nint*, int>)
-                    Method(_swapChain, 9))(_swapChain, 0, guid, &backBuffer),
-                    "IDXGISwapChain.GetBuffer");
-            }
+            Guid* guid = &textureGuid;
+            Check(((delegate* unmanaged[Stdcall]<nint, uint, Guid*, nint*, int>)
+                Method(_swapChain, 9))(_swapChain, 0, guid, &backBuffer),
+                "IDXGISwapChain.GetBuffer");
             texture = backBuffer;
 
             nint renderTarget = 0;
