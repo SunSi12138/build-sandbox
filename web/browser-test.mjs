@@ -9,6 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { verifyWordDownloads } from './word-browser-test.mjs'
+import { verifyOptimization } from './optimization-browser-test.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const executableArgument = process.argv.indexOf('--executable')
@@ -628,6 +629,7 @@ try {
     assert(await legacy.locator('#unsupported-browser').isVisible()); assert((await legacy.locator('#unsupported-browser').textContent()).includes('请升级浏览器'))
     await legacy.screenshot({ path: path.join(evidence, 'unsupported-browser.png'), fullPage: true, animations: 'disabled' }); await legacy.close()
   })
+  await verifyOptimization({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg })
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')
   assert.deepEqual(report.pageErrors, [], 'Unhandled browser errors occurred')
   assert.deepEqual(report.consoleErrors.filter(entry => !entry.expectedWasmFailure), [], 'Unexpected browser console errors occurred')
