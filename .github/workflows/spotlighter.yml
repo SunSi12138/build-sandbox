@@ -43,6 +43,13 @@ jobs:
           Write-Host "Native executable exists, bytes: $size"
           Get-ChildItem ./artifacts/publish | Select-Object Name, Length
 
+      - name: Headless pixel-renderer smoke test (AOT exe)
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath './artifacts/publish/Spotlighter.exe' -ArgumentList '--self-test' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Native AOT render self-test returned $($process.ExitCode)" }
+          Write-Host 'Native AOT print renderer self-test passed.'
+
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:

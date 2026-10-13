@@ -27,8 +27,13 @@ internal static unsafe class Program
     private static float _aimX, _aimY;
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--self-test")
+        {
+            Environment.ExitCode = SelfTest.Run();
+            return;
+        }
         if (!OperatingSystem.IsWindows()) return;
 
         using Mutex singleInstance = new(true, "Local\\Spotlighter.6D5C334E", out bool firstInstance);
