@@ -106,7 +106,16 @@ public sealed class WordStoreTests
         Assert.Null(returned.Issue.ClosedDate);
 
         var ledger = fixture.Store.ExportLedgerWord(Day(-3), Day(0));
-        var text = DocumentText(ledger.FilePath);
+        // Reassemble logical columns: continuation context between physical rows
+        // must not make a complete historical field appear to be truncated.
+        using var archive = ZipFile.OpenRead(ledger.FilePath);
+        using var input = archive.GetEntry("word/document.xml")!.Open();
+        var xml = XDocument.Load(input);
+        XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var table = xml.Descendants(w + "tbl").Single(t => t.Element(w + "tblGrid")?.Elements().Count() == 9);
+        var rows = table.Elements(w + "tr").Skip(1).SkipLast(1).ToArray();
+        var text = string.Join("\n", Enumerable.Range(0, 9).Select(column => string.Concat(rows.SelectMany(row => row.Elements(w + "tc").ElementAt(column).Descendants(w + "t")).Select(t => t.Value))))
+            + string.Concat(table.Elements(w + "tr").Last().Descendants(w + "t").Select(t => t.Value));
         Assert.Contains("待整改", text);
         Assert.Contains("历次反馈", text);
         Assert.Contains(Day(-2), text);

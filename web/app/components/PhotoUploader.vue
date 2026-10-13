@@ -211,14 +211,26 @@ async function confirmRemove() {
   } finally { if (!disposed) deleting.value = false }
 }
 
-onBeforeUnmount(() => {
-  disposed = true
-  for (const job of jobs.value) {
+function cancelPendingJobs() {
+  // Accepted navigation can precede unmount while Nuxt loads the next page.
+  // Invalidate unpublished jobs before a late thumbnail completion can publish.
+  const pending = [...jobs.value]
+  for (const job of pending) job.controller.abort()
+  jobs.value = []
+  for (const job of pending) {
     job.controller.abort()
     // Only unpublished jobs are in this queue. If best-effort cleanup fails,
     // existing server orphan maintenance retains its seven-day safety window.
     void job.task?.then(async () => { if (job.uploaded) await deleteServerPhoto(job.uploaded) }).catch(() => {})
   }
+}
+const router = useRouter()
+watch(() => router.currentRoute.value.path, (next, previous) => {
+  if (next !== previous) cancelPendingJobs()
+}, { flush: 'sync' })
+onBeforeUnmount(() => {
+  disposed = true
+  cancelPendingJobs()
   emit('busy', false)
   emit('failed', false)
 })

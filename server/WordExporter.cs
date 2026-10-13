@@ -19,13 +19,13 @@ public static class WordExporter
         using var document = new Document(destination, false, "排查记录单", settings.StreetName);
         document.Paragraph("生态环保排查记录单", "Title");
         WriteInspectionInfo(document, detail.Inspection);
-        document.Paragraph("一、发现问题", "Heading1");
+        document.Section("发现问题");
         if (detail.Issues.Length == 0) document.Paragraph("本次排查未发现问题。");
         else WriteIssues(document, detail.Issues);
         WriteSitePhotos(document, detail, photos, false);
         if (!string.IsNullOrWhiteSpace(detail.Inspection.Notes))
         {
-            document.Paragraph("三、备注", "Heading1");
+            document.Section("备注");
             document.Paragraph(detail.Inspection.Notes);
         }
     }
@@ -112,10 +112,10 @@ public static class WordExporter
             };
             var actions = detail.IssueDetails?.FirstOrDefault(item => item.Issue.Id == issue.Id)?.Actions ?? [];
             if (actions.Any(action => action.Kind == "return"))
-                values.Add(["办理过程", string.Join("\n", actions.OrderBy(action => action.Date, StringComparer.Ordinal)
-                    .Select(action => $"{action.Date}　{ActionName(action.Kind)}：{action.Notes}"))]);
-            document.Table(null, values, [20, 80], labelColumn: true);
-            WriteIssuePhotoTables(document, IssuePhotos(photos, issue));
+                values.Add(["办理过程", string.Join("\n", actions.Select(action => $"{action.Date}　{ActionName(action.Kind)}：{action.Notes}"))]);
+            var context = PhotoContext(issue, index + 1);
+            document.Table(null, values, [20, 80], labelColumn: true, context: context);
+            WriteIssuePhotoTables(document, IssuePhotos(photos, issue), context, actions);
         }
         var reviewed = detail.Issues.Select(issue => issue.ReviewDate ?? issue.ClosedDate ?? "").Order(StringComparer.Ordinal).Last();
         WriteSignature(document, settings, reviewed);
@@ -132,7 +132,7 @@ public static class WordExporter
             ["整治地点", campaign.Location], ["整治日期", DateRange(campaign.Date, campaign.EndDate)],
             ["组织单位", campaign.Organizer], ["参加单位及人员", campaign.Participants]
         ], [24, 76], labelColumn: true);
-        document.Paragraph("一、整治内容", "Heading1");
+        document.Section("整治内容");
         document.Paragraph(campaign.Content);
         var quantities = new List<(string Label, string Value)>();
         if (campaign.ParticipantCount is not null) quantities.Add(("参加人数（人）", Number(campaign.ParticipantCount)));
@@ -141,21 +141,22 @@ public static class WordExporter
         if (campaign.AreaSqm is not null) quantities.Add(("清理面积（㎡）", DecimalNumber(campaign.AreaSqm)));
         if (quantities.Count > 0 || !string.IsNullOrWhiteSpace(campaign.Outcome))
         {
-            document.Paragraph("二、整治成效", "Heading1");
+            document.Section("整治成效");
             if (quantities.Count > 0) document.Table(quantities.Select(item => item.Label).ToArray(),
                 [quantities.Select(item => item.Value).ToArray()], Enumerable.Repeat(1, quantities.Count).ToArray(), centeredColumns: Enumerable.Range(0, quantities.Count).ToArray());
             if (!string.IsNullOrWhiteSpace(campaign.Outcome)) document.Paragraph(campaign.Outcome);
         }
+        // Keep short notes with the written record, not on a tail page after photographs.
+        if (!string.IsNullOrWhiteSpace(campaign.Notes))
+        {
+            document.Section("备注");
+            document.Paragraph(campaign.Notes);
+        }
         var selected = SortPhotos(photos.Where(photo => photo.Photo.CampaignId == campaign.Id));
         if (selected.Length > 0)
         {
-            document.Paragraph("三、整治照片", "Heading1");
-            WriteCampaignPhotoTables(document, selected);
-        }
-        if (!string.IsNullOrWhiteSpace(campaign.Notes))
-        {
-            document.Paragraph("备注", "Heading1");
-            document.Paragraph(campaign.Notes);
+            document.Section("整治照片");
+            WriteCampaignPhotoTables(document, selected, campaign.Name + " · " + campaign.Date);
         }
     }
 
@@ -176,7 +177,7 @@ public static class WordExporter
         var pending = ledger.Issues.Count(issue => issue.Status == "pending");
         var overdue = ledger.Issues.Count(issue => issue.Status != "closed" && issue.Overdue);
         document.Table(["序号", "排查日期", "点位名称", "所属社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论"], rows,
-            [5, 9, 13, 9, 22, 9, 8, 13, 12], centeredColumns: [0, 1, 5, 6],
+            [5, 9, 13, 9, 22, 9, 8, 13, 12], centeredColumns: [0, 1, 5, 6], repeatColumns: [1, 2, 3],
             summary: $"共 {ledger.Issues.Length} 条，已闭环 {closed}，待复查 {feedback}，待整改 {pending}，其中逾期 {overdue}");
         if (!ledger.IncludePhotos) return;
         var attachments = ledger.Issues.Select((issue, index) => (Issue: issue, Index: index, Photos: IssuePhotos(ledger.Photos, issue)))
@@ -186,7 +187,8 @@ public static class WordExporter
         foreach (var item in attachments)
         {
             document.Paragraph($"（{ChineseNumber(item.Index + 1)}）问题 {item.Index + 1}　{item.Issue.PointName}", "Heading2");
-            WriteIssuePhotoTables(document, item.Photos);
+            var actions = ledger.History?.FirstOrDefault(history => history.IssueId == item.Issue.Id)?.Actions ?? [];
+            WriteIssuePhotoTables(document, item.Photos, PhotoContext(item.Issue, item.Index + 1), actions);
         }
     }
 
@@ -202,7 +204,7 @@ public static class WordExporter
         });
         var normal = ledger.Inspections.Count(inspection => inspection.Result == "normal");
         document.Table(["序号", "排查日期", "点位名称", "所属社区", "点位类型", "排查人", "排查结果", "问题数", "整改情况", "通知单编号"],
-            rows, [5, 10, 18, 11, 10, 8, 9, 7, 12, 10], centeredColumns: [0, 1, 6, 7, 8],
+            rows, [5, 10, 18, 11, 10, 8, 9, 7, 12, 10], centeredColumns: [0, 1, 6, 7, 8], repeatColumns: [1, 2, 3],
             summary: $"共 {ledger.Inspections.Length} 次排查，正常 {normal}，发现问题 {ledger.Inspections.Length - normal}；问题共 {ledger.Inspections.Sum(item => item.IssueCount)} 项，已闭环 {ledger.Inspections.Sum(item => item.ClosedCount)}");
     }
 
@@ -218,7 +220,7 @@ public static class WordExporter
             DecimalNumber(campaign.AreaSqm), CampaignSummary(campaign)
         });
         document.Table(["序号", "整治日期", "整治名称", "类型", "所属社区", "整治地点", "参加人数", "出动车辆", "清运垃圾（吨）", "清理面积（㎡）", "整治内容及成效（摘要）"],
-            rows, [4, 9, 14, 8, 8, 11, 6, 6, 7, 7, 20], centeredColumns: [0, 1], rightAlignedColumns: [6, 7, 8, 9],
+            rows, [4, 9, 14, 8, 8, 11, 6, 6, 7, 7, 20], centeredColumns: [0, 1], rightAlignedColumns: [6, 7, 8, 9], repeatColumns: [1, 2, 4],
             summary: $"共 {ledger.Campaigns.Length} 次整治，累计参加 {ledger.Campaigns.Sum(item => (long)(item.ParticipantCount ?? 0))} 人、出动车辆 {ledger.Campaigns.Sum(item => (long)(item.VehicleCount ?? 0))} 辆、清运垃圾 {DecimalNumber(ledger.Campaigns.Sum(item => item.GarbageTons ?? 0))} 吨、清理面积 {DecimalNumber(ledger.Campaigns.Sum(item => item.AreaSqm ?? 0))} ㎡");
         if (!ledger.IncludePhotos) return;
         var attachments = ledger.Campaigns.Select((campaign, index) => (Campaign: campaign, Index: index,
@@ -228,7 +230,7 @@ public static class WordExporter
         foreach (var item in attachments)
         {
             document.Paragraph($"（{ChineseNumber(item.Index + 1)}）{item.Campaign.Name}", "Heading2");
-            WriteCampaignPhotoTables(document, item.Photos);
+            WriteCampaignPhotoTables(document, item.Photos, item.Campaign.Name + " · " + item.Campaign.Date);
         }
     }
 
@@ -274,7 +276,7 @@ public static class WordExporter
     private static void WriteSignature(Document document, SettingsDto settings, string date)
     {
         var unit = string.IsNullOrWhiteSpace(settings.IssuingUnit) ? settings.StreetName : settings.IssuingUnit;
-        if (!string.IsNullOrWhiteSpace(unit)) document.Paragraph(unit, align: "right");
+        if (!string.IsNullOrWhiteSpace(unit)) document.Paragraph(unit, align: "right", keepNext: !string.IsNullOrWhiteSpace(date));
         if (!string.IsNullOrWhiteSpace(date)) document.Paragraph(ChineseDate(date), align: "right");
     }
 
@@ -326,15 +328,46 @@ public static class WordExporter
         .ThenBy(photo => photo.Photo.Id, StringComparer.Ordinal).ToArray();
     private static WordPhoto[] IssuePhotos(WordPhoto[] photos, IssueDto issue) => SortPhotos(photos.Where(photo => photo.Photo.IssueId == issue.Id ||
         (photo.Photo.InspectionId == issue.InspectionId && photo.Photo.Phase == "site")));
-    private static void WriteIssuePhotoTables(Document document, WordPhoto[] photos)
+    private static string PhotoContext(IssueDto issue, int number) =>
+        issue.PointName + " · " + issue.InspectionDate + " · 问题 " + Number(number);
+
+    private static void WriteIssuePhotoTables(Document document, WordPhoto[] photos, string context, IssueActionDto[] actions)
     {
-        document.Comparison(photos.Where(photo => photo.Photo.Phase == "site").ToArray(), photos.Where(photo => photo.Photo.Phase == "after").ToArray(), "整改前", "整改后");
-        document.Gallery(photos.Where(photo => photo.Photo.Phase == "review").Select(photo => (photo, "")).ToArray(), "复查");
+        var site = photos.Where(photo => photo.Photo.Phase == "site").ToArray();
+        var assigned = new HashSet<string>(StringComparer.Ordinal);
+        var feedbackRound = 0;
+        var reviewRound = 0;
+        var siteShown = false;
+        // Rounds follow recorded action order, not upload time or image position.
+        foreach (var action in actions)
+        {
+            if (action.Kind is not ("feedback" or "review")) continue;
+            var feedback = action.Kind == "feedback";
+            var round = feedback ? ++feedbackRound : ++reviewRound;
+            var phase = feedback ? "after" : "review";
+            var selected = photos.Where(photo => photo.Photo.ActionId == action.Id && photo.Photo.Phase == phase).ToArray();
+            foreach (var photo in selected) assigned.Add(photo.Photo.Id);
+            var heading = (feedback ? "整改后 · 第 " : "复查 · 第 ") + Number(round) +
+                (feedback ? " 次反馈 · " : " 次复查 · ") + action.Date;
+            if (feedback && !siteShown)
+            {
+                document.Comparison(site, selected, "整改前", heading, context);
+                siteShown = true;
+            }
+            else document.Gallery(selected.Select(photo => (photo, "")).ToArray(), context + "\n" + heading);
+        }
+        if (!siteShown) document.Gallery(site.Select(photo => (photo, "")).ToArray(), context + "\n整改前 · 现场");
+        foreach (var phase in new[] { "after", "review" })
+        {
+            var unassigned = photos.Where(photo => photo.Photo.Phase == phase && !assigned.Contains(photo.Photo.Id)).ToArray();
+            document.Gallery(unassigned.Select(photo => (photo, "")).ToArray(), context + "\n" +
+                (phase == "after" ? "整改后" : "复查") + "（未关联办理轮次）");
+        }
     }
-    private static void WriteCampaignPhotoTables(Document document, WordPhoto[] photos)
+    private static void WriteCampaignPhotoTables(Document document, WordPhoto[] photos, string context)
     {
-        document.Comparison(photos.Where(photo => photo.Photo.Phase == "before").ToArray(), photos.Where(photo => photo.Photo.Phase == "after").ToArray(), "整治前", "整治后");
-        document.Gallery(photos.Where(photo => photo.Photo.Phase == "process").Select(photo => (photo, "")).ToArray(), "整治中");
+        document.Comparison(photos.Where(photo => photo.Photo.Phase == "before").ToArray(), photos.Where(photo => photo.Photo.Phase == "after").ToArray(), "整治前", "整治后", context);
+        document.Gallery(photos.Where(photo => photo.Photo.Phase == "process").Select(photo => (photo, "")).ToArray(), context + "\n整治中");
     }
     private static void WriteSitePhotos(Document document, InspectionDetailDto detail, WordPhoto[] photos, bool attachment)
     {
@@ -342,12 +375,13 @@ public static class WordExporter
             .OrderBy(photo => Array.FindIndex(detail.Issues, issue => issue.Id == photo.Photo.IssueId))
             .ThenBy(photo => photo.Photo.UploadedAt, StringComparer.Ordinal).ThenBy(photo => photo.Photo.Id, StringComparer.Ordinal).ToArray();
         if (selected.Length == 0) return;
-        document.Paragraph(attachment ? "附件：现场问题照片" : "二、现场照片", "Heading1", pageBreak: attachment);
+        if (attachment) document.Paragraph("附件：现场问题照片", "Heading1", pageBreak: true);
+        else document.Section("现场照片");
         document.Gallery(selected.Select(photo =>
         {
             var issueIndex = Array.FindIndex(detail.Issues, issue => issue.Id == photo.Photo.IssueId);
             return (photo, issueIndex < 0 ? "" : $"问题 {issueIndex + 1}");
-        }).ToArray());
+        }).ToArray(), detail.Inspection.PointName + " · " + detail.Inspection.Date + " · 现场照片");
     }
 
     private sealed record Cell(string Text, int Span = 1, bool Header = false, string? Align = null, bool Bold = false);
@@ -368,6 +402,8 @@ public static class WordExporter
         private readonly string _author;
         private readonly List<Asset> _assets = [];
         private int _drawingId;
+        private int _sectionNumber;
+        public void Section(string title) => Paragraph(ChineseNumber(++_sectionNumber) + "、" + title, "Heading1");
         private int Width => _landscape ? 14570 : 9072;
         private sealed record Asset(string Id, string Relationship, string Target, string FilePath, JpegDimensions Dimensions);
 
@@ -392,12 +428,13 @@ public static class WordExporter
         private void Attr(string name, string value) => _xml.WriteAttributeString("w", name, W, value);
         private void Value(string name, string value) { Start(name); Attr("val", value); End(); }
 
-        public void Paragraph(string text, string style = "Normal", string? align = null, bool? indent = null, bool pageBreak = false)
+        public void Paragraph(string text, string style = "Normal", string? align = null, bool? indent = null, bool pageBreak = false, bool keepNext = false)
         {
             Start("p");
             Start("pPr");
             Value("pStyle", style);
             if (pageBreak) Value("pageBreakBefore", "1");
+            if (keepNext) Value("keepNext", "1");
             Spacing(style);
             Start("ind"); Attr("firstLine", (indent ?? (style == "Normal" && align is null)) ? "640" : "0"); End();
             if (align is not null) Value("jc", align);
@@ -448,9 +485,11 @@ public static class WordExporter
         }
 
         public void Table(string[]? headers, IEnumerable<string[]> rows, int[] weights, int fontSize = 21,
-            bool labelColumn = false, bool keepTogether = false, int[]? centeredColumns = null, int[]? rightAlignedColumns = null, string? summary = null)
+            bool labelColumn = false, bool keepTogether = false, int[]? centeredColumns = null, int[]? rightAlignedColumns = null, string? summary = null,
+            int[]? repeatColumns = null, string? context = null)
         {
             var widths = TableStart(weights);
+            if (context is not null) CellRow([new(context, Span: widths.Length, Header: true)], widths, header: true);
             if (headers is not null) CellRow(headers.Select(text => new Cell(text, Header: true)).ToArray(), widths, header: true, keepWithNext: keepTogether, fontSize: fontSize);
             if (keepTogether)
             {
@@ -467,7 +506,7 @@ public static class WordExporter
                 var cells = widths.Select((_, column) => new Cell(column < values.Length ? values[column] : "",
                     Header: labelColumn && column == 0,
                     Align: rightAlignedColumns?.Contains(column) == true ? "right" : centeredColumns?.Contains(column) == true ? "center" : null)).ToArray();
-                CellRow(cells, widths, keepWithNext: keepWithNext, fontSize: fontSize);
+                CellRow(cells, widths, keepWithNext: keepWithNext, fontSize: fontSize, repeatColumns: repeatColumns);
             }
         }
 
@@ -504,7 +543,7 @@ public static class WordExporter
             return widths;
         }
 
-        private void CellRow(Cell[] cells, int[] widths, bool header = false, bool keepWithNext = false, int fontSize = 21)
+        private void CellRow(Cell[] cells, int[] widths, bool header = false, bool keepWithNext = false, int fontSize = 21, int[]? repeatColumns = null)
         {
             if (cells.Sum(cell => cell.Span) != widths.Length) throw new InvalidDataException("表格列宽不正确。");
             if (!header && cells.Length > 1)
@@ -526,8 +565,9 @@ public static class WordExporter
                         var continued = cells.Select((cell, index) => cell with
                         {
                             Text = part < fragments[index].Length ? fragments[index][part] :
-                                fragments[index].Length == 1 && (cell.Header || index == 0 &&
-                                    int.TryParse(cell.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _)) ? cell.Text : ""
+                                cell.Header || index == 0 && int.TryParse(cell.Text, NumberStyles.None, CultureInfo.InvariantCulture, out _)
+                                    ? cell.Text : repeatColumns?.Contains(index) == true
+                                        ? fragments[index][0] + (index == 2 ? "（续）" : "") : ""
                         }).ToArray();
                         WriteCellRow(continued, widths, fontSize: fontSize);
                     }
@@ -543,7 +583,9 @@ public static class WordExporter
             // Count every Unicode scalar as a full-width character; this deliberately overestimates Latin text.
             // A two-font-height line allowance leaves room for repeated headings and CJK fallback font metrics.
             var columns = Math.Max(1, (width - 200) / (fontSize * 10));
-            var maximumLines = _landscape ? 18 : 28;
+            // Bounded continuation blocks, not a page-height layout engine.
+            // Keep font metrics, margins, logical row counts and cantSplit unchanged.
+            var maximumLines = _landscape ? 6 : 12;
             var fragments = new List<string>();
             var start = 0;
             var offset = 0;
@@ -631,11 +673,12 @@ public static class WordExporter
             End(); Paragraph("", "TableGap");
         }
 
-        public void Comparison(WordPhoto[] before, WordPhoto[] after, string beforeHeading, string afterHeading)
+        public void Comparison(WordPhoto[] before, WordPhoto[] after, string beforeHeading, string afterHeading, string? context = null)
         {
             var count = Math.Max(before.Length, after.Length);
             if (count == 0) return;
             var widths = TableStart([1, 1]);
+            if (context is not null) CellRow([new(context, Span: 2, Header: true)], widths, header: true);
             CellRow([new(beforeHeading, Header: true), new(afterHeading, Header: true)], widths, header: true);
             for (var index = 0; index < count; index++)
             {
