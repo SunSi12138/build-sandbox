@@ -82,10 +82,10 @@ internal static unsafe class PaperPrintRenderer
                         float alpha = Math.Clamp(0.86f - illumination * 0.55f, 0.20f, 0.83f);
                         float lightTint = Math.Clamp(direct + haze * 0.25f, 0f, 1f);
                         int a = ClampByte(alpha * 255f);
-                        int red = ClampByte((35f + lightTint * 200f + grain * 0.45f) * alpha);
-                        int green = ClampByte((28f + lightTint * 184f + grain * 0.4f) * alpha);
-                        int blue = ClampByte((21f + lightTint * 153f + grain * 0.35f) * alpha);
-                        output[index] = (uint)(a << 24 | red << 16 | green << 8 | blue);
+                        int overlayRed = ClampByte((35f + lightTint * 200f + grain * 0.45f) * alpha);
+                        int overlayGreen = ClampByte((28f + lightTint * 184f + grain * 0.4f) * alpha);
+                        int overlayBlue = ClampByte((21f + lightTint * 153f + grain * 0.35f) * alpha);
+                        output[index] = (uint)(a << 24 | overlayRed << 16 | overlayGreen << 8 | overlayBlue);
                         continue;
                     }
 
