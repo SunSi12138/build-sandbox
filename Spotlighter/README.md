@@ -1,70 +1,77 @@
-# Spotlighter — .NET 10 Native AOT desktop paper lamp
+# Spotlighter v3 · GPU paper-light desktop mode
 
-A click-through desktop print and lighting overlay for Windows 10 (2004+) and Windows 11 x64. **Single-file native executable**, written in C#/.NET 10 with Win32; no browser engine, WPF, WinForms, JIT, or third-party runtime DLL.
+Windows 10/11 x64 desktop effect, C#/.NET 10 Native AOT. Hold **Ctrl alone for 800 ms** to enter or leave; use the tray icon for switching backend or exiting. The binary is self-contained and has no third-party DLLs or Chromium/Electron runtime.
 
-## Install & use
+## Design reference
 
-1. Open **GitHub Actions → Spotlighter - Windows Native AOT → latest successful run** on the `spotlighter` branch.
-2. Download the artifact `Spotlighter-win-x64-native-aot`, extract `Spotlighter.exe`, and run it.
-3. Hold **Ctrl alone for 0.8 seconds** to enable/disable. Ctrl+normal shortcut keys do not toggle.
-4. The pendant lamp aims at the mouse with easing. Use the notification area icon to toggle or exit.
+Visual direction: https://codetap.org/project/paper-read-light-effect
 
-## v2 improvements: material first, light second
+The reference describes real-time cursor-following lighting using CSS blend masks over a textured reading page. Windows cannot assume the underlying content is a web page. Spotlighter now follows that **compositing strategy** rather than constantly photographing and reprinting all desktop windows.
 
-The original prototype recoloured the entire screen and evaluated costly floating point radial/power calculations **at every pixel on every mouse frame**. This version splits the work:
+### Default: GPU paper-light
 
-- **Static reflectance**: desktop frames are captured periodically (about 80–145 ms, depending on resolution) and transformed into *neutral, lightly ivory cellulose paper and ink*, retaining sharp text and low-chroma application colours. Unlike a transparent sepia overlay, actual screenshot pixels are recomposed as pigment on paper.
-- **Tactile grain**: 1024×1024 multiscale paper noise is generated only once and copied to the target resolution with additional non-repeating micro-tooth. Fibres are anisotropic; no artificial aged-yellow colour wash.
-- **Matte lighting**: mouse movement updates a sparse 16×16-pixel irradiance grid with bilinear interpolation. The grid contains a soft finite-area lamp lobe, long-tail diffuse/bounced illumination, restrained beam scattering, and ambient floor. RGB values are **multiplied** by illumination and capped; the paper is never additively bloomed.
-- **Fast pixels**: AVX2 CPU intrinsic batches process eight pixels at a time where available; a bit-identical scalar path supports older CPUs. Render work is split across up to eight CPU worker lanes. Cursor frames are decoupled from desktop recapture.
-- **Adaptive timing**: frames throttle based on the duration of the last frame instead of forcing expensive 4K repainting at an unreasonable rate.
-- **Safety**: topmost no-activate click-through window; WDA_EXCLUDEFROMCAPTURE avoids self-capture feedback when supported. A neutral translucent fallback is used on systems where capture exclusion fails.
+This version implements a real **Direct3D 11 pixel shader** and a **DirectComposition premultiplied-alpha flip swap chain**, presented into an HWND with `WS_EX_NOREDIRECTIONBITMAP`.
 
-### Important benchmark boundary
+- **No desktop screenshot or 4K CPU bitmap round trip** in the GPU path. Per-frame CPU input is only a 32-byte constant buffer holding screen dimensions, mouse, lamp angle and time.
+- Desktop applications preserve their original pixel colours and typographic sharpness. The shader generates a dark neutral veil with a single spatially continuous lighting footprint; the centre becomes transparent, exposing the original desktop. It does *not* remap every window into desaturated brown newsprint.
+- A multiscale procedural noise profile creates subtle matte/cold-pressed-paper tooth and slightly distorts the penumbra. There are no stacked independent concentric rings.
+- The light has weak, bounded shaft scattering, with very low levels of bounce-like shadow fill; the surface itself has **no additive bloom**. All shader colour is premultiplied with alpha.
+- A metal pendant and braided ceiling cable are SDF shapes calculated in the same shader as the shadow. Mouse motion smooths the lamp direction.
+- The GPU layer uses `WS_EX_TRANSPARENT`, `WS_EX_NOACTIVATE` and Win32 hit-test fallbacks so clicks should pass to lower windows, but full cross-process hit testing cannot be proven in headless CI. Long-hold Ctrl always turns it off.
 
-A headless Windows Native AOT benchmark in GitHub Actions (1920×1080) measures **only paper preparation and the moving-light pixel kernel**, not full desktop capture, transparency/composition, the screen driver, or input latency. The hosted Windows runner reports **AVX2 not available**, so that measurement exercises the *scalar* path; the AVX2 path is compiled and selected automatically on capable hardware but still requires physical-hardware validation.
+### CPU paper-print fallback
 
-### Build
+If Direct3D/device/DirectComposition initialisation fails, Spotlighter falls back to the previous screenshot-based full-colour-print transformation. It also supports explicitly forcing the CPU renderer:
 
-Requires .NET 10 SDK plus Microsoft C++ build tools. GitHub Actions builds on Windows.
+```powershell
+./Spotlighter.exe --cpu
+```
+
+CPU fallback supports dynamic **AVX-512F (16 pixels per batch)**, **AVX2 (8 pixels per batch)**, and a scalar implementation, selected using `.IsSupported`. Every pixel of the accelerated output must match the scalar reference in the automated self-test. CPU saturation retention has been increased relative to v2.
+
+**Important trade-off:** GPU mode and CPU mode are not pixel-identical. GPU mode is faster and maintains natural screen colours, but it is an **overlay**; it cannot truly change a browser page or application's underlying raster graphics into ink on paper. CPU mode can actually transform source RGB but captures/repaints the screen and is heavier. A future fully GPU-based screen-material transform would need DXGI Desktop Duplication or Windows Graphics Capture connected directly to GPU shaders, and careful capture-exclusion handling.
+
+## How to run
+
+1. Download the latest successful `Spotlighter-win-x64-native-aot` artifact on GitHub Actions.
+2. Extract `Spotlighter.exe` and run; the app stays in the system tray. No .NET runtime installation required.
+3. Hold **Ctrl** for 0.8s to toggle. The lamp follows the mouse; combinations such as Ctrl+C should not toggle.
+4. Right-click its notification icon: toggle, switch GPU/CPU backend, or exit.
+5. If the GPU initialization fails, inspect `%LOCALAPPDATA%\Spotlighter\gpu-fallback.log`. Switching back to GPU in the tray retries initialization.
+
+If the new GPU-only window doesn't pass mouse clicks on your Windows graphics configuration, **hold Ctrl 0.8s to switch off**, then change to CPU backend from the tray; please report GPU model, Windows version and screenshot. The program is not code signed (SmartScreen may warn).
+
+## Build
+
+Requires .NET 10 SDK and Windows C++ build tools (GitHub Actions `windows-2022` runner supplies these):
 
 ```powershell
 dotnet publish ./Spotlighter/Spotlighter.csproj -c Release -r win-x64 --self-contained true -p:PublishAot=true -o ./artifacts/publish
 ```
 
-For headless verification (no desktop window needed):
+Native AOT headless tests (can run without a graphics desktop):
 
 ```powershell
+./artifacts/publish/Spotlighter.exe --shader-test
 ./artifacts/publish/Spotlighter.exe --self-test
-./artifacts/publish/Spotlighter.exe --benchmark ./benchmark.txt
+./artifacts/publish/Spotlighter.exe --benchmark ./artifacts/benchmark.txt
 ```
 
-A zero exit code means the test passed. The benchmark writes numerical results to the supplied file.
+- `--shader-test` compiles HLSL `vs_4_0` and `ps_4_0` on Windows using `d3dcompiler_47.dll`, without requiring GPU/DWM.
+- `--self-test` checks actual CPU material shading, colour neutrality, output alpha, dynamic light and SIMD/scalar correctness.
+- `--benchmark` measures only CPU kernels at 1920×1080, *not* display capture, Present, UI thread timing, input latency or GPU frame times. GitHub's runner does **not** expose AVX2/AVX-512; hardware speedups need local measurement.
+- **Passing CI validates build and shader source, not GPU/window behaviour.** Device removal, video-driver compatibility, DirectComposition rendering, cross-process hit-testing and HDR require a real Windows desktop.
 
-## Architectural limitations / potential GPU v3
+## Source layout
 
-Despite the optimized CPU shading, this is **not yet GPU-first**. GDI `BitBlt` and `UpdateLayeredWindow` transfer a full display-sized frame through CPU memory; those copies can still be the bottleneck at 4K, multi-monitor, HDR, and high refresh rates.
-
-For a true GPU path, move the *whole pipeline*, not just the color math:
-
-1. DXGI Desktop Duplication or Windows Graphics Capture -> capture surface on GPU.
-2. Direct3D 11 shader / HLSL -> screen print mapping, 2D normal/roughness-map-based paper scattering, and optical falloff, all on GPU.
-3. A DirectComposition alpha swap chain -> display directly from GPU without readback/GDI.
-4. Use **Vortice.Windows / Vortice.Direct3D11** for C# binding (supports .NET 10) or custom native COM vtables, but verify trimming/Native AOT and device loss on real hardware.
-
-Changing only the GPU shader while preserving CPU roundtrips will not solve the total-frame latency.
-
-Other limitations: exclusive fullscreen games, protected video, UAC/secure desktop, anti-cheat software, some HDR modes and asymmetric multi-monitor layouts may not work as expected. The lamp is anchored to the top of the virtual desktop. The EXE is unsigned; some Windows machines may show a SmartScreen warning.
-
-## File map
-
-| File | Role |
+| File | Purpose |
 | --- | --- |
-| `Program.cs` | native Win32 pump, Ctrl hotkey, animation, tray, adaptive timing |
-| `Native.cs` | AOT-friendly Win32 P/Invoke declarations |
-| `DesktopSurface.cs` | desktop capture, material cache, click-through layer |
-| `PaperTexture.cs` | cellulose fibre and paper tooth |
-| `PaperPrintRenderer.cs` | static ink preparation, SIMD/scalar matte shading |
-| `LightField.cs` | sample-sparse penumbra, bounce and scattering |
-| `LampPainter.cs` | mouse-tracking brass pendant and bulb |
-| `SelfTest.cs` | Native AOT smoke tests, kernel benchmark |
+| `GpuOverlay.cs` | Native COM interop for D3D11/DXGI/DirectComposition, shader compilation and GPU rendering |
+| `PaperLightShader.cs` | HLSL procedural paper, mask, scattering, metallic lamp |
+| `Program.cs` | Win32 tray, global Ctrl hold, GPU selection and fallback, 60fps scheduling |
+| `IDesktopOverlay.cs` | common backend contract |
+| `DesktopSurface.cs` | legacy GDI screenshot renderer for compatibility |
+| `PaperPrintRenderer.cs` | CPU ink and AVX-512/AVX2/scalar fallback |
+| `SelfTest.cs` | headless verification and benchmark |
+
+Windows UAC secure desktop, exclusive fullscreen games, DRM-protected content and some HDR modes are outside the supported rendering surface. A single virtual-desktop window is used across monitors. This project makes no claim of physically traced/global-illumination realism.
