@@ -1,0 +1,49 @@
+    await test('M01 measure 50-issue draft input without weakening persistence', async () => {
+      await beginInspection()
+      await page.getByTestId('inspection-result-issues').click()
+      await expect(page.getByTestId('inspection-issue-description')).toHaveCount(1)
+      const pictures = []
+      for (let i = 0; i < 2; i++) {
+        const response = await fetch(directOrigin + '/api/photos?phase=site', { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: fixtureJpeg })
+        assert.equal(response.status, 201)
+        pictures.push(await response.json())
+      }
+      await page.evaluate(({ pictures, today }) => {
+        const key = 'street-eco.inspection-draft.v2'
+        const envelope = JSON.parse(localStorage.getItem(key))
+        envelope.draft.issues = Array.from({ length: 50 }, (_, i) => ({ key: i + 1, description: '性能观察问题' + i + '现场检查。'.repeat(100), requirement: '保留最后输入。', deadline: today, responsibleUnit: '测试社区', photos: i < 2 ? [pictures[i]] : [] }))
+        localStorage.setItem(key, JSON.stringify(envelope))
+      }, { pictures, today: bootstrap.today })
+      await page.reload({ waitUntil: 'networkidle' })
+      await expect(page.getByTestId('inspection-issue-description')).toHaveCount(50)
+      const measurement = await page.evaluate(async () => {
+        const original = Storage.prototype.setItem
+        const writes = []
+        Storage.prototype.setItem = function (key, value) {
+          const start = performance.now()
+          const result = original.call(this, key, value)
+          if (key === 'street-eco.inspection-draft.v2') writes.push({ milliseconds: performance.now() - start, characters: value.length })
+          return result
+        }
+        const input = document.querySelectorAll('[data-testid="inspection-issue-description"]')[49]
+        const timings = []
+        try {
+          for (let i = 0; i < 20; i++) {
+            const start = performance.now()
+            input.value = '最后一条输入-' + i + '甲'.repeat(1000)
+            input.dispatchEvent(new Event('input', { bubbles: true }))
+            await new Promise(resolve => requestAnimationFrame(resolve))
+            timings.push(performance.now() - start)
+          }
+        } finally { Storage.prototype.setItem = original }
+        return { issueCount: 50, inputEvents: 20, inputToNextFrameMs: timings, storageWrites: writes, note: 'CI desktop Chromium with mobile viewport, not real-phone latency; serialization is included in input-to-frame, not setItem-only timing.' }
+      })
+      report.draftMeasurement = measurement
+      await page.getByRole('button', { name: '返回', exact: true }).first().click()
+      await goto('/inspections/new')
+      await expect(page.getByTestId('inspection-issue-description')).toHaveCount(50)
+      await expect(page.getByTestId('inspection-issue-description').last()).toHaveValue('最后一条输入-19' + '甲'.repeat(1000))
+      const retained = await draft()
+      assert.equal(retained.draft.issues[0].photos[0].id, pictures[0].id)
+      assert.equal(retained.draft.issues[1].photos[0].id, pictures[1].id)
+    })
