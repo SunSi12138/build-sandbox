@@ -9,6 +9,7 @@ on:
       - 'web/**'
       - 'tests/**'
       - 'scripts/**'
+      - '!scripts/optimization-stage.py'
       - 'global.json'
       - '.github/workflows/build.yml'
       - 'README.md'
@@ -18,6 +19,7 @@ on:
       - 'web/**'
       - 'tests/**'
       - 'scripts/**'
+      - '!scripts/optimization-stage.py'
       - 'global.json'
       - '.github/workflows/build.yml'
 
