@@ -132,8 +132,24 @@ internal sealed unsafe class GpuOverlay : IDesktopOverlay
             // Hardware-only: a software WARP device hides latency rather than fixing it.
             Check(D3D11CreateDevice(0, 1, 0, 0x20, 0, 0, 7,
                 out _device, out _, out _context), "D3D11CreateDevice(HARDWARE)");
-            Guid factoryGuid = FactoryIid;
-            Check(CreateDXGIFactory2(0, ref factoryGuid, out _factory), "CreateDXGIFactory2");
+            // Derive the factory from the D3D11 device's actual adapter.
+            // A newly created independent DXGI factory can reject a swap chain
+            // for a device that was instantiated through another factory.
+            Guid dxgiGuid = DxgiDeviceIid;
+            Check(Query(_device, ref dxgiGuid, out _dxgiDevice), "ID3D11Device/IDXGIDevice");
+            nint adapter = 0;
+            try
+            {
+                Check(((delegate* unmanaged[Stdcall]<nint, nint*, int>)
+                    Method(_dxgiDevice, 7))(_dxgiDevice, &adapter), "IDXGIDevice.GetAdapter");
+                Guid factoryGuid = FactoryIid;
+                nint factory = 0;
+                Check(((delegate* unmanaged[Stdcall]<nint, Guid*, nint*, int>)
+                    Method(adapter, 6))(adapter, &factoryGuid, &factory),
+                    "IDXGIAdapter.GetParent(IDXGIFactory2)");
+                _factory = factory;
+            }
+            finally { Release(ref adapter); }
 
             DxgiSwapChainDesc1 desc = new()
             {
@@ -155,8 +171,6 @@ internal sealed unsafe class GpuOverlay : IDesktopOverlay
                 "CreateSwapChainForComposition");
             _swapChain = chain;
 
-            Guid dxgiGuid = DxgiDeviceIid;
-            Check(Query(_device, ref dxgiGuid, out _dxgiDevice), "ID3D11Device/IDXGIDevice");
             Guid compGuid = DcompIid;
             Check(DCompositionCreateDevice(_dxgiDevice, ref compGuid, out _dcomp),
                 "DCompositionCreateDevice");
