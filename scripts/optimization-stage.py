@@ -1,45 +1,62 @@
 from pathlib import Path
-exec(compile(Path('scripts/word-stage-core.py').read_text(), 'scripts/word-stage-core.py', 'exec'))
-p = Path('server/StreetEcoTool.Tests/WordStoreTests.cs')
-s = p.read_text()
-old = '        var text = DocumentText(ledger.FilePath);\n        Assert.Contains("待整改", text);'
-new = '''        // Reassemble logical columns: continuation context between physical rows
-        // must not make a complete historical field appear to be truncated.
-        using var archive = ZipFile.OpenRead(ledger.FilePath);
-        using var input = archive.GetEntry("word/document.xml")!.Open();
-        var xml = XDocument.Load(input);
-        XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-        var table = xml.Descendants(w + "tbl").Single(t => t.Element(w + "tblGrid")?.Elements().Count() == 9);
-        var rows = table.Elements(w + "tr").Skip(1).SkipLast(1).ToArray();
-        var text = string.Join("\\n", Enumerable.Range(0, 9).Select(column => string.Concat(rows.SelectMany(row => row.Elements(w + "tc").ElementAt(column).Descendants(w + "t")).Select(t => t.Value))))
-            + string.Concat(table.Elements(w + "tr").Last().Descendants(w + "t").Select(t => t.Value));
-        Assert.Contains("待整改", text);'''
-assert s.count(old) == 1
-p.write_text(s.replace(old, new))
-p = Path('web/app/components/PhotoUploader.vue')
-s = p.read_text()
-old = "onBeforeUnmount(() => {\n  disposed = true\n  for (const job of jobs.value) {"
-new = '''function cancelPendingJobs() {
-  // Accepted navigation can precede unmount while Nuxt loads the next page.
-  // Invalidate unpublished jobs before a late thumbnail completion can publish.
-  const pending = [...jobs.value]
-  for (const job of pending) job.controller.abort()
-  jobs.value = []
-  for (const job of pending) {'''
-assert s.count(old) == 1
-s = s.replace(old, new)
-old = "  emit('busy', false)\n  emit('failed', false)\n})"
-new = '''}
-const router = useRouter()
-watch(() => router.currentRoute.value.path, (next, previous) => {
-  if (next !== previous) cancelPendingJobs()
-}, { flush: 'sync' })
-onBeforeUnmount(() => {
-  disposed = true
-  cancelPendingJobs()
-  emit('busy', false)
-  emit('failed', false)
-})'''
-assert s.count(old) == 1
-p.write_text(s.replace(old, new))
-Path('/tmp/hbtool-stage-message.txt').write_text('fix: W01-W05 contextual DOCX pagination and F02 accepted-navigation cancellation\n')
+
+def edit(path, old, new):
+    p=Path(path);s=p.read_text();assert s.count(old)==1,(path,old[:80],s.count(old));p.write_text(s.replace(old,new))
+
+edit('server/WordExporter.cs', '_landscape ? 3400 : 5100', '_landscape ? 3000 : 5100')
+edit('web/optimization-browser-test.mjs', '''      await page.waitForURL('**/#/points')
+      paused.release()
+      await page.unroute('**/api/photos/*/thumb', paused.handler)
+      await expect.poll(() => serverPhotoStatus(photo.id)).toBe(404)''', '''      await page.waitForURL('**/#/points')
+      // Hash changes before the route guard resolves. Wait for actual navigation
+      // and unmount; releasing the response on hash alone races acceptance.
+      await expect(page.getByRole('heading', { name: '点位管理', exact: true })).toBeVisible()
+      await expect(page.getByTestId('inspection-save')).toHaveCount(0)
+      paused.release()
+      await page.unroute('**/api/photos/*/thumb', paused.handler)
+      await expect.poll(() => serverPhotoStatus(photo.id), { timeout: 10000 }).toBe(404)''')
+p=Path('.github/workflows/build.yml');s=p.read_text();assert '    needs: [web, native]\n' in s
+s=s.replace('    needs: [web, native]\n','    needs: [web, native, browser, word-layout]\n',1)
+s+='''
+  word-layout:
+    name: Render seven document types before and after
+    needs: [native]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: 05eba126e7b9f3de13e5a2b055624ac6f97ee76d
+          path: baseline-source
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Install test-only local render tools
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev libreoffice-writer poppler-utils fonts-noto-cjk fonts-dejavu python3-pil
+      - uses: actions/download-artifact@v8
+        with:
+          name: bin-linux-x64
+          path: layout-program
+      - name: Build the pinned original implementation
+        run: dotnet publish baseline-source/server/StreetEcoTool.csproj -c Release -r linux-x64 -o layout-baseline-program -p:PublishAot=true -p:SelfContained=true -warnaserror
+      - name: Export identical synthetic scenarios through real APIs
+        run: |
+          chmod +x layout-program/StreetEcoTool-linux-x64
+          python3 tests/word-layout-samples.py --executable layout-baseline-program/StreetEcoTool --source-ref 05eba126e7b9f3de13e5a2b055624ac6f97ee76d --output test-results/word-layout/before
+          python3 tests/word-layout-samples.py --executable layout-program/StreetEcoTool-linux-x64 --source-ref "$GITHUB_SHA" --expect-optimized --output test-results/word-layout/after
+      - name: Convert and extract every page in the same font environment
+        run: |
+          python3 tests/render-word.py test-results/word-layout/before
+          python3 tests/render-word.py test-results/word-layout/after
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: word-layout-evidence
+          path: test-results/word-layout/
+          if-no-files-found: error
+          retention-days: 14
+'''
+p.write_text(s)
+Path('/tmp/hbtool-stage-message.txt').write_text('test(docx): real API samples, fixed-font rendering and gated release; refine photo layout\n')
