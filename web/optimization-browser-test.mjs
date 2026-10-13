@@ -246,7 +246,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
         return { issueCount: 50, inputEvents: 20, inputToNextFrameMs: timings, storageWrites: writes, note: 'CI desktop Chromium with mobile viewport, not real-phone latency; serialization is included in input-to-frame, not setItem-only timing.' }
       })
       report.draftMeasurement = measurement
-      await page.getByRole('button', { name: '返回', exact: true }).first().click()
+      await page.getByRole('link', { name: '返回', exact: true }).first().click()
       await goto('/inspections/new')
       await expect(page.getByTestId('inspection-issue-description')).toHaveCount(50)
       await expect(page.getByTestId('inspection-issue-description').last()).toHaveValue('最后一条输入-19' + '甲'.repeat(1000))

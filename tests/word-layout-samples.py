@@ -122,6 +122,11 @@ class Samples(word.WordSmoke):
         self.check_sample(f'/api/inspections/{rid}/export/notice','notice-long',descriptions+['编号'+('甲'*98),'专项样本社区居民委员会'],[p for group in site for p in group])
         self.json('PUT','/api/settings',{**settings,'noticeTemplate':'无问题块：请保留正文。{日期} {点位} {期限} {街道全称} {社区}'})
         self.check_sample(f'/api/inspections/{rid}/export/notice','notice-no-block',descriptions+['无问题块：请保留正文。'],[p for group in site for p in group])
+        # Capture the newly configured long title in a NEW inspection, not the old snapshot.
+        longname = "长名称" + "甲" * 197
+        longpoint = self.create_point(longname)
+        longrecord = self.json('POST', '/api/inspections', self.inspection_body(longpoint['id'], issues=[self.issue_body('长名称和抬头样本', self.today)]), expected=201)
+        self.check_sample(f"/api/inspections/{longrecord['inspection']['id']}/export/notice", 'notice-long-title', [longname, longtitle, '长名称和抬头样本'])
         if self.optimized:
             before=self.json('GET','/api/settings')
             self.request('PUT','/api/settings',body={**settings,'noticeTemplate':'{问题}\n{问题}'},expected=400)
