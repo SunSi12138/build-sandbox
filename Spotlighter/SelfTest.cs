@@ -64,7 +64,7 @@ internal static unsafe class SelfTest
                 if (simd[205 * width + 192] == scalar[205 * width + 192]) return 16;
 
                 PaperPrintRenderer.ShadeFallback(accelerated, texture, light, width, height);
-                uint alpha = simd[2 * width + 2] >> 24;
+                uint alpha = scalar[2 * width + 2] >> 24;
                 if (alpha != 255u) return 17;
                 alpha = accelerated[2 * width + 2] >> 24;
                 if (alpha == 0u || alpha == 255u) return 18;
