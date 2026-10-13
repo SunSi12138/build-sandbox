@@ -16,9 +16,15 @@ internal static unsafe class PaperPrintRenderer
     private static readonly Vector256<int> Ramp = Vector256.Create(0, 1, 2, 3, 4, 5, 6, 7);
     private static readonly Vector256<uint> Mask = Vector256.Create(255u);
     private static readonly Vector256<uint> Opaque = Vector256.Create(0xff000000u);
+    private static readonly Vector512<int> Ramp512 = Vector512.Create(
+        Vector256.Create(0, 1, 2, 3, 4, 5, 6, 7),
+        Vector256.Create(8, 9, 10, 11, 12, 13, 14, 15));
+    private static readonly Vector512<uint> Mask512 = Vector512.Create(255u);
+    private static readonly Vector512<uint> Opaque512 = Vector512.Create(0xff000000u);
     private static readonly int WorkerCount = Math.Clamp(Environment.ProcessorCount, 1, 8);
 
     internal static bool HasAvx2 => Avx2.IsSupported;
+    internal static bool HasAvx512 => Avx512F.IsSupported;
 
     internal static void PrepareMaterial(uint* source, uint* material, byte[] paper,
         int width, int height)
@@ -50,11 +56,11 @@ internal static unsafe class PaperPrintRenderer
                     // chromatic information for charts, icons and syntax colours.
                     int fibre = (tooth * luminance >> 8) / 3;
                     int pr = 239 + fibre - (pigment * 206 >> 8)
-                        + ((red - luminance) * 15 >> 7);
+                        + ((red - luminance) * 48 >> 7);
                     int pg = 237 + fibre - (pigment * 207 >> 8)
-                        + ((green - luminance) * 14 >> 7);
+                        + ((green - luminance) * 46 >> 7);
                     int pb = 233 + fibre - (pigment * 202 >> 8)
-                        + ((blue - luminance) * 11 >> 7);
+                        + ((blue - luminance) * 44 >> 7);
                     output[index] = 0xff000000u |
                         (uint)(ClampByte(pr) << 16 | ClampByte(pg) << 8 | ClampByte(pb));
                 }
@@ -66,6 +72,7 @@ internal static unsafe class PaperPrintRenderer
         int width, int height, bool allowAvx2 = true)
     {
         bool simd = allowAvx2 && Avx2.IsSupported;
+        bool simd512 = allowAvx2 && Avx512F.IsSupported;
         nint materialPointer = (nint)material;
         nint outputPointer = (nint)output;
         int columns = light.Columns;
@@ -95,6 +102,17 @@ internal static unsafe class PaperPrintRenderer
                     int slope = right - left;
                     int count = Math.Min(LightField.Cell, width - x);
                     int k = 0;
+
+                    if (simd512)
+                    {
+                        for (; k + 16 <= count; k += 16)
+                        {
+                            Vector512<int> factors = Avx512F.ShiftRightArithmetic(
+                                Avx512F.Add(Vector512.Create(left * 16 + slope * k + 8),
+                                    Avx512F.MultiplyLow(Vector512.Create(slope), Ramp512)), 4);
+                            ShadeSixteen(source + row + x + k, target + row + x + k, factors);
+                        }
+                    }
 
                     if (simd)
                     {
@@ -147,6 +165,25 @@ internal static unsafe class PaperPrintRenderer
                 }
             }
         });
+    }
+
+    private static void ShadeSixteen(uint* input, uint* output, Vector512<int> factors)
+    {
+        Vector512<uint> pixel = Vector512.Load(input);
+        Vector512<uint> red = Avx512F.And(Avx512F.ShiftRightLogical(pixel, 16), Mask512);
+        Vector512<uint> green = Avx512F.And(Avx512F.ShiftRightLogical(pixel, 8), Mask512);
+        Vector512<uint> blue = Avx512F.And(pixel, Mask512);
+        red = Avx512F.ShiftRightLogical(
+            Avx512F.MultiplyLow(red.AsInt32(), factors).AsUInt32(), 8);
+        green = Avx512F.ShiftRightLogical(
+            Avx512F.MultiplyLow(green.AsInt32(), factors).AsUInt32(), 8);
+        blue = Avx512F.ShiftRightLogical(
+            Avx512F.MultiplyLow(blue.AsInt32(), factors).AsUInt32(), 8);
+        Vector512<uint> result = Avx512F.Or(
+            Avx512F.Or(Avx512F.ShiftLeftLogical(red, 16),
+                Avx512F.ShiftLeftLogical(green, 8)),
+            Avx512F.Or(blue, Opaque512));
+        result.Store(output);
     }
 
     private static void ShadeEight(uint* input, uint* output, Vector256<int> factors)

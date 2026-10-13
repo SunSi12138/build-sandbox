@@ -43,6 +43,16 @@ jobs:
           Write-Host "Native executable exists, bytes: $size"
           Get-ChildItem ./artifacts/publish | Select-Object Name, Length
 
+      - name: Compile GPU HLSL shaders (Windows SDK, no GPU required)
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath './artifacts/publish/Spotlighter.exe' -ArgumentList '--shader-test' -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            if (Test-Path shader-diagnostics.txt) { Get-Content shader-diagnostics.txt }
+            throw "HLSL shader validation failed: $($process.ExitCode)"
+          }
+          Write-Host 'HLSL vs_4_0 and ps_4_0 shaders compiled successfully.'
+
       - name: Headless pixel-renderer smoke test (AOT exe)
         shell: pwsh
         run: |

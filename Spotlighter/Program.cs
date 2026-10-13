@@ -23,7 +23,8 @@ internal static unsafe class Program
     private static Native.NOTIFYICONDATA _tray;
     private static bool _trayAdded, _exiting, _active, _ctrlHeld, _otherKeySeen, _triggered;
     private static long _ctrlSince, _lastRender, _lastRenderCost;
-    private static DesktopSurface? _surface;
+    private static IDesktopOverlay? _surface;
+    private static bool _preferGpu = true;
     private static float _aimX, _aimY;
 
     [STAThread]
@@ -34,6 +35,12 @@ internal static unsafe class Program
             Environment.ExitCode = SelfTest.Run();
             return;
         }
+        if (args.Length == 1 && args[0] == "--shader-test")
+        {
+            Environment.ExitCode = GpuOverlay.ValidateShader();
+            return;
+        }
+        if (args.Length == 1 && args[0] == "--cpu") _preferGpu = false;
         if (args.Length == 2 && args[0] == "--benchmark")
         {
             Environment.ExitCode = SelfTest.Benchmark(args[1]);
@@ -110,6 +117,11 @@ internal static unsafe class Program
 
     private static nint WindowProc(nint hwnd, uint msg, nuint wp, nint lp)
     {
+        // GPU no-redirection windows have no alpha hit-test. The extended
+        // transparent style plus this response gives Windows a second
+        // opportunity to pass clicks to the underlying application.
+        if (hwnd != _messageWindow && msg == 0x0084) return new nint(-1);
+        if (hwnd != _messageWindow && msg == 0x0021) return new nint(3);
         if (hwnd == _messageWindow)
         {
             if (msg == Native.WM_TIMER)
@@ -190,16 +202,19 @@ internal static unsafe class Program
 
         // Full native-resolution print processing is CPU intensive; cap it by area.
         long pixels = (long)_surface.Width * _surface.Height;
-        int targetInterval = pixels >= 7_000_000 ? 33 : pixels >= 3_000_000 ? 25 : 16;
-        int interval = Math.Max(targetInterval, (int)Math.Min(145, _lastRenderCost * 1.30));
+        int targetInterval = _surface.IsGpu ? 16 :
+            pixels >= 7_000_000 ? 33 : pixels >= 3_000_000 ? 25 : 16;
+        int interval = _surface.IsGpu ? targetInterval :
+            Math.Max(targetInterval, (int)Math.Min(145, _lastRenderCost * 1.30));
         if (now - _lastRender < interval) return;
         _lastRender = now;
         try
         {
             if (Native.GetCursorPos(out Native.POINT position))
             {
-                _aimX += (position.X - _aimX) * 0.23f;
-                _aimY += (position.Y - _aimY) * 0.23f;
+                float easing = _surface.IsGpu ? 0.39f : 0.23f;
+                _aimX += (position.X - _aimX) * easing;
+                _aimY += (position.Y - _aimY) * easing;
             }
             long started = Environment.TickCount64;
             _surface.Render(_aimX, _aimY);
@@ -207,9 +222,18 @@ internal static unsafe class Program
         }
         catch (Exception e)
         {
+            bool gpuFailed = _surface?.IsGpu == true;
             _active = false;
-            _surface.Deactivate();
-            Native.MessageBoxW(0, e.Message, "Spotlighter rendering failed", 0x30);
+            _surface?.Dispose();
+            _surface = null;
+            if (gpuFailed)
+            {
+                // Recover from device removal, shader/driver errors.
+                ReportGpuFailure(e);
+                _preferGpu = false;
+                Toggle();
+            }
+            else Native.MessageBoxW(0, e.Message, "Spotlighter rendering failed", 0x30);
         }
     }
 
@@ -224,7 +248,19 @@ internal static unsafe class Program
                 _surface?.Deactivate();
                 return;
             }
-            _surface ??= new DesktopSurface(WindowClass, _module);
+            if (_surface is null)
+            {
+                if (_preferGpu)
+                {
+                    try { _surface = new GpuOverlay(WindowClass, _module); }
+                    catch (Exception gpuError)
+                    {
+                        ReportGpuFailure(gpuError);
+                        _preferGpu = false;
+                    }
+                }
+                _surface ??= new DesktopSurface(WindowClass, _module);
+            }
             if (Native.GetCursorPos(out Native.POINT pt))
             {
                 _aimX = pt.X;
@@ -264,6 +300,8 @@ internal static unsafe class Program
         try
         {
             Native.AppendMenuW(menu, Native.MF_STRING, 1, _active ? "Disable Spotlighter" : "Enable Spotlighter");
+            Native.AppendMenuW(menu, Native.MF_STRING, 3,
+                _preferGpu ? "Switch to CPU print mode" : "Try GPU paper-light mode");
             Native.AppendMenuW(menu, Native.MF_STRING, 2, "Exit");
             Native.GetCursorPos(out Native.POINT cursor);
             Native.SetForegroundWindow(_messageWindow);
@@ -271,8 +309,33 @@ internal static unsafe class Program
                 cursor.X, cursor.Y, 0, _messageWindow, 0);
             if (choice == 1) Toggle();
             else if (choice == 2) Shutdown();
+            else if (choice == 3)
+            {
+                bool resume = _active;
+                _active = false;
+                _surface?.Dispose();
+                _surface = null;
+                _preferGpu = !_preferGpu;
+                if (resume) Toggle();
+            }
         }
         finally { Native.DestroyMenu(menu); }
+    }
+
+    private static void ReportGpuFailure(Exception ex)
+    {
+        // GPU fails open to the old screenshot renderer. Keep a diagnostic
+        // without blocking the user behind an activation failure dialog.
+        try
+        {
+            string folder = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Spotlighter");
+            System.IO.Directory.CreateDirectory(folder);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(folder, "gpu-fallback.log"),
+                DateTimeOffset.Now + Environment.NewLine + ex);
+        }
+        catch { }
     }
 
     private static void Shutdown()

@@ -7,7 +7,7 @@ namespace Spotlighter;
 /// and from high-frequency mouse-follow lighting. The latter is SIMD accelerated.
 /// One Native AOT layered window remains click-through and capture-excluded.
 /// </summary>
-internal sealed unsafe class DesktopSurface : IDisposable
+internal sealed unsafe class DesktopSurface : IDesktopOverlay
 {
     private readonly nint _window;
     private readonly nint _screenDc;
@@ -24,10 +24,11 @@ internal sealed unsafe class DesktopSurface : IDisposable
     private bool _disposed;
     private long _lastCapture;
 
-    internal int Left { get; }
-    internal int Top { get; }
-    internal int Width { get; }
-    internal int Height { get; }
+    public int Left { get; }
+    public int Top { get; }
+    public int Width { get; }
+    public int Height { get; }
+    public bool IsGpu => false;
 
     internal DesktopSurface(string windowClass, nint module)
     {
@@ -87,7 +88,7 @@ internal sealed unsafe class DesktopSurface : IDisposable
         }
     }
 
-    internal void Activate()
+    public void Activate()
     {
         if (_visible) return;
         _lastCapture = 0;
@@ -106,14 +107,14 @@ internal sealed unsafe class DesktopSurface : IDisposable
         _visible = true;
     }
 
-    internal void Deactivate()
+    public void Deactivate()
     {
         if (!_visible) return;
         Native.ShowWindow(_window, Native.SW_HIDE);
         _visible = false;
     }
 
-    internal void Render(float aimScreenX, float aimScreenY)
+    public void Render(float aimScreenX, float aimScreenY)
     {
         if (_disposed) return;
         long now = Environment.TickCount64;
