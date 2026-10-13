@@ -22,6 +22,7 @@ public sealed partial class Store
             PrepareWrite();
             var value = new SettingsDto(Text(request.StreetName, "街道全称", 100), Text(request.IssuingUnit, "落款单位", 100),
                 Text(request.DefaultInspector, "默认排查人", 100), Text(request.NoticeTemplate, "通知单正文模板", 12000, true), request.JpegQuality);
+            WordExporter.ValidateNoticeTemplate(value.NoticeTemplate);
             if (value.JpegQuality is < 1 or > 100) throw new ApiException(400, "JPEG 质量必须是 1 至 100 的整数。");
             using var command = Command("UPDATE settings SET street_name=$street,issuing_unit=$unit,default_inspector=$inspector,notice_template=$template,jpeg_quality=$quality WHERE id=1;", null,
                 ("$street", value.StreetName), ("$unit", value.IssuingUnit), ("$inspector", value.DefaultInspector), ("$template", value.NoticeTemplate), ("$quality", value.JpegQuality));

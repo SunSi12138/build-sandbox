@@ -104,6 +104,7 @@ onMounted(fetchBackups)
           <div><dt>点位</dt><dd>{{ preview.pointCount }}</dd></div>
           <div><dt>排查</dt><dd>{{ preview.inspectionCount }}</dd></div>
           <div><dt>问题</dt><dd>{{ preview.issueCount }}</dd></div>
+          <div><dt>整治</dt><dd data-testid="restore-campaign-count">{{ preview.campaignCount }}</dd></div>
           <div><dt>照片</dt><dd>{{ preview.photoCount }}</dd></div>
           <div><dt>解压大小</dt><dd>{{ formatBytes(preview.expandedBytes) }}</dd></div>
           <div class="detail-wide"><dt>确认截止</dt><dd>{{ dateTime(preview.expiresAt) }}</dd></div>

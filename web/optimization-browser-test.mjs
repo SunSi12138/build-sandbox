@@ -22,6 +22,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
   const draft = async () => page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v2')))
   const choose = async (locator, name) => { await locator.click(); await page.getByRole('option', { name, exact: true }).click() }
   async function beginInspection() {
+    await goto('/points')
     await page.evaluate(() => localStorage.removeItem('street-eco.inspection-draft.v2'))
     await goto('/inspections/new')
     await page.getByTestId('inspection-point-search').fill(point.name)
@@ -91,6 +92,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       const record = await (await saved).json()
       assert.equal(record.photos.length, 0)
       assert.equal(record.inspection.result, 'normal')
+      await page.waitForURL('**/#/inspections/' + record.inspection.id)
     })
 
     await test('F02 failed deletion retains a retryable ID without re-emitting it', async () => {

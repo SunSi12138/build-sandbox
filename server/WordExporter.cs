@@ -30,8 +30,38 @@ public static class WordExporter
         }
     }
 
+    internal static void ValidateNoticeTemplate(string template)
+    {
+        var first = template.IndexOf("{问题}", StringComparison.Ordinal);
+        if (first >= 0 && template.IndexOf("{问题}", first + "{问题}".Length, StringComparison.Ordinal) >= 0)
+            throw new ApiException(400, "通知单模板中的 {问题} 最多只能出现一次，请修改模板。");
+    }
+
+    private static string ExpandNoticeText(string template, InspectionDto inspection, SettingsDto settings, string deadline)
+    {
+        var result = new StringBuilder(template.Length);
+        var position = 0;
+        while (position < template.Length)
+        {
+            var start = template.IndexOf('{', position);
+            var end = start < 0 ? -1 : template.IndexOf('}', start + 1);
+            if (start < 0 || end < 0) { result.Append(template, position, template.Length - position); break; }
+            result.Append(template, position, start - position);
+            var token = template[start..(end + 1)];
+            result.Append(token switch
+            {
+                "{日期}" => ChineseDate(inspection.Date), "{点位}" => inspection.PointName,
+                "{期限}" => ChineseDate(deadline), "{街道全称}" => settings.StreetName,
+                "{社区}" => inspection.CommunityName, _ => token
+            });
+            position = end + 1;
+        }
+        return result.ToString();
+    }
+
     public static void WriteNotice(Stream destination, InspectionDetailDto detail, SettingsDto settings, WordPhoto[] photos)
     {
+        ValidateNoticeTemplate(settings.NoticeTemplate);
         using var document = new Document(destination, false, "整改通知单", settings.StreetName);
         var inspection = detail.Inspection;
         if (!string.IsNullOrWhiteSpace(inspection.NoticeNumber)) document.Paragraph("编号：" + inspection.NoticeNumber, align: "right");
@@ -40,17 +70,11 @@ public static class WordExporter
 
         // Each issue keeps its own date in the table; the template uses the last deadline.
         var deadline = detail.Issues.Select(issue => issue.Deadline).Order(StringComparer.Ordinal).LastOrDefault() ?? inspection.Date;
-        var template = settings.NoticeTemplate
-            .Replace("{日期}", ChineseDate(inspection.Date), StringComparison.Ordinal)
-            .Replace("{点位}", inspection.PointName, StringComparison.Ordinal)
-            .Replace("{期限}", ChineseDate(deadline), StringComparison.Ordinal)
-            .Replace("{街道全称}", settings.StreetName, StringComparison.Ordinal)
-            .Replace("{社区}", inspection.CommunityName, StringComparison.Ordinal);
-        var parts = template.Split("{问题}", StringSplitOptions.None);
+        var parts = settings.NoticeTemplate.Split("{问题}", StringSplitOptions.None);
         for (var index = 0; index < parts.Length; index++)
         {
-            foreach (var paragraph in parts[index].Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
-                if (!string.IsNullOrWhiteSpace(paragraph)) document.Paragraph(paragraph.Trim());
+            foreach (var paragraph in ExpandNoticeText(parts[index], inspection, settings, deadline).Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n'))
+                if (!string.IsNullOrWhiteSpace(paragraph)) document.Paragraph(paragraph);
             if (index == 0 && parts.Length > 1) WriteIssues(document, detail.Issues);
         }
         if (parts.Length == 1) WriteIssues(document, detail.Issues);
@@ -193,7 +217,7 @@ public static class WordExporter
             campaign.Location, Number(campaign.ParticipantCount), Number(campaign.VehicleCount), DecimalNumber(campaign.GarbageTons),
             DecimalNumber(campaign.AreaSqm), CampaignSummary(campaign)
         });
-        document.Table(["序号", "整治日期", "整治名称", "类型", "所属社区", "整治地点", "参加人数", "出动车辆", "清运垃圾（吨）", "清理面积（㎡）", "整治内容及成效"],
+        document.Table(["序号", "整治日期", "整治名称", "类型", "所属社区", "整治地点", "参加人数", "出动车辆", "清运垃圾（吨）", "清理面积（㎡）", "整治内容及成效（摘要）"],
             rows, [4, 9, 14, 8, 8, 11, 6, 6, 7, 7, 20], centeredColumns: [0, 1], rightAlignedColumns: [6, 7, 8, 9],
             summary: $"共 {ledger.Campaigns.Length} 次整治，累计参加 {ledger.Campaigns.Sum(item => (long)(item.ParticipantCount ?? 0))} 人、出动车辆 {ledger.Campaigns.Sum(item => (long)(item.VehicleCount ?? 0))} 辆、清运垃圾 {DecimalNumber(ledger.Campaigns.Sum(item => item.GarbageTons ?? 0))} 吨、清理面积 {DecimalNumber(ledger.Campaigns.Sum(item => item.AreaSqm ?? 0))} ㎡");
         if (!ledger.IncludePhotos) return;

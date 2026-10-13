@@ -72,7 +72,7 @@ export interface BackupOverviewDto { items: BackupEntryDto[]; retentionCount: nu
 export interface BackupManifest { formatVersion: number; schemaVersion: number; createdAt: string; application: string }
 export interface RestorePreviewDto {
   token: string; createdAt: string; schemaVersion: number; photoCount: number; pointCount: number
-  inspectionCount: number; issueCount: number; expandedBytes: number; expiresAt: string
+  inspectionCount: number; issueCount: number; campaignCount: number; expandedBytes: number; expiresAt: string
 }
 export interface RestoreRequest { token: string; confirm: boolean }
 export interface RestoreResultDto { ok: boolean; preservedBackup: string; message: string }

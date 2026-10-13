@@ -67,9 +67,7 @@ def validate_docx(payload: bytes) -> tuple[str, int, ET.Element]:
                     span = cell.find("./" + W + "tcPr/" + W + "gridSpan")
                     spans += int(span.get(W + "val", "1")) if span is not None else 1
                 require(spans == len(grid), "Table cell spans do not match its grid")
-        visible_text = "".join(element.text or "" for element in document.iter(W + "t"))
-        for phrase in ("上传", "留痕", "暂无照片", "附后照片", "无。"):
-            require(phrase not in visible_text, "Forbidden generated Word phrase: " + phrase)
+        # Business prose is data: no global ordinary-word blacklist.
         relationships = {item.get("Id"): item for item in parsed["word/_rels/document.xml.rels"]}
         for image in document.iter(A + "blip"):
             relation = relationships.get(image.get(R + "embed"))

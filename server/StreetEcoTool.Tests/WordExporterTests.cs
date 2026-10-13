@@ -17,6 +17,41 @@ public sealed class WordExporterTests
     private static readonly XNamespace Ct = "http://schemas.openxmlformats.org/package/2006/content-types";
 
     [Fact]
+    public void DuplicateProblemBlockIsRejectedWithoutReplacingStoredTemplate()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var original = store.GetSettings();
+        var invalid = original with { NoticeTemplate = "正文{问题}再次{问题}" };
+        Assert.Equal(400, Assert.Throws<ApiException>(() => store.SaveSettings(invalid)).StatusCode);
+        Assert.Equal(original, store.GetSettings());
+        using var destination = new MemoryStream();
+        Assert.Throws<ApiException>(() => WordExporter.WriteNotice(destination, Inspection(), invalid, []));
+        Assert.Equal(0, destination.Length);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SixVariablesAndLegitimateBusinessTextArePreserved(bool explicitBlock)
+    {
+        var detail = Inspection();
+        detail = detail with { Inspection = detail.Inspection with { PointName = "让居民了解{问题}的现场点位", Notes = "请妥善保管上传的现场原文。" } };
+        var settings = Settings() with { NoticeTemplate = "{街道全称}：{社区}\r\n经{日期}对{点位}排查，A&B <原文>。\n请于{期限}前妥善办理。" + (explicitBlock ? "\n{问题}" : "") };
+        using var notice = new Package(Render(stream => WordExporter.WriteNotice(stream, detail, settings, [])));
+        ValidatePackage(notice);
+        var text = Text(notice.Xml("word/document.xml"));
+        Assert.Contains(settings.StreetName, text);
+        Assert.Contains(detail.Inspection.CommunityName, text);
+        Assert.Contains(detail.Inspection.PointName, text);
+        Assert.Contains("A&B <原文>。", text);
+        Assert.Contains("妥善办理。", text);
+        foreach (var issue in detail.Issues) Assert.Single(Regex.Matches(text, Regex.Escape(issue.Description)));
+        using var record = new Package(Render(stream => WordExporter.WriteRecord(stream, detail, settings, [])));
+        Assert.Contains(detail.Inspection.Notes, Text(record.Xml("word/document.xml")));
+    }
+
+    [Fact]
     public void RecordIsACompletePackageWithEscapedTextAllIssuesAndRemarks()
     {
         var detail = Inspection();
@@ -112,7 +147,6 @@ public sealed class WordExporterTests
     [Theory]
     [InlineData("经{日期}对{点位}排查。<原样> & 引号\"测试\"。{问题}请于{期限}前完成。")]
     [InlineData("<原样> & 引号\"测试\"。请按要求整改。")]
-    [InlineData("<原样> & 引号\"测试\"。{问题}再次说明：{问题}请于{期限}前完成。")]
     public void NoticeTemplateAlwaysIncludesEveryIssueExactlyOnceWithoutXmlInjection(string template)
     {
         var detail = Inspection();
