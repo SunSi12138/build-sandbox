@@ -12,7 +12,7 @@ internal static unsafe class Program
 {
     private const string WindowClass = "Spotlighter.LayeredPaperWindow.1";
     private const uint TrayMessage = Native.WM_USER + 27;
-    private const nuint TimerId = 1;
+    private static readonly nuint TimerId = 1;
     private const long LongPressMs = 800;
 
     // Keep reverse P/Invoke delegates alive for the lifetime of the process.
