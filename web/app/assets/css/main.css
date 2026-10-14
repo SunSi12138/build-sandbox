@@ -253,3 +253,7 @@ a.list-row:hover { background:var(--surface-2); }
   .name-remove { min-width: 40px; min-height: 40px; }
   .coordinate-picker { min-width: 40px; min-height: 40px; margin-top: -8px; margin-bottom: -8px; }
 }
+
+/* Table cells keep full name tags on one line; the existing table viewport scrolls. */
+.table-wrap .name-tags { flex-wrap: nowrap; max-width: none; white-space: nowrap; }
+.table-wrap .name-tags [data-slot="base"] { flex-shrink: 0; white-space: nowrap; overflow-wrap: normal; height: 20px; padding-top: 0; padding-bottom: 0; }

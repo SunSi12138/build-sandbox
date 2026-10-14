@@ -199,6 +199,8 @@ internal static class Startup
         {
             server.AddServerHeader = false;
             server.Limits.MaxRequestBodySize = 10L * 1024 * 1024;
+            // Up to 200 selected point IDs produce a bounded query slightly above 8 KiB.
+            server.Limits.MaxRequestLineSize = 16 * 1024;
             foreach (var address in addresses)
             {
                 if (address == "127.0.0.1") server.ListenLocalhost(options.Port);
