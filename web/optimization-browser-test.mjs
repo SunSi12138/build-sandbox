@@ -215,12 +215,22 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
         assert.equal(response.status, 201)
         pictures.push(await response.json())
       }
-      await page.evaluate(({ pictures, today }) => {
-        const key = 'street-eco.inspection-draft.v2'
-        const envelope = JSON.parse(localStorage.getItem(key))
+      const envelope = await draft()
+      assert.equal(envelope.version, 2)
+      assert.equal(envelope.draft.result, 'issues')
+      // Leave the live editor before seeding a large persisted fixture. Its
+      // beforeunload/pagehide handlers correctly flush its one in-memory issue;
+      // editing localStorage in that live editor and then reloading would let
+      // that flush overwrite the fixture, not test restoration of 50 issues.
+      await page.getByRole('link', { name: '返回', exact: true }).first().click()
+      await expect(page.getByTestId('inspection-save')).toHaveCount(0)
+      await page.evaluate(({ envelope, pictures, today }) => {
         envelope.draft.issues = Array.from({ length: 50 }, (_, i) => ({ key: i + 1, description: '性能观察问题' + i + '现场检查。'.repeat(100), requirement: '保留最后输入。', deadline: today, responsibleUnit: '测试社区', photos: i < 2 ? [pictures[i]] : [] }))
-        localStorage.setItem(key, JSON.stringify(envelope))
-      }, { pictures, today: bootstrap.today })
+        localStorage.setItem('street-eco.inspection-draft.v2', JSON.stringify(envelope))
+      }, { envelope, pictures, today: bootstrap.today })
+      await goto('/inspections/new')
+      await expect(page.getByTestId('inspection-issue-description')).toHaveCount(50)
+      // Now a real reload flushes and restores all 50 issues and their photos.
       await page.reload({ waitUntil: 'networkidle' })
       await expect(page.getByTestId('inspection-issue-description')).toHaveCount(50)
       const measurement = await page.evaluate(async () => {
