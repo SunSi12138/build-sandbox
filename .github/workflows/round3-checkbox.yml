@@ -1,0 +1,49 @@
+name: Isolate ledger point checkbox labels
+on:
+  push:
+    branches: [hbtool]
+    paths: ['.github/workflows/round3-checkbox.yml']
+permissions:
+  contents: write
+  actions: write
+jobs:
+  fix:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fix checkbox association and preserve actual feature failure evidence
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('web/app/components/LedgerExport.vue');s=p.read_text()
+          old='<UFormField v-if="props.kind === \'point\'" label="点位" required>'
+          assert old in s
+          s=s.replace(old,'<template v-if="props.kind === \'point\'"><UFormField label="点位" required>')
+          old='data-testid="ledger-point-search" />';assert old in s
+          s=s.replace(old,old+'</UFormField>')
+          old=':key="point.id" :label="point.name" :model-value="selectedPoints.some'
+          assert old in s
+          s=s.replace(old,':key="point.id" :id="`ledger-point-${point.id}`" :label="point.name" :aria-label="point.name" :model-value="selectedPoints.some')
+          old='        </UFormField>\n        <UFormField label="时间范围"';assert old in s
+          s=s.replace(old,'        </template>\n        <UFormField label="时间范围"')
+          p.write_text(s)
+          p=Path('web/round3-browser-test.mjs');s=p.read_text()
+          s=s.replace("import { mkdir } from 'node:fs/promises'", "import { mkdir, writeFile } from 'node:fs/promises'")
+          old="  } finally {\n    await api('/settings'";assert old in s
+          s=s.replace(old,"  } catch (error) {\n    await page.screenshot({ path: path.join(evidence, 'round3-failure.png'), fullPage: true }).catch(() => {})\n    await writeFile(path.join(evidence, 'round3-failure.html'), await page.content()).catch(() => {})\n    throw error\n  } finally {\n    await api('/settings'")
+          p.write_text(s)
+          Path('.github/workflows/round3-checkbox.yml').unlink()
+          PY
+          node --check web/round3-browser-test.mjs
+          git diff --check
+      - name: Commit and dispatch complete regression
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git ls-remote origin refs/heads/hbtool | cut -f1)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add web .github/workflows/round3-checkbox.yml
+          git commit -m 'fix: give point export checkboxes distinct labels outside the search form field'
+          git push origin HEAD:hbtool
+          gh api --method POST repos/${{ github.repository }}/actions/workflows/build.yml/dispatches -f ref=hbtool
