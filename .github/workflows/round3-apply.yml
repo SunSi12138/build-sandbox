@@ -1,8 +1,8 @@
-name: Verify point-linked campaign implementation stage
+name: Verify point-linked campaign UI stage
 on:
   push:
     branches: [hbtool]
-    paths: ['scripts/round3-apply.py', 'scripts/round3-part-*.b64']
+    paths: ['scripts/round3-apply.py', 'scripts/round3-front*.py', 'scripts/round3-feature-test.txt']
   workflow_dispatch:
 permissions:
   contents: write
@@ -19,33 +19,47 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: Apply scoped changes
         run: python3 scripts/round3-apply.py
       - name: Unit tests
         run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror
+      - run: npm ci
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm run generate
+        working-directory: web
       - name: NativeAOT and real API regression
         run: |
           dotnet publish server/StreetEcoTool.csproj -c Release -r linux-x64 -o publish -p:PublishAot=true -p:SelfContained=true -warnaserror
           python3 tests/api-smoke.py --executable publish/StreetEcoTool --report test-results/api-smoke-report.json
           python3 tests/word-smoke.py --executable publish/StreetEcoTool --report test-results/word-smoke-report.json
-      - name: Commit verified backend stage
+      - name: Commit verified stage and dispatch complete regression
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git diff --check
           test "$(git ls-remote origin refs/heads/hbtool | cut -f1)" = "$GITHUB_SHA"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add server tests
+          git add server web tests docs scripts .github/workflows/round3-apply.yml
           git commit -F /tmp/hbtool-round3-message.txt
           git push origin HEAD:hbtool
+          gh api --method POST repos/${{ github.repository }}/actions/workflows/build.yml/dispatches -f ref=hbtool
       - name: Preserve results and source
         if: always()
         run: |
           mkdir -p test-results
           git diff > test-results/stage.patch
-          tar --exclude='*/bin' --exclude='*/obj' -czf test-results/stage-source.tar.gz server tests
+          tar --exclude='*/node_modules' --exclude='*/bin' --exclude='*/obj' --exclude='*/.nuxt' --exclude='*/.output' --exclude='*/test-results' -czf test-results/stage-source.tar.gz server web tests scripts docs .github README.md global.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: round3-backend-evidence
+          name: round3-ui-stage-evidence
           path: test-results/
           retention-days: 14
