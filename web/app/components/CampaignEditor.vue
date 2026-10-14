@@ -1,17 +1,25 @@
 <script setup lang="ts">
 import type { FormError } from '@nuxt/ui'
-import type { CampaignDetailDto, CampaignWriteRequest, PhotoUploadDto } from '~/types/api'
-import { errorMessage, todayLocal } from '~/utils/format'
+import type { CampaignDetailDto, CampaignWriteRequest, PhotoUploadDto, PointDto, NewPointDraft } from '~/types/api'
+import { errorMessage, todayLocal, parseCoordinates, queryText } from '~/utils/format'
 const props = defineProps<{ initial?: CampaignDetailDto | null }>()
 const emit = defineEmits<{ saved: [detail: CampaignDetailDto] }>()
 const { bootstrap, load } = useAppData()
 const toast = useToast()
-const draftKey = 'street-eco-campaign-draft-v2'
+const route = useRoute()
+const router = useRouter()
+const draftKey = 'street-eco-campaign-draft-v3'
+const selectedPoint = ref<PointDto | null>(null)
+const pointLoading = ref(false)
+const conflictOpen = ref(false)
+const requestedPoint = ref('')
+function emptyPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
 interface CampaignState {
   name: string
   typeId: string
-  communityId: string
-  location: string
+  pointId: string
+  pointMode: 'regular' | 'temporary'
+  newPoint: NewPointDraft
   date: string
   endDate: string
   organizer: string
@@ -30,8 +38,9 @@ interface CampaignState {
 const state = reactive<CampaignState>({
   name: '',
   typeId: '',
-  communityId: '',
-  location: '',
+  pointId: '',
+  pointMode: 'regular',
+  newPoint: emptyPoint(),
   date: todayLocal(),
   endDate: '',
   organizer: '',
@@ -72,8 +81,7 @@ const quantityFields = ['participantCount', 'vehicleCount', 'garbageTons', 'area
 const textFields = [
   'name',
   'typeId',
-  'communityId',
-  'location',
+  'pointId',
   'date',
   'endDate',
   'organizer',
@@ -95,9 +103,16 @@ function restoreDraft() {
       state?: Record<string, unknown>
       savedAt?: string
     }
-    if (saved.version !== 2 || !saved.state) {
+    if (saved.version !== 3 || !saved.state) {
       localStorage.removeItem(draftKey)
       return
+    }
+    state.pointMode = saved.state.pointMode === 'temporary' ? 'temporary' : 'regular'
+    const point = saved.state.newPoint
+    if (point && typeof point === 'object') {
+      const values = point as Record<string, unknown>
+      for (const key of Object.keys(emptyPoint()) as (keyof NewPointDraft)[])
+        if (typeof values[key] === 'string') state.newPoint[key] = values[key]
     }
     for (const field of textFields)
       if (typeof saved.state[field] === 'string') state[field] = saved.state[field] as string
@@ -134,7 +149,7 @@ function persist() {
   const now = new Date()
   const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
   try {
-    localStorage.setItem(draftKey, JSON.stringify({ version: 2, state, savedAt: time }))
+    localStorage.setItem(draftKey, JSON.stringify({ version: 3, state, savedAt: time }))
     savedAt.value = time
     storageFailed.value = false
   } catch {
@@ -164,6 +179,11 @@ onMounted(async () => {
       state.date = bootstrap.value?.today ?? todayLocal()
       state.organizer = bootstrap.value?.settings.issuingUnit ?? ''
       restoreDraft()
+      const requested = queryText(route.query.pointId)
+      if (requested && (state.pointMode === 'temporary' || (state.pointId && state.pointId !== requested))) {
+        requestedPoint.value = requested
+        conflictOpen.value = true
+      } else if (requested) state.pointId = requested
     }
     original = JSON.stringify(state)
     ready = true
@@ -180,8 +200,6 @@ function validate(value: CampaignState): FormError[] {
   for (const [field, label] of [
     ['name', '整治名称'],
     ['typeId', '整治类型'],
-    ['communityId', '所属社区'],
-    ['location', '整治地点'],
     ['date', '整治日期'],
     ['content', '整治内容'],
   ] as const)
@@ -190,6 +208,17 @@ function validate(value: CampaignState): FormError[] {
         name: field,
         message: `${field.endsWith('Id') || field === 'date' ? '请选择' : '请填写'}${label}`,
       })
+  if (!props.initial) {
+    if (value.pointMode === 'regular') {
+      if (!value.pointId || !selectedPoint.value) errors.push({ name: 'pointId', message: '请选择点位' })
+      else if (selectedPoint.value.disabled) errors.push({ name: 'pointId', message: '该点位已停用' })
+    } else {
+      for (const [key, label] of [['name', '名称'], ['communityId', '社区'], ['typeId', '类型'], ['address', '详细地址']] as const)
+        if (!value.newPoint[key].trim()) errors.push({ name: `newPoint.${key}`, message: `请填写${label}` })
+      const coordinates = parseCoordinates(value.newPoint.coordinates)
+      if (coordinates.error) errors.push({ name: 'newPoint.coordinates', message: coordinates.error })
+    }
+  }
   if (value.endDate && value.endDate < value.date)
     errors.push({ name: 'endDate', message: '结束日期不能早于整治日期' })
   for (const field of quantityFields) {
@@ -212,14 +241,18 @@ function validate(value: CampaignState): FormError[] {
   return errors
 }
 async function save() {
-  if (loading.value || saving.value || photosBusy.value || validate(state).length) return
+  if (loading.value || saving.value || pointLoading.value || photosBusy.value || validate(state).length) return
   saving.value = true
   error.value = ''
   const body: CampaignWriteRequest = {
     name: state.name,
     typeId: state.typeId,
-    communityId: state.communityId,
-    location: state.location,
+    pointId: props.initial ? props.initial.campaign.pointId : state.pointMode === 'regular' ? state.pointId : null,
+    newPoint: !props.initial && state.pointMode === 'temporary' ? {
+      name: state.newPoint.name, communityId: state.newPoint.communityId, typeId: state.newPoint.typeId,
+      address: state.newPoint.address, contact: state.newPoint.contact, phone: state.newPoint.phone,
+      ...parseCoordinates(state.newPoint.coordinates), frequency: 'irregular', disabled: false, temporary: true,
+    } : null,
     date: state.date,
     endDate: state.endDate || null,
     organizer: state.organizer,
@@ -274,6 +307,7 @@ function finishLeave(leave: boolean) {
   leaveResolve = undefined
 }
 onBeforeRouteLeave(() => {
+  persist()
   if (saving.value) return false
   if (completed || (!photosBusy.value && (!props.initial || JSON.stringify(state) === original)))
     return true
@@ -288,6 +322,16 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', persist)
   leaveResolve?.(false)
 })
+function keepDraft() {
+  conflictOpen.value = false
+  void router.replace({ query: { ...route.query, pointId: undefined } })
+}
+function useRequestedPoint() {
+  state.pointMode = 'regular'
+  state.pointId = requestedPoint.value
+  state.newPoint = emptyPoint()
+  conflictOpen.value = false
+}
 </script>
 <template>
   <UAlert v-if="error" :description="error" color="error" variant="subtle" role="alert" />
@@ -295,6 +339,8 @@ onBeforeUnmount(() => {
     请先维护社区和整治类型
   </p>
   <UForm :state="state" :validate="validate" class="form-sections" @submit="save">
+    <RecordPointPicker v-if="!initial" v-model:mode="state.pointMode" v-model:point-id="state.pointId" v-model:new-point="state.newPoint" :disabled="formDisabled" @selected="selectedPoint = $event" @busy="pointLoading = $event" />
+    <section v-else class="form-section"><h2>点位</h2><NuxtLink :to="`/points/${initial.campaign.pointId}`" class="text-sm text-primary">{{ initial.campaign.pointName }}</NuxtLink><p class="text-xs text-muted">{{ initial.campaign.communityName }} · {{ initial.campaign.location }}</p></section>
     <section class="form-section">
       <h2>基本信息</h2>
       <div class="field-grid">
@@ -315,23 +361,6 @@ onBeforeUnmount(() => {
             data-testid="campaign-type"
             :disabled="formDisabled"
         /></UFormField>
-        <UFormField label="所属社区" name="communityId" required
-          ><USelect
-            v-model="state.communityId"
-            :items="communities"
-            placeholder="请选择"
-            class="w-full"
-            data-testid="campaign-community"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="整治地点" name="location" required class="field-full"
-          ><UInput
-            v-model="state.location"
-            maxlength="1000"
-            class="w-full"
-            data-testid="campaign-location"
-            :disabled="formDisabled"
-        /></UFormField>
         <UFormField label="整治日期" name="date" required
           ><UInput
             v-model="state.date"
@@ -349,16 +378,16 @@ onBeforeUnmount(() => {
             :disabled="formDisabled"
         /></UFormField>
         <UFormField label="组织单位" name="organizer" class="field-full"
-          ><UInput
+          ><NameTagsInput
             v-model="state.organizer"
             maxlength="200"
             class="w-full"
             :disabled="formDisabled"
         /></UFormField>
         <UFormField label="参加单位及人员" name="participants" class="field-full"
-          ><UTextarea
+          ><NameTagsInput
             v-model="state.participants"
-            :rows="2"
+            data-testid="campaign-participants"
             maxlength="2000"
             class="w-full"
             :disabled="formDisabled"
@@ -494,11 +523,12 @@ onBeforeUnmount(() => {
         type="submit"
         label="保存"
         :loading="saving"
-        :disabled="loading || photosBusy || !communities.length || !types.length"
+        :disabled="loading || pointLoading || photosBusy || conflictOpen || !communities.length || !types.length"
         data-testid="campaign-save"
       />
     </div>
   </UForm>
+  <UModal v-model:open="conflictOpen" title="草稿点位不同" description="是否将草稿改为当前点位？" :dismissible="false" :close="false"><template #footer><UButton label="继续草稿" color="neutral" variant="outline" @click="keepDraft" /><UButton label="使用当前点位" @click="useRequestedPoint" /></template></UModal>
   <UModal
     v-model:open="leaveOpen"
     title="离开页面？"

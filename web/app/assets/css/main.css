@@ -233,3 +233,23 @@ a.list-row:hover { background:var(--surface-2); }
   .check-label { display:flex;align-items:center;min-height:40px;font-size:14px;font-weight:400; }
   .check-wrapper { margin-left:0; }
 }
+
+/* Person/unit inputs keep API strings while presenting editable tags. */
+.name-tags { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 100%; vertical-align: middle; }
+.name-tags [data-slot="base"] { max-width: 100%; overflow-wrap: anywhere; height: auto; min-height: 20px; white-space: normal; }
+.names-field { min-width: 0; width: 100%; }
+.names-editor { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; min-height: var(--control-h); border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 4px; background: var(--surface); }
+.names-editor:focus-within { outline: 2px solid var(--brand-600); outline-offset: -1px; }
+.names-disabled { opacity: .65; }
+.names-input { flex: 1; min-width: 72px; }
+.names-input input { width: 100%; padding-left: 4px; }
+.name-edit-tag { display: inline-flex; align-items: center; max-width: 100%; }
+.name-edit-tag [data-slot="base"] { overflow-wrap: anywhere; height: auto; white-space: normal; }
+.name-remove { min-width: 26px; min-height: 28px; padding: 4px; }
+.coordinate-label { display: inline-flex; align-items: center; white-space: nowrap; }
+.coordinate-picker { min-height: 28px; padding: 0 4px; margin-left: 4px; }
+.deadline-label { display: inline-flex; align-items: baseline; white-space: nowrap; gap: 6px; }
+@media (max-width:767px) {
+  .name-remove { min-width: 40px; min-height: 40px; }
+  .coordinate-picker { min-width: 40px; min-height: 40px; margin-top: -8px; margin-bottom: -8px; }
+}

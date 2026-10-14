@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { verifyWordDownloads } from './word-browser-test.mjs'
 import { verifyOptimization } from './optimization-browser-test.mjs'
+import { verifyRound3 } from './round3-browser-test.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const executableArgument = process.argv.indexOf('--executable')
@@ -533,8 +534,8 @@ try {
     await page.goto(origin + '/#/campaigns/new', { waitUntil: 'networkidle' })
     await page.getByTestId('campaign-name').fill('东河沿岸卫生整治')
     await selectOption(page.getByTestId('campaign-type'), bootstrap.campaignTypes[0].name)
-    await selectOption(page.getByTestId('campaign-community'), bootstrap.communities[0].name)
-    await page.getByTestId('campaign-location').fill('东河沿岸及沿河路')
+    await page.getByTestId('campaign-point-search').fill(point.name)
+    await page.getByTestId('campaign-point-option').filter({ hasText: point.name }).click()
     await page.getByTestId('campaign-people').fill('12'); await page.getByTestId('campaign-garbage').fill('1.25')
     await page.getByTestId('campaign-content').fill('清理河岸和道路两侧垃圾，疏通排水沟。')
     for (const phase of ['before', 'process', 'after']) await uploadIn(page.getByTestId('campaign-' + phase).getByTestId('photo-file-input'), `campaign-${phase}.jpg`, fixtureJpeg)
@@ -546,7 +547,7 @@ try {
     await page.waitForURL('**/#/campaigns/' + campaignId)
     assert.equal(result.campaign.participantCount, 12); assert.equal(result.campaign.garbageTons, 1.25)
     assert.deepEqual(result.photos.map(photo => photo.phase).sort(), ['after', 'before', 'process'])
-    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v2')), null)
+    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v3')), null)
   })
 
   await test('Seven Word exports download through the current UI', async () => {
@@ -629,6 +630,7 @@ try {
     await legacy.screenshot({ path: path.join(evidence, 'unsupported-browser.png'), fullPage: true, animations: 'disabled' }); await legacy.close()
   })
   await verifyOptimization({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg })
+  await verifyRound3({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg, evidence })
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')
   assert.deepEqual(report.pageErrors, [], 'Unhandled browser errors occurred')
   assert.deepEqual(report.consoleErrors.filter(entry => !entry.expectedWasmFailure), [], 'Unexpected browser console errors occurred')

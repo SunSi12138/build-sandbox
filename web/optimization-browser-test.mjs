@@ -58,13 +58,12 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
     await goto('/')
     await test('F01 narrow point photo and disabled writes preserve concurrent metadata', async () => {
       await goto('/points/' + point.id)
-      const paused = pauseThumbnail()
-      const photo = await uploadPaused(page.getByTestId('photo-file-input'), paused)
+      await expect(page.getByTestId('photo-file-input')).toHaveCount(0)
+      const upload = await fetch(directOrigin + '/api/photos?phase=point', { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: fixtureJpeg })
+      assert.equal(upload.status, 201)
+      const photo = await upload.json()
       const newer = await api('/points/' + point.id, { method: 'PUT', body: { ...point, name: '另一窗口的新名称', address: '新地址', contact: '新联系人', phone: '新电话', notes: '新备注', disabled: true, photoIds: [] } })
-      const attached = responseFor('/points/' + point.id + '/photos', 'PUT')
-      paused.release()
-      await attached
-      await page.unroute('**/api/photos/*/thumb', paused.handler)
+      await api('/points/' + point.id + '/photos', { method: 'PUT', body: { photoIds: [photo.id] } })
       const saved = (await api('/points/' + point.id)).point
       for (const key of ['name', 'address', 'contact', 'phone', 'notes', 'disabled']) assert.equal(saved[key], newer[key])
       assert.equal(saved.photoCount, 1)
@@ -183,8 +182,8 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       await goto('/campaigns/new')
       await page.getByTestId('campaign-name').fill('慢请求整治')
       await choose(page.getByTestId('campaign-type'), bootstrap.campaignTypes[0].name)
-      await choose(page.getByTestId('campaign-community'), bootstrap.communities[0].name)
-      await page.getByTestId('campaign-location').fill('测试道路')
+      await page.getByTestId('campaign-point-search').fill(point.name)
+      await page.getByTestId('campaign-point-option').filter({ hasText: point.name }).click()
       await page.getByTestId('campaign-content').fill('请妥善保管，让每一项现场记录按原文上传。')
       let entered
       const ready = new Promise(resolve => { entered = resolve })
@@ -203,7 +202,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       await expect(page.getByRole('alert').filter({ hasText: '测试保存失败' })).toBeVisible()
       await expect(page.getByTestId('campaign-name')).toBeEnabled()
       await expect(page.getByTestId('campaign-name')).toHaveValue('慢请求整治')
-      assert((await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v2')))?.includes('慢请求整治'))
+      assert((await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v3')))?.includes('慢请求整治'))
     })
     await test('M01 measure 50-issue draft input without weakening persistence', async () => {
       await beginInspection()

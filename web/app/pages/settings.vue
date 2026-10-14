@@ -23,8 +23,24 @@ const active = ref<string | number>(tabs.some(t => t.value === route.query.tab) 
 watch(active, tab => { void router.replace({ query: { ...route.query, tab: String(tab) } }) })
 const form = reactive<SettingsDto>({ streetName: '', issuingUnit: '', defaultInspector: '', noticeTemplate: '', jpegQuality: 75 })
 const defaultTemplate = '经我街道于{日期}对你社区辖区内{点位}开展环保排查，发现以下问题：\n{问题}\n请于{期限}前整改完毕，并将整改情况书面反馈我街道。'
+const templateHost = ref<HTMLElement | null>(null)
+const templateError = ref('')
 const placeholders = ['{日期}', '{点位}', '{问题}', '{期限}', '{街道全称}', '{社区}']
 
+async function insertVariable(variable: string) {
+  if (saving.value) return
+  const editor = templateHost.value?.querySelector('textarea')
+  if (!editor) return
+  const start = editor.selectionStart ?? form.noticeTemplate.length
+  const end = editor.selectionEnd ?? start
+  const value = form.noticeTemplate.slice(0, start) + variable + form.noticeTemplate.slice(end)
+  if (value.length > 12000) { templateError.value = '正文最多 12000 字'; return }
+  templateError.value = ''
+  form.noticeTemplate = value
+  await nextTick()
+  editor.focus({ preventScroll: true })
+  editor.setSelectionRange(start + variable.length, start + variable.length)
+}
 async function fetchSettings(force = false) {
   loading.value = true
   error.value = ''
@@ -77,7 +93,7 @@ onMounted(() => { void fetchSettings() })
           <div class="field-grid">
             <UFormField class="field-full" label="街道全称" name="streetName" required><UInput v-model="form.streetName" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
             <UFormField class="field-full" label="落款单位" name="issuingUnit" required><UInput v-model="form.issuingUnit" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
-            <UFormField label="默认排查人" name="defaultInspector" required><UInput v-model="form.defaultInspector" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
+            <UFormField label="默认排查人" name="defaultInspector" required><NameTagsInput data-testid="default-inspector" v-model="form.defaultInspector" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
             <UFormField label="JPEG 质量" name="jpegQuality" help="建议 75"><UInput v-model.number="form.jpegQuality" type="number" min="1" max="100" step="1" inputmode="numeric" class="w-full" :disabled="saving" /></UFormField>
           </div>
         </section>
@@ -86,10 +102,10 @@ onMounted(() => { void fetchSettings() })
       <UForm v-else-if="active === 'template'" id="settings-template" :state="form" :validate="validate" class="form-sections" @submit="saveSettings">
         <section class="form-section">
           <div class="section-heading mb-2"><h2 class="!mb-0">通知单正文模板</h2><UButton color="neutral" variant="ghost" :disabled="saving" @click="form.noticeTemplate = defaultTemplate">重置模板</UButton></div>
-          <UFormField label="正文内容" name="noticeTemplate" required><UTextarea v-model="form.noticeTemplate" :rows="10" :maxlength="12000" class="w-full" :disabled="saving" /></UFormField>
+          <div ref="templateHost"><UFormField label="正文内容" name="noticeTemplate" required><UTextarea v-model="form.noticeTemplate" :rows="10" :maxlength="12000" class="w-full" :disabled="saving" data-testid="notice-template" /></UFormField></div><p v-if="templateError" class="text-xs text-error" role="alert">{{ templateError }}</p>
           <p class="mt-3 text-xs text-muted">{问题} 为问题表格，最多一次；不填写时在正文后补表。</p>
           <p class="mt-2 text-xs text-muted">示例：经{街道全称}于{日期}对{社区}辖区{点位}排查，发现以下问题：</p>
-          <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted"><span>变量</span><UBadge v-for="placeholder in placeholders" :key="placeholder" color="neutral" variant="outline">{{ placeholder }}</UBadge></div>
+          <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted"><span>变量</span><UButton v-for="placeholder in placeholders" :key="placeholder" type="button" color="neutral" variant="outline" :disabled="saving" :aria-label="`插入${placeholder}`" @pointerdown.prevent @mousedown.prevent @click="insertVariable(placeholder)">{{ placeholder }}</UButton></div>
         </section>
         <section class="form-section flex justify-end"><UButton type="submit" :loading="saving">保存</UButton></section>
       </UForm>

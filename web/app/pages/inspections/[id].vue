@@ -366,7 +366,7 @@ watch(() => route.query.issue, revealIssue)
     <PageState :loading="loading" :error="error" @retry="load"
       ><template v-if="detail">
         <p class="page-meta">
-          {{ detail.inspection.date }} · {{ detail.inspection.inspector }} ·
+          {{ detail.inspection.date }} · <NameTags :value="detail.inspection.inspector" /> ·
           {{ detail.inspection.communityName }}
         </p>
         <div class="flex flex-wrap items-center gap-2">
@@ -423,7 +423,7 @@ watch(() => route.query.issue, revealIssue)
             </div>
             <div>
               <dt>联系人</dt>
-              <dd>{{ detail.inspection.contact || '—' }}</dd>
+              <dd><NameTags :value="detail.inspection.contact" /></dd>
             </div>
             <div>
               <dt>电话</dt>
@@ -442,7 +442,7 @@ watch(() => route.query.issue, revealIssue)
             </div>
             <div>
               <dt>排查人</dt>
-              <dd>{{ detail.inspection.inspector }}</dd>
+              <dd><NameTags :value="detail.inspection.inspector" /></dd>
             </div>
             <div>
               <dt>通知单编号</dt>
@@ -519,7 +519,7 @@ watch(() => route.query.issue, revealIssue)
                 </div>
                 <div>
                   <dt>责任单位</dt>
-                  <dd>{{ issue.responsibleUnit }}</dd>
+                  <dd><NameTags :value="issue.responsibleUnit" /></dd>
                 </div>
               </dl>
               <IssuePhotoGroups :photos="issueDetails.get(issue.id)?.photos ?? []" />
@@ -625,7 +625,7 @@ watch(() => route.query.issue, revealIssue)
               class="w-full"
               :disabled="editing" /></UFormField
           ><UFormField name="inspector" label="排查人" required
-            ><UInput
+            ><NameTagsInput
               v-model="editState.inspector"
               :maxlength="100"
               class="w-full"
@@ -697,7 +697,7 @@ watch(() => route.query.issue, revealIssue)
               class="w-full"
               :disabled="issueEditing" /></UFormField
           ><UFormField name="responsibleUnit" label="责任单位"
-            ><UInput
+            ><NameTagsInput
               v-model="issueState.responsibleUnit"
               :maxlength="200"
               class="w-full"
@@ -759,7 +759,7 @@ watch(() => route.query.issue, revealIssue)
       title="删除排查？"
       :description="
         detail?.inspection.pointTemporary
-          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查，该临时点位及其点位照片也将删除。'
+          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查或整治，该临时点位及其点位照片也将删除。'
           : '删除后，问题、办理记录和照片无法恢复'
       "
       :dismissible="!deleting"

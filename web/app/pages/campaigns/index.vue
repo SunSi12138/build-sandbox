@@ -7,6 +7,7 @@ const route = useRoute()
 const { bootstrap, load: loadAppData } = useAppData()
 const { field, page, setPage } = useQueryFilters()
 const q = field('q'),
+  pointId = field('pointId'),
   communityId = field('communityId', 'all'),
   typeId = field('typeId', 'all'),
   from = field('from'),
@@ -51,6 +52,7 @@ async function load() {
     await loadAppData()
     const data = await $fetch<PageDto<CampaignDto>>('/api/campaigns', {
       query: {
+        pointId: pointId.value || undefined,
         q: q.value || undefined,
         communityId: communityId.value === 'all' ? undefined : communityId.value,
         typeId: typeId.value === 'all' ? undefined : typeId.value,

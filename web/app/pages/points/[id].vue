@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { PointDetailDto, PhotoUploadDto } from '~/types/api'
+import type { PointDetailDto } from '~/types/api'
 import {
   coordinatesText,
   errorMessage,
@@ -10,9 +10,8 @@ import {
 } from '~/utils/format'
 const route = useRoute(),
   toast = useToast()
-const { bootstrap } = useAppData()
-const detail = ref<PointDetailDto | null>(null),
-  photos = ref<PhotoUploadDto[]>([])
+const detail = ref<PointDetailDto | null>(null)
+const photos = computed(() => detail.value?.photos ?? [])
 const loading = ref(true),
   error = ref(''),
   editorOpen = ref(false),
@@ -20,8 +19,7 @@ const loading = ref(true),
   deleting = ref(false),
   deleteError = ref(''),
   changing = ref(false),
-  promoteOpen = ref(false),
-  photoError = ref('')
+  promoteOpen = ref(false)
 const id = computed(() => queryText(route.params.id))
 const back = computed(() => {
   const value = queryText(route.query.returnTo)
@@ -34,29 +32,10 @@ async function load() {
   error.value = ''
   try {
     detail.value = await $fetch<PointDetailDto>(`/api/points/${id.value}`)
-    photos.value =
-      detail.value.photos?.map((p) => ({ id: p.id, width: p.width, height: p.height })) ?? []
   } catch (value) {
     error.value = errorMessage(value)
   } finally {
     loading.value = false
-  }
-}
-let photoRequestVersion = 0
-async function updatePhotos(value: PhotoUploadDto[]) {
-  photos.value = value
-  const version = ++photoRequestVersion
-  const pointId = id.value
-  photoError.value = ''
-  try {
-    await $fetch(`/api/points/${pointId}/photos`, {
-      method: 'PUT',
-      body: { photoIds: value.map((photo) => photo.id) },
-      retry: 0,
-    })
-  } catch (error) {
-    if (version === photoRequestVersion && pointId === id.value)
-      photoError.value = errorMessage(error)
   }
 }
 async function saved() {
@@ -141,7 +120,7 @@ watch(id, load, { immediate: true })
           :disabled="detail.point.disabled"
           class="header-action"
           ><span class="mobile-only">排查</span><span class="desktop-only">新增排查</span></UButton
-        ><UDropdownMenu :items="menu"
+        ><UButton :to="{ path: '/campaigns/new', query: { pointId: id } }" :disabled="detail.point.disabled" color="neutral" variant="outline" class="header-action" data-testid="point-new-campaign"><span class="mobile-only">整治</span><span class="desktop-only">新增整治</span></UButton><UDropdownMenu :items="menu"
           ><UButton
             icon="i-lucide-ellipsis"
             color="neutral"
@@ -156,25 +135,7 @@ watch(id, load, { immediate: true })
             <span class="text-xs text-muted">{{ photos.length }}/9</span>
           </div>
           <div class="panel-body">
-            <PhotoUploader
-              :model-value="photos"
-              phase="point"
-              :max="9"
-              :quality="bootstrap?.settings.jpegQuality"
-              @update:model-value="updatePhotos"
-            /><UAlert
-              v-if="photoError"
-              :description="photoError"
-              color="error"
-              variant="subtle"
-              class="mt-3"
-              ><template #actions
-                ><UButton
-                  label="重试"
-                  color="error"
-                  variant="outline"
-                  @click="updatePhotos(photos)" /></template
-            ></UAlert>
+            <IssuePhotos :photos="photos" label="现场" />
           </div>
         </section>
         <section class="panel">
@@ -218,7 +179,7 @@ watch(id, load, { immediate: true })
             </div>
             <div>
               <dt>联系人</dt>
-              <dd>{{ detail.point.contact || '—' }}</dd>
+              <dd><NameTags :value="detail.point.contact" /></dd>
             </div>
             <div>
               <dt>电话</dt>
@@ -276,6 +237,11 @@ watch(id, load, { immediate: true })
             :record="record"
             :return-to="route.fullPath"
           /><EmptyState v-if="!detail.inspections.length" title="暂无排查记录" />
+        </section>
+        <section class="panel" data-testid="point-campaign-history">
+          <div class="panel-head"><h2 class="section-title">历史整治</h2><UButton :to="`/campaigns?pointId=${id}`" label="查看全部" color="neutral" variant="link" /></div>
+          <NuxtLink v-for="record in detail.campaigns ?? []" :key="record.id" :to="`/campaigns/${record.id}`" class="list-row"><div class="row-body"><p class="row-title"><span>{{ record.name }}</span></p><p class="row-secondary">{{ record.date }} · {{ record.typeName }}</p></div></NuxtLink>
+          <EmptyState v-if="!detail.campaigns?.length" title="暂无整治记录" />
         </section> </template
     ></PageState>
     <PointEditor v-model:open="editorOpen" :point="detail?.point" @saved="saved" /><PointPromote

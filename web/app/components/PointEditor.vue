@@ -36,7 +36,7 @@ function validate(value: PointState): FormError[] {
   return errors
 }
 async function save() {
-  if (photosBusy.value || validate(state).length) return
+  if (loading.value || saving.value || photosBusy.value || validate(state).length) return
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
   const body: PointWriteRequest = { name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
@@ -51,13 +51,13 @@ onBeforeUnmount(() => { overlayForm.value = false })
     <template #body>
       <UAlert v-if="error" :description="error" color="error" variant="subtle" class="mb-3" />
       <p v-if="!loading && (!communities.length || !types.length)" class="mb-3 text-sm text-warning">请先维护社区和点位类型</p>
-      <UForm id="point-editor-form" :state="state" :validate="validate" class="field-grid" @submit="save">
+      <UForm id="point-editor-form" :state="state" :disabled="loading || saving" :validate="validate" class="field-grid" @submit="save">
         <UFormField label="名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="point-name" /></UFormField>
         <UFormField label="社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
-        <UFormField label="经纬度" name="coordinates" class="field-full"><UInput v-model="state.coordinates" placeholder="88.893426,29.274331" class="w-full" /></UFormField>
-        <UFormField label="联系人" name="contact"><UInput v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
+        <UFormField label="经纬度" name="coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="state.coordinates" placeholder="88.893426,29.274331" class="w-full" /></UFormField>
+        <UFormField label="联系人" name="contact"><NameTagsInput :disabled="loading || saving" v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>
         <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="3" maxlength="8000" class="w-full" /></UFormField>

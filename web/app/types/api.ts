@@ -25,7 +25,7 @@ export interface PointDto {
   lastInspectionDate: string | null; openIssueCount: number
   longitude: number | null; latitude: number | null; temporary: boolean; coverPhotoId: string | null; photoCount: number
 }
-export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[] }
+export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[]; campaigns?: CampaignDto[] }
 export interface InspectionCreateRequest {
   pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; inspector: string; result: InspectionResult; notes?: string | null
   noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]
@@ -92,16 +92,17 @@ export interface IssueQuery {
 }
 
 export interface CampaignTypeDto { id: string; name: string }
+export interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
 export interface CampaignWriteRequest {
-  name: string; typeId: string; communityId: string; location: string; date: string; content: string
+  name: string; typeId: string; pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; content: string
   endDate?: string | null; organizer?: string | null; participants?: string | null; participantCount?: number | null; vehicleCount?: number | null
   garbageTons?: number | null; areaSqm?: number | null; outcome?: string | null; notes?: string | null
   beforePhotoIds?: string[]; processPhotoIds?: string[]; afterPhotoIds?: string[]
 }
 export interface CampaignDto {
-  id: string; name: string; typeId: string; typeName: string; communityId: string; communityName: string; location: string; date: string
+  id: string; name: string; pointId: string; pointName: string; pointTemporary: boolean; typeId: string; typeName: string; communityId: string; communityName: string; location: string; date: string
   endDate: string | null; organizer: string; participants: string; participantCount: number | null; vehicleCount: number | null
   garbageTons: number | null; areaSqm: number | null; content: string; outcome: string; notes: string; photoCount: number
 }
 export interface CampaignDetailDto { campaign: CampaignDto; photos: PhotoDto[] }
-export interface CampaignQuery { q?: string; communityId?: string; typeId?: string; from?: string; to?: string; page?: number; pageSize?: number }
+export interface CampaignQuery { pointId?: string; q?: string; communityId?: string; typeId?: string; from?: string; to?: string; page?: number; pageSize?: number }
