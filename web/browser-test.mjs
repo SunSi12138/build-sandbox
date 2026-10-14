@@ -190,9 +190,9 @@ async function waitForVisualPage(name, title) {
     switch (name) {
       case 'home': return count('.stat-block') === 4 && count('[data-testid="home-todos"] .list-row') > 0
       case 'points': return count('.mobile-records .list-row') > 0
-      case 'point-detail': return count('.detail-grid') > 0 && count('[data-testid="photo-uploaded"]') > 0
+      case 'point-detail': return count('.detail-grid') > 0 && count('.photo-grid img') > 0
       case 'inspections': return count('.mobile-records [data-testid="inspection-row"]') > 0
-      case 'inspection-new': return Boolean(input('inspection-date')?.value && input('inspection-inspector')?.value && count('[data-testid="inspection-point-option"]') > 0)
+      case 'inspection-new': return Boolean(input('inspection-date')?.value && (input('inspection-inspector')?.value || input('inspection-inspector')?.closest('.names-editor')?.querySelector('.name-edit-tag')) && count('[data-testid="inspection-point-option"]') > 0)
       case 'inspection-detail': return count('.issue-block') >= 2 && Boolean(input('batch-review'))
       case 'campaigns': return count('[data-testid="campaign-row"]') > 0
       case 'campaign-new': return Boolean(input('campaign-save') && !input('campaign-save').disabled)

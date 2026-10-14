@@ -99,7 +99,7 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
       <UFormField label="详细地址" name="newPoint.address" required class="field-full"><UInput v-model="newPoint.address" :maxlength="1000" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-address`" /></UFormField>
       <UFormField label="联系人" name="newPoint.contact"><NameTagsInput v-model="newPoint.contact" :maxlength="100" :disabled="disabled" :data-testid="`${prefix}-temporary-contact`" /></UFormField>
       <UFormField label="电话" name="newPoint.phone"><UInput v-model="newPoint.phone" type="tel" :maxlength="100" class="w-full" :disabled="disabled" /></UFormField>
-      <UFormField label="经纬度" name="newPoint.coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="newPoint.coordinates" placeholder="88.893426,29.274331" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-coordinates`" /></UFormField>
+      <UFormField label="经纬度" name="newPoint.coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="newPoint.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-coordinates`" /></UFormField>
     </div>
   </section>
 </template>

@@ -56,7 +56,7 @@ onBeforeUnmount(() => { overlayForm.value = false })
         <UFormField label="社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
-        <UFormField label="经纬度" name="coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="state.coordinates" placeholder="88.893426,29.274331" class="w-full" /></UFormField>
+        <UFormField label="经纬度" name="coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" /></UFormField>
         <UFormField label="联系人" name="contact"><NameTagsInput :disabled="loading || saving" v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>

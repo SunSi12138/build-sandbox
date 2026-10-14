@@ -147,6 +147,7 @@ watch(() => route.fullPath, load, { immediate: true })
         </div>
       </div>
     </div>
+    <div v-if="pointId" class="chip-row"><UButton :label="result?.items[0]?.pointName || '所选点位'" trailing-icon="i-lucide-x" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="true" @click="pointId = ''" /></div>
     <div v-if="from || to" class="chip-row">
       <UButton
         :label="`${from || '不限'} 至 ${to || '不限'}`"
