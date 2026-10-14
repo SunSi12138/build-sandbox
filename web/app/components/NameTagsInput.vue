@@ -14,7 +14,7 @@ let composing = false
 let published = model.value
 
 function publish() {
-  // Persist the unfinished name too, before blur/Enter, so a refresh cannot lose it.
+  // Persist the unfinished name too, so neither saving nor refreshing relies on blur.
   published = normalizeNames([...tags.value, text.value].join(' '))
   model.value = published
 }
@@ -76,6 +76,8 @@ function compositionEnd(event: CompositionEvent) {
   composing = false
   update((event.target as HTMLInputElement).value)
 }
+// Delimiters and Enter commit tags. Blur must not change the editor height between
+// pointerdown and click on the next control; the unfinished token is already saved.
 </script>
 
 <template>
@@ -85,7 +87,7 @@ function compositionEnd(event: CompositionEvent) {
         <UBadge color="neutral" variant="subtle">{{ tag }}</UBadge>
         <UButton type="button" icon="i-lucide-x" color="neutral" variant="ghost" class="name-remove" :aria-label="`移除 ${tag}`" :disabled="disabled" @mousedown.prevent @click="remove(index)" />
       </span>
-      <UInput ref="input" v-bind="$attrs" :model-value="text" :disabled="disabled" :maxlength="remaining" variant="none" class="names-input" :ui="{ base: 'ring-0 focus:ring-0 shadow-none' }" @update:model-value="update" @keydown="keydown" @paste="paste" @blur="commit" @compositionstart="composing = true" @compositionend="compositionEnd" />
+      <UInput ref="input" v-bind="$attrs" :model-value="text" :disabled="disabled" :maxlength="remaining" variant="none" class="names-input" :ui="{ base: 'ring-0 focus:ring-0 shadow-none' }" @update:model-value="update" @keydown="keydown" @paste="paste" @compositionstart="composing = true" @compositionend="compositionEnd" />
     </div>
     <p v-if="error" class="text-xs text-error" role="alert">{{ error }}</p>
   </div>
