@@ -1,0 +1,51 @@
+name: Verify point-linked campaign implementation stage
+on:
+  push:
+    branches: [hbtool]
+    paths: ['scripts/round3-apply.py', 'scripts/round3-part-*.b64']
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: hbtool-round3-stage
+  cancel-in-progress: false
+jobs:
+  apply:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Apply scoped changes
+        run: python3 scripts/round3-apply.py
+      - name: Unit tests
+        run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror
+      - name: NativeAOT and real API regression
+        run: |
+          dotnet publish server/StreetEcoTool.csproj -c Release -r linux-x64 -o publish -p:PublishAot=true -p:SelfContained=true -warnaserror
+          python3 tests/api-smoke.py --executable publish/StreetEcoTool --report test-results/api-smoke-report.json
+          python3 tests/word-smoke.py --executable publish/StreetEcoTool --report test-results/word-smoke-report.json
+      - name: Commit verified backend stage
+        run: |
+          git diff --check
+          test "$(git ls-remote origin refs/heads/hbtool | cut -f1)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server tests
+          git commit -F /tmp/hbtool-round3-message.txt
+          git push origin HEAD:hbtool
+      - name: Preserve results and source
+        if: always()
+        run: |
+          mkdir -p test-results
+          git diff > test-results/stage.patch
+          tar --exclude='*/bin' --exclude='*/obj' -czf test-results/stage-source.tar.gz server tests
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: round3-backend-evidence
+          path: test-results/
+          retention-days: 14
