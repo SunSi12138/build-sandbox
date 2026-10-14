@@ -7,7 +7,10 @@ subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
 subprocess.run(['git', 'apply', '-'], input=patch, check=True)
 p = Path('server/Store.Campaigns.cs')
 s = p.read_text()
-s = s.replace('            var actualId = id ?? NewId();', '            var organizer = Text(request.Organizer ?? GetSettings().IssuingUnit, "组织单位", 200);\n            var actualId = id ?? NewId();')
+old = '            var actualId = id ?? NewId();\n            using (var transaction = _db.BeginTransaction())'
+new = '            var organizer = Text(request.Organizer ?? GetSettings().IssuingUnit, "组织单位", 200);\n' + old
+assert s.count(old) == 1
+s = s.replace(old, new)
 s = s.replace('("$organizer", Text(request.Organizer ?? GetSettings().IssuingUnit, "组织单位", 200))', '("$organizer", organizer)')
 p.write_text(s)
 Path('/tmp/hbtool-round3-message.txt').write_text('feat: bind campaigns to points and filter existing ledgers by point\n')
