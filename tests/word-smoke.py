@@ -184,7 +184,7 @@ class WordSmoke(api_smoke.ApiSmoke):
         types = self.json("GET", "/api/campaign-types")
         before, process, after = self.upload("before"), self.upload("process"), self.upload("after")
         campaign = self.json("POST", "/api/campaigns", {
-            "name": "沿河卫生整治", "typeId": types[0]["id"], "communityId": self.community["id"], "location": "沿河道路", "date": self.today.isoformat(),
+            "name": "沿河卫生整治", "typeId": types[0]["id"], "pointId": self.point["id"], "date": self.today.isoformat(),
             "organizer": "版式验收街道办事处", "participants": "社区工作人员与志愿者", "participantCount": 18, "vehicleCount": 2,
             "garbageTons": 1.25, "areaSqm": 360.50, "content": "清理河道沿线垃圾，修剪杂草。", "outcome": "河岸环境恢复整洁。", "notes": "现场设置垃圾收集点。",
             "beforePhotoIds": [before["id"]], "processPhotoIds": [process["id"]], "afterPhotoIds": [after["id"]]

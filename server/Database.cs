@@ -10,7 +10,7 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 3;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
@@ -103,6 +103,7 @@ public sealed partial class Store : IDisposable
             CREATE TABLE campaign_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
                 CREATE TABLE campaigns (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                    point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT, point_name TEXT NOT NULL,
                     type_id TEXT NOT NULL REFERENCES campaign_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
                     community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT, community_name TEXT NOT NULL,
                     location TEXT NOT NULL, campaign_date TEXT NOT NULL, end_date TEXT,
@@ -142,9 +143,10 @@ public sealed partial class Store : IDisposable
             CREATE INDEX ix_photos_point ON photos(point_id);
             CREATE INDEX ix_photos_campaign ON photos(campaign_id);
             CREATE INDEX ix_campaigns_date ON campaigns(campaign_date,community_id,type_id);
+            CREATE INDEX ix_campaigns_point_date ON campaigns(point_id,campaign_date);
             CREATE INDEX ix_points_temporary ON points(temporary,disabled);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=2;
+            PRAGMA user_version=3;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),

@@ -75,7 +75,8 @@ public sealed partial class Store
             var point = GetPoint(id);
             var inspections = ReadInspectionList(" WHERE n.point_id=$point ORDER BY n.inspection_date DESC,n.rowid DESC;", [("$point", id)]);
             var issues = ReadIssueList(" WHERE n.point_id=$point AND x.status<>'closed' ORDER BY x.deadline,x.rowid;", Today, [("$point", id)]);
-            return new(point, inspections, issues, ReadPhotos(pointId: id));
+            var campaigns = ReadCampaigns("WHERE c.point_id=$point ORDER BY c.campaign_date DESC,c.rowid DESC;", [("$point", id)]);
+            return new(point, inspections, issues, ReadPhotos(pointId: id), campaigns);
         }
     }
 
@@ -84,7 +85,7 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            if (id is null && request.Temporary) throw new ApiException(400, "临时点位请随排查一起保存。");
+            if (id is null && request.Temporary) throw new ApiException(400, "临时点位请随排查或整治一起保存。");
             string actualId;
             using (var transaction = _db.BeginTransaction())
             {
@@ -93,6 +94,29 @@ public sealed partial class Store
             }
             return GetPoint(actualId);
         }
+    }
+
+    private PointDto ResolveRecordPoint(string? id, PointWriteRequest? newPoint, SqliteTransaction transaction)
+    {
+        if (string.IsNullOrWhiteSpace(id) == (newPoint is null))
+            throw new ApiException(400, "请选择点位或填写临时点位，不能同时提交。");
+        var pointId = newPoint is null ? Text(id, "点位", 100, true)
+            : SavePointCore(null, newPoint with { Frequency = "irregular", Disabled = false }, transaction, createTemporary: true);
+        var point = GetPointInternal(pointId, transaction);
+        if (point.Disabled) throw new ApiException(409, "该点位已停用，请先启用。");
+        return point;
+    }
+
+    // Both record types keep a temporary point alive. Call under the storage lock
+    // before staging photo deletion so the same decision governs files and SQL.
+    private bool IsLastTemporaryRecord(string pointId, string? inspectionId = null, string? campaignId = null)
+    {
+        if (!GetPointInternal(pointId).Temporary) return false;
+        using var command = Command("""
+            SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$point AND id<>$inspection)
+                 + (SELECT COUNT(*) FROM campaigns WHERE point_id=$point AND id<>$campaign);
+            """, null, ("$point", pointId), ("$inspection", inspectionId ?? ""), ("$campaign", campaignId ?? ""));
+        return Convert.ToInt32(command.ExecuteScalar()) == 0;
     }
 
     private string SavePointCore(string? id, PointWriteRequest request, SqliteTransaction transaction, bool createTemporary = false)
@@ -180,14 +204,28 @@ public sealed partial class Store
         }
     }
 
+    private PointDto[] ExportPoints(string[]? pointIds)
+    {
+        if (pointIds is null || pointIds.Length == 0) return [];
+        if (pointIds.Length > 200) throw new ApiException(400, "一次最多选择 200 个点位。");
+        return pointIds.Select(id => Text(id, "点位", 100, true)).Distinct(StringComparer.Ordinal)
+            .Select(id => GetPointInternal(id)).ToArray();
+    }
+
+    private static string LedgerPointSql(int count, string column) => count == 0 ? "" :
+        " AND " + column + " IN (" + string.Join(",", Enumerable.Range(0, count).Select(i => "$point" + i)) + ")";
+
+    private static (string Name, object? Value)[] LedgerPointParameters(string[]? pointIds) =>
+        (pointIds ?? []).Select((id, i) => ("$point" + i, (object?)id)).ToArray();
+
     public void DeletePoint(string id)
     {
         lock (_gate)
         {
             PrepareWrite();
             _ = GetPoint(id);
-            using (var used = Command("SELECT COUNT(*) FROM inspections WHERE point_id=$id;", null, ("$id", id)))
-                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该点位已有历史排查，不能删除；请停用点位。");
+            using (var used = Command("SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id) + (SELECT COUNT(*) FROM campaigns WHERE point_id=$id);", null, ("$id", id)))
+                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该点位已有排查或整治记录，不能删除；请停用点位。");
             ExecuteWithPhotoDeletion(ReadPhotos(pointId: id).Select(photo => photo.Id).ToArray(), transaction =>
             {
                 using var command = Command("DELETE FROM points WHERE id=$id;", transaction, ("$id", id));

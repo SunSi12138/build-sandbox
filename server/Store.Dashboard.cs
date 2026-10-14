@@ -68,7 +68,7 @@ public sealed partial class Store
             CreateInspection(new(null, Today, inspector, "issues", Issues: [new("巷口有散落垃圾。", "清理散落垃圾。", Day(5))],
                 NewPoint: new("东苑北巷临时排查点", east.Id, Type("垃圾堆放"), "东苑北巷路口", Longitude: 88.893426, Latitude: 29.274331)));
             CreateInspection(new(restaurant.Id, Day(-14), inspector, "normal"));
-            SaveCampaign(null, new("西河沿岸卫生大扫除", GetCampaignTypes()[0].Id, west.Id, "西河桥至滨河步道", Day(-2),
+            SaveCampaign(null, new("西河沿岸卫生大扫除", GetCampaignTypes()[0].Id, river.Id, Day(-2),
                 "清扫河岸步道，清运积存垃圾。", Organizer: GetSettings().IssuingUnit, Participants: "社区工作人员及志愿者", ParticipantCount: 24,
                 VehicleCount: 2, GarbageTons: 1.25m, AreaSqm: 1200m, Outcome: "河岸步道清理完成。"));
             return true;

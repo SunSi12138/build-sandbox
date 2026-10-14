@@ -19,9 +19,19 @@ class Samples(word.WordSmoke):
     def __init__(self, *args, optimized=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.optimized = optimized
+        self.baseline_contract = not optimized
         self.images = {}
         self.sample_manifest = []
         self.sequence = 0
+
+    def json(self, method, path, body=None, **kwargs):
+        if getattr(self, 'baseline_contract', False) and method in ('POST', 'PUT') and path.split('?')[0] == '/api/campaigns' and body:
+            body = dict(body)
+            point_id = body.pop('pointId', None)
+            if point_id:
+                point = super().json('GET', '/api/points/' + point_id)['point']
+                body['communityId'], body['location'] = point['communityId'], point['address']
+        return super().json(method, path, body, **kwargs)
 
     def picture(self, phase, width=960, height=640):
         self.sequence += 1
@@ -100,7 +110,7 @@ class Samples(word.WordSmoke):
                           ['第 1 次反馈','第 2 次反馈','第 2 次复查','问题 1','问题 2'])
         types=self.json('GET','/api/campaign-types')
         photos={k:[self.picture(phase)] for k,phase in [('beforePhotoIds','before'),('processPhotoIds','process'),('afterPhotoIds','after')]}
-        campaign={'name':'整治短备注与三阶段照片','typeId':types[0]['id'],'communityId':self.community['id'],'date':iso,'location':'河岸测试区','content':'清理沿岸垃圾，检查排水口。','outcome':'','notes':'现场设置垃圾收集点。',**photos}
+        campaign={'name':'整治短备注与三阶段照片','typeId':types[0]['id'],'pointId':pid,'date':iso,'content':'清理沿岸垃圾，检查排水口。','outcome':'','notes':'现场设置垃圾收集点。',**photos}
         detail=self.json('POST','/api/campaigns',campaign,expected=201)
         self.check_sample(f"/api/campaigns/{detail['campaign']['id']}/export/record",'campaign-short-note',[campaign['notes'],campaign['content']],[p for group in photos.values() for p in group],['二、备注','三、整治照片'])
         campaign.update(name='长备注、零数量与未填写数量',notes=note+'\n'+('沿河逐段检查，清理垃圾并记录整改结果。'*50),participantCount=0,vehicleCount=None,garbageTons=0,areaSqm=None)

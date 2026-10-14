@@ -231,7 +231,7 @@ class ApiSmoke:
         require((self.data / "app.db").is_file(), "Database was not created next to the copied executable")
         require(not (self.cwd / "data").exists(), "Database incorrectly depends on the current working directory")
         require(self.sql_rows("PRAGMA journal_mode")[0][0].lower() == "wal", "WAL mode is not enabled")
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 2, "Schema migration was not recorded")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 3, "Current schema was not initialized")
         require(self.sql_rows("PRAGMA application_id")[0][0] == 1397048143, "Database application identifier is missing")
         require({"餐饮油烟", "工地扬尘", "河道水体", "垃圾堆放", "小散乱污", "其他"}.issubset({row["name"] for row in self.bootstrap["pointTypes"]}), "Default point types are incomplete")
         self.settings = {"streetName": "测试街道 O'Brien", "issuingUnit": "生态环境办公室", "defaultInspector": "默认排查员",
@@ -639,7 +639,8 @@ class ApiSmoke:
         campaign_type = self.json("POST", "/api/campaign-types", {"name": "V2整治类型"}, expected=201)
         require({"卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他"}.issubset({item["name"] for item in self.json("GET", "/api/campaign-types")}), "Campaign default types are incomplete")
         before_photo, process_photo, after_photo = self.upload("before"), self.upload("process"), self.upload("after")
-        campaign_body = {"name": "V2环境整治", "typeId": campaign_type["id"], "communityId": community["id"], "location": "V2整治路段",
+        campaign_body = {"name": "V2环境整治", "typeId": campaign_type["id"], "pointId": None,
+                         "newPoint": {**self.point_body("整治临时点"), "communityId": community["id"], "address": "V2整治路段"},
                          "date": day(self.today), "endDate": None, "organizer": "组织单位", "participants": "志愿者", "participantCount": 12,
                          "vehicleCount": 2, "garbageTons": 1.235, "areaSqm": 10.555, "content": "清理路段", "outcome": "路面整洁", "notes": "备注",
                          "beforePhotoIds": [before_photo["id"]], "processPhotoIds": [process_photo["id"]], "afterPhotoIds": [after_photo["id"]]}
@@ -653,7 +654,7 @@ class ApiSmoke:
         require(ids(self.json("GET", "/api/campaigns?" + urllib.parse.urlencode({"q": "V2环境整治", "communityId": community["id"], "typeId": campaign_type["id"], "from": day(self.today), "to": day(self.today)}))["items"]) == {campaign_id}, "Combined campaign filters failed")
         self.json("PUT", "/api/campaign-types/" + campaign_type["id"], {"name": "整治类别已更名"})
         self.json("PUT", "/api/communities/" + community["id"], {"name": "整治社区已更名", "title": "已更名居民委员会"})
-        edited_campaign = self.json("PUT", "/api/campaigns/" + campaign_id, {**campaign_body, "content": "修订整治内容"})
+        edited_campaign = self.json("PUT", "/api/campaigns/" + campaign_id, {**campaign_body, "pointId": campaign["campaign"]["pointId"], "newPoint": None, "content": "修订整治内容"})
         require(edited_campaign["campaign"]["communityName"] == community["name"] and edited_campaign["campaign"]["typeName"] == campaign_type["name"], "Editing campaign text replaced historical dictionary snapshots")
         self.json("DELETE", "/api/campaign-types/" + campaign_type["id"] + "?confirm=true", expected=409)
         self.json("DELETE", "/api/communities/" + community["id"] + "?confirm=true", expected=409)
@@ -803,7 +804,7 @@ class ApiSmoke:
             require(hashes() == before, "Refused data or photos were modified")
             text = (result.stdout + result.stderr).decode("utf-8", errors="replace")
             require("不支持" in text or "不受支持" in text, "Unsupported data needs an explicit explanation")
-        for version in (1, 3):
+        for version in (1, 2, 4):
             with contextlib.closing(sqlite3.connect(database)) as connection:
                 connection.execute(f"PRAGMA user_version={version}")
                 connection.commit()
@@ -818,7 +819,7 @@ class ApiSmoke:
         journal.write_text('{"backupName":"before-restore-legacy","committed":false}')
         rejected(); journal.unlink()
         self.start()
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 2, "Current schema failed to reopen")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 3, "Current schema failed to reopen")
         self.stop()
 
     def run(self) -> None:

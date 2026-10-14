@@ -122,7 +122,7 @@ public static class Api
         app.MapPut("/api/campaign-types/{id}", updateCampaignType);
         app.MapDelete("/api/campaign-types/{id}", deleteCampaignType);
         RequestDelegate campaigns = context => Write(context, store.ListCampaigns(new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"),
-            Query(context, "from"), Query(context, "to"), Number(context, "page", 1), Number(context, "pageSize", 30))), AppJsonContext.Default.CampaignPage);
+            Query(context, "from"), Query(context, "to"), Number(context, "page", 1), Number(context, "pageSize", 30), Query(context, "pointId"))), AppJsonContext.Default.CampaignPage);
         RequestDelegate campaign = context => Write(context, store.GetCampaignDetail(Id(context)), AppJsonContext.Default.CampaignDetailDto);
         RequestDelegate createCampaign = async context => await Write(context, store.SaveCampaign(null, await Read(context, AppJsonContext.Default.CampaignWriteRequest)), AppJsonContext.Default.CampaignDetailDto, 201);
         RequestDelegate updateCampaign = async context => await Write(context, store.SaveCampaign(Id(context), await Read(context, AppJsonContext.Default.CampaignWriteRequest)), AppJsonContext.Default.CampaignDetailDto);

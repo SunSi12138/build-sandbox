@@ -28,7 +28,7 @@ public sealed partial class Store
         }
     }
 
-    public WordDownload ExportLedgerWord(string from, string to, string? communityId = null, bool includePhotos = false)
+    public WordDownload ExportLedgerWord(string from, string to, string? communityId = null, bool includePhotos = false, string[]? pointIds = null)
     {
         lock (_gate)
         {
@@ -37,7 +37,8 @@ public sealed partial class Store
             CheckDateRange(from, to);
             CommunityDto? community = null;
             if (!string.IsNullOrEmpty(communityId)) community = RequireCommunity(Text(communityId, "所属社区", 100, true));
-            var issues = GetLedgerIssues(from, to, community?.Id);
+            var selectedPoints = ExportPoints(pointIds);
+            var issues = GetLedgerIssues(from, to, community?.Id, selectedPoints.Select(p => p.Id).ToArray());
             WordPhoto[] photos = [];
             if (includePhotos)
             {
@@ -49,7 +50,7 @@ public sealed partial class Store
             }
             var name = community?.Name ?? "全部社区";
             var history = ReadWordIssueHistory(issues);
-            var ledger = new WordLedger(from, to, name, issues, photos, includePhotos, history, Today);
+            var ledger = new WordLedger(from, to, name, issues, photos, includePhotos, history, Today, selectedPoints.Length == 0 ? null : string.Join("、", selectedPoints.Select(p => p.Name)));
             var settings = GetSettings();
             return WriteWordTemporary(WordExporter.FileName("整改台账", name, to), destination => WordExporter.WriteLedger(destination, ledger, settings));
         }
@@ -82,7 +83,7 @@ public sealed partial class Store
         }
     }
 
-    public WordDownload ExportInspectionLedgerWord(string from, string to, string? communityId = null)
+    public WordDownload ExportInspectionLedgerWord(string from, string to, string? communityId = null, string[]? pointIds = null)
     {
         lock (_gate)
         {
@@ -90,15 +91,16 @@ public sealed partial class Store
             to = DateText(to, "结束日期");
             CheckDateRange(from, to);
             var community = string.IsNullOrEmpty(communityId) ? null : RequireCommunity(Text(communityId, "所属社区", 100, true));
-            var inspections = GetLedgerInspections(from, to, community?.Id);
+            var selectedPoints = ExportPoints(pointIds);
+            var inspections = GetLedgerInspections(from, to, community?.Id, selectedPoints.Select(p => p.Id).ToArray());
             var name = community?.Name ?? "全部社区";
-            var ledger = new WordInspectionLedger(from, to, name, inspections, Today);
+            var ledger = new WordInspectionLedger(from, to, name, inspections, Today, selectedPoints.Length == 0 ? null : string.Join("、", selectedPoints.Select(p => p.Name)));
             var settings = GetSettings();
             return WriteWordTemporary(WordExporter.FileName("排查台账", name, to), destination => WordExporter.WriteInspectionLedger(destination, ledger, settings));
         }
     }
 
-    public WordDownload ExportCampaignLedgerWord(string from, string to, string? communityId = null, string? typeId = null, bool includePhotos = false)
+    public WordDownload ExportCampaignLedgerWord(string from, string to, string? communityId = null, string? typeId = null, bool includePhotos = false, string[]? pointIds = null)
     {
         lock (_gate)
         {
@@ -106,10 +108,11 @@ public sealed partial class Store
             to = DateText(to, "结束日期");
             CheckDateRange(from, to);
             var community = string.IsNullOrEmpty(communityId) ? null : RequireCommunity(Text(communityId, "所属社区", 100, true));
-            var campaigns = GetLedgerCampaigns(from, to, community?.Id, typeId);
+            var selectedPoints = ExportPoints(pointIds);
+            var campaigns = GetLedgerCampaigns(from, to, community?.Id, typeId, selectedPoints.Select(p => p.Id).ToArray());
             var photos = includePhotos ? ResolveWordPhotos(campaigns.SelectMany(campaign => ReadPhotos(campaignId: campaign.Id))) : [];
             var name = community?.Name ?? "全部社区";
-            var ledger = new WordCampaignLedger(from, to, name, campaigns, photos, includePhotos, Today);
+            var ledger = new WordCampaignLedger(from, to, name, campaigns, photos, includePhotos, Today, selectedPoints.Length == 0 ? null : string.Join("、", selectedPoints.Select(p => p.Name)));
             var settings = GetSettings();
             return WriteWordTemporary(WordExporter.FileName("整治台账", name, to), destination => WordExporter.WriteCampaignLedger(destination, ledger, settings));
         }
@@ -166,11 +169,11 @@ public sealed partial class Store
         RequestDelegate rectification = async context => await SendWordAsync(context, ExportRectificationWord(Api.Id(context)));
         RequestDelegate campaign = async context => await SendWordAsync(context, ExportCampaignWord(Api.Id(context)));
         RequestDelegate ledger = async context => await SendWordAsync(context, ExportLedgerWord(
-            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), WordPhotoOption(context)));
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), WordPhotoOption(context), ExportPointIds(context)));
         RequestDelegate inspectionLedger = async context => await SendWordAsync(context, ExportInspectionLedgerWord(
-            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString()));
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), ExportPointIds(context)));
         RequestDelegate campaignLedger = async context => await SendWordAsync(context, ExportCampaignLedgerWord(
-            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), context.Request.Query["typeId"].ToString(), WordPhotoOption(context)));
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), context.Request.Query["typeId"].ToString(), WordPhotoOption(context), ExportPointIds(context)));
         app.MapGet("/api/inspections/{id}/export/record", record);
         app.MapGet("/api/inspections/{id}/export/notice", notice);
         app.MapGet("/api/inspections/{id}/export/rectification", rectification);
@@ -179,6 +182,9 @@ public sealed partial class Store
         app.MapGet("/api/exports/inspection-ledger", inspectionLedger);
         app.MapGet("/api/exports/campaign-ledger", campaignLedger);
     }
+
+    private static string[] ExportPointIds(HttpContext context) =>
+        context.Request.Query["pointId"].Select(id => id ?? "").ToArray();
 
     private static bool WordPhotoOption(HttpContext context) => context.Request.Query["photos"].ToString() switch
     {

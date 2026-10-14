@@ -55,10 +55,12 @@ public sealed partial class Store
     private const string CampaignSelect = """
         SELECT c.id,c.name,c.type_id,c.type_name,c.community_id,c.community_name,c.location,c.campaign_date,c.end_date,
         c.organizer,c.participants,c.participant_count,c.vehicle_count,c.garbage_tons,c.area_sqm,c.content,c.outcome,c.notes,
-        (SELECT COUNT(*) FROM photos p WHERE p.campaign_id=c.id) FROM campaigns c
+        (SELECT COUNT(*) FROM photos p WHERE p.campaign_id=c.id),c.point_id,c.point_name,pt.temporary
+        FROM campaigns c JOIN points pt ON pt.id=c.point_id
         """;
     private const string CampaignWhere = """
-        WHERE ($q='' OR c.name LIKE $like OR c.location LIKE $like)
+        WHERE ($q='' OR c.name LIKE $like OR c.location LIKE $like OR c.point_name LIKE $like)
+        AND ($point='' OR c.point_id=$point)
         AND ($community='' OR c.community_id=$community) AND ($type='' OR c.type_id=$type)
         AND ($from='' OR c.campaign_date>=$from) AND ($to='' OR c.campaign_date<=$to)
         """;
@@ -66,7 +68,7 @@ public sealed partial class Store
     private static CampaignDto ReadCampaign(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), NullableString(row, 8), row.GetString(9), row.GetString(10),
         row.IsDBNull(11) ? null : row.GetInt32(11), row.IsDBNull(12) ? null : row.GetInt32(12),
-        row.IsDBNull(13) ? null : row.GetDecimal(13), row.IsDBNull(14) ? null : row.GetDecimal(14), row.GetString(15), row.GetString(16), row.GetString(17), row.GetInt32(18));
+        row.IsDBNull(13) ? null : row.GetDecimal(13), row.IsDBNull(14) ? null : row.GetDecimal(14), row.GetString(15), row.GetString(16), row.GetString(17), row.GetInt32(18), row.GetString(19), row.GetString(20), row.GetInt32(21) != 0);
 
     private CampaignDto[] ReadCampaigns(string suffix, (string Name, object? Value)[] parameters)
     {
@@ -97,7 +99,7 @@ public sealed partial class Store
         var to = OptionalDate(query.To, "结束日期");
         CheckDateRange(from, to);
         var q = Text(query.Q, "搜索内容", 200);
-        return [("$q", q), ("$like", "%" + q + "%"), ("$community", query.CommunityId ?? ""),
+        return [("$point", query.PointId ?? ""), ("$q", q), ("$like", "%" + q + "%"), ("$community", query.CommunityId ?? ""),
             ("$type", query.TypeId ?? ""), ("$from", from ?? ""), ("$to", to ?? "")];
     }
 
@@ -115,14 +117,14 @@ public sealed partial class Store
         }
     }
 
-    public CampaignDto[] GetLedgerCampaigns(string from, string to, string? communityId = null, string? typeId = null)
+    public CampaignDto[] GetLedgerCampaigns(string from, string to, string? communityId = null, string? typeId = null, string[]? pointIds = null)
     {
         lock (_gate)
         {
             if (!string.IsNullOrEmpty(communityId)) _ = RequireCommunity(communityId);
             if (!string.IsNullOrEmpty(typeId)) _ = RequireCampaignType(typeId);
-            return ReadCampaigns(CampaignWhere + " ORDER BY c.campaign_date,c.rowid;",
-                CampaignParameters(new(CommunityId: communityId, TypeId: typeId, From: from, To: to)));
+            return ReadCampaigns(CampaignWhere + LedgerPointSql(pointIds?.Length ?? 0, "c.point_id") + " ORDER BY c.campaign_date,c.rowid;",
+                [.. CampaignParameters(new(CommunityId: communityId, TypeId: typeId, From: from, To: to)), .. LedgerPointParameters(pointIds)]);
         }
     }
 
@@ -132,7 +134,8 @@ public sealed partial class Store
         {
             PrepareWrite();
             var existing = id is null ? null : GetCampaign(id);
-            var community = RequireCommunity(Text(request.CommunityId, "所属社区", 100, true));
+            if (existing is not null && (request.NewPoint is not null || request.PointId != existing.PointId))
+                throw new ApiException(400, "不能更换已保存整治的点位。");
             var type = RequireCampaignType(Text(request.TypeId, "整治类型", 100, true));
             var date = DateText(request.Date, "整治日期");
             var endDate = OptionalDate(request.EndDate, "结束日期");
@@ -140,27 +143,31 @@ public sealed partial class Store
             if (request.ParticipantCount is < 0 || request.VehicleCount is < 0 || request.GarbageTons is < 0 || request.AreaSqm is < 0)
                 throw new ApiException(400, "数量不能为负数。");
             if (request.GarbageTons is > 1000000000000m || request.AreaSqm is > 1000000000000m) throw new ApiException(400, "数量过大。");
+            var organizer = Text(request.Organizer ?? GetSettings().IssuingUnit, "组织单位", 200);
             var actualId = id ?? NewId();
-            (string Name, object? Value)[] parameters = [("$id", actualId), ("$name", Text(request.Name, "整治名称", 200, true)),
-                ("$type", type.Id), ("$typeName", existing is not null && existing.TypeId == type.Id ? existing.TypeName : type.Name),
-                ("$community", community.Id), ("$communityName", existing is not null && existing.CommunityId == community.Id ? existing.CommunityName : community.Name),
-                ("$location", Text(request.Location, "整治地点", 1000, true)), ("$date", date), ("$end", endDate),
-                ("$organizer", Text(request.Organizer ?? GetSettings().IssuingUnit, "组织单位", 200)),
-                ("$participants", Text(request.Participants, "参加单位及人员", 2000)), ("$people", request.ParticipantCount),
-                ("$vehicles", request.VehicleCount), ("$garbage", request.GarbageTons is decimal garbage ? decimal.Round(garbage, 2, MidpointRounding.AwayFromZero) : null),
-                ("$area", request.AreaSqm is decimal area ? decimal.Round(area, 2, MidpointRounding.AwayFromZero) : null),
-                ("$content", Text(request.Content, "整治内容", 12000, true)), ("$outcome", Text(request.Outcome, "整治成效", 12000)),
-                ("$notes", Text(request.Notes, "备注", 8000))];
             using (var transaction = _db.BeginTransaction())
             {
+                var point = existing is null ? ResolveRecordPoint(request.PointId, request.NewPoint, transaction)
+                    : GetPointInternal(existing.PointId, transaction);
+                (string Name, object? Value)[] parameters = [("$id", actualId), ("$name", Text(request.Name, "整治名称", 200, true)),
+                    ("$point", point.Id), ("$pointName", existing?.PointName ?? point.Name),
+                    ("$type", type.Id), ("$typeName", existing is not null && existing.TypeId == type.Id ? existing.TypeName : type.Name),
+                    ("$community", existing?.CommunityId ?? point.CommunityId), ("$communityName", existing?.CommunityName ?? point.CommunityName),
+                    ("$location", existing?.Location ?? point.Address), ("$date", date), ("$end", endDate),
+                    ("$organizer", organizer),
+                    ("$participants", Text(request.Participants, "参加单位及人员", 2000)), ("$people", request.ParticipantCount),
+                    ("$vehicles", request.VehicleCount), ("$garbage", request.GarbageTons is decimal garbage ? decimal.Round(garbage, 2, MidpointRounding.AwayFromZero) : null),
+                    ("$area", request.AreaSqm is decimal area ? decimal.Round(area, 2, MidpointRounding.AwayFromZero) : null),
+                    ("$content", Text(request.Content, "整治内容", 12000, true)), ("$outcome", Text(request.Outcome, "整治成效", 12000)),
+                    ("$notes", Text(request.Notes, "备注", 8000))];
                 using (var command = Command(id is null ? """
-                    INSERT INTO campaigns(id,name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,
+                    INSERT INTO campaigns(id,name,point_id,point_name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,
                     organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes)
-                    VALUES($id,$name,$type,$typeName,$community,$communityName,$location,$date,$end,$organizer,$participants,$people,$vehicles,$garbage,$area,$content,$outcome,$notes);
+                    VALUES($id,$name,$point,$pointName,$type,$typeName,$community,$communityName,$location,$date,$end,$organizer,$participants,$people,$vehicles,$garbage,$area,$content,$outcome,$notes);
                     """ : """
-                    UPDATE campaigns SET name=$name,type_id=$type,type_name=$typeName,community_id=$community,community_name=$communityName,
-                    location=$location,campaign_date=$date,end_date=$end,organizer=$organizer,participants=$participants,participant_count=$people,
-                    vehicle_count=$vehicles,garbage_tons=$garbage,area_sqm=$area,content=$content,outcome=$outcome,notes=$notes WHERE id=$id;
+                    UPDATE campaigns SET name=$name,type_id=$type,type_name=$typeName,campaign_date=$date,end_date=$end,
+                    organizer=$organizer,participants=$participants,participant_count=$people,vehicle_count=$vehicles,
+                    garbage_tons=$garbage,area_sqm=$area,content=$content,outcome=$outcome,notes=$notes WHERE id=$id;
                     """, transaction, parameters)) RequireChanged(command.ExecuteNonQuery(), "整治记录");
                 AttachPhotos(request.BeforePhotoIds, "before", null, null, transaction, campaignId: actualId);
                 AttachPhotos(request.ProcessPhotoIds, "process", null, null, transaction, campaignId: actualId);
@@ -176,11 +183,19 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            _ = GetCampaign(id);
-            ExecuteWithPhotoDeletion(ReadPhotos(campaignId: id).Select(photo => photo.Id).ToArray(), transaction =>
+            var campaign = GetCampaign(id);
+            var removeTemporary = IsLastTemporaryRecord(campaign.PointId, campaignId: id);
+            var photos = ReadPhotos(campaignId: id).Select(photo => photo.Id).ToList();
+            if (removeTemporary) photos.AddRange(ReadPhotos(pointId: campaign.PointId).Select(photo => photo.Id));
+            ExecuteWithPhotoDeletion(photos.ToArray(), transaction =>
             {
                 using var command = Command("DELETE FROM campaigns WHERE id=$id;", transaction, ("$id", id));
                 RequireChanged(command.ExecuteNonQuery(), "整治记录");
+                if (removeTemporary)
+                {
+                    using var deletePoint = Command("DELETE FROM points WHERE id=$point;", transaction, ("$point", campaign.PointId));
+                    deletePoint.ExecuteNonQuery();
+                }
             });
         }
     }

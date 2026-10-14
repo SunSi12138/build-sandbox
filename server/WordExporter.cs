@@ -7,9 +7,9 @@ namespace StreetEcoTool;
 
 public sealed record WordPhoto(PhotoDto Photo, string FilePath);
 public sealed record WordIssueHistory(string IssueId, IssueActionDto[] Actions);
-public sealed record WordLedger(string From, string To, string CommunityName, IssueDto[] Issues, WordPhoto[] Photos, bool IncludePhotos, WordIssueHistory[]? History = null, string? PreparedDate = null);
-public sealed record WordInspectionLedger(string From, string To, string CommunityName, InspectionDto[] Inspections, string PreparedDate);
-public sealed record WordCampaignLedger(string From, string To, string CommunityName, CampaignDto[] Campaigns, WordPhoto[] Photos, bool IncludePhotos, string PreparedDate);
+public sealed record WordLedger(string From, string To, string CommunityName, IssueDto[] Issues, WordPhoto[] Photos, bool IncludePhotos, WordIssueHistory[]? History = null, string? PreparedDate = null, string? PointScope = null);
+public sealed record WordInspectionLedger(string From, string To, string CommunityName, InspectionDto[] Inspections, string PreparedDate, string? PointScope = null);
+public sealed record WordCampaignLedger(string From, string To, string CommunityName, CampaignDto[] Campaigns, WordPhoto[] Photos, bool IncludePhotos, string PreparedDate, string? PointScope = null);
 
 /// <summary>Writes an OPC/WordprocessingML package with BCL APIs only. No image or Office SDK is loaded.</summary>
 public static class WordExporter
@@ -128,7 +128,7 @@ public static class WordExporter
         document.Paragraph("环境整治记录单", "Title");
         document.Table(null,
         [
-            ["整治名称", campaign.Name], ["整治类型", campaign.TypeName], ["所属社区", campaign.CommunityName],
+            ["整治名称", campaign.Name], ["点位名称", campaign.PointName], ["整治类型", campaign.TypeName], ["所属社区", campaign.CommunityName],
             ["整治地点", campaign.Location], ["整治日期", DateRange(campaign.Date, campaign.EndDate)],
             ["组织单位", campaign.Organizer], ["参加单位及人员", campaign.Participants]
         ], [24, 76], labelColumn: true);
@@ -164,7 +164,7 @@ public static class WordExporter
     {
         using var document = new Document(destination, true, "整改台账", settings.StreetName);
         document.Paragraph("生态环保问题整改台账", "Title");
-        WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate ?? ledger.To);
+        WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate ?? ledger.To, ledger.PointScope);
         var histories = (ledger.History ?? []).ToDictionary(item => item.IssueId, item => item.Actions, StringComparer.Ordinal);
         var rows = ledger.Issues.Select((issue, index) => new[]
         {
@@ -196,7 +196,7 @@ public static class WordExporter
     {
         using var document = new Document(destination, true, "排查台账", settings.StreetName);
         document.Paragraph("生态环保排查台账", "Title");
-        WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate);
+        WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate, ledger.PointScope);
         var rows = ledger.Inspections.Select((inspection, index) => new[]
         {
             Number(index + 1), inspection.Date, inspection.PointName, inspection.CommunityName, inspection.TypeName, inspection.Inspector,
@@ -212,7 +212,7 @@ public static class WordExporter
     {
         using var document = new Document(destination, true, "整治台账", settings.StreetName);
         document.Paragraph("环境整治台账", "Title");
-        WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate);
+        WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate, ledger.PointScope);
         var rows = ledger.Campaigns.Select((campaign, index) => new[]
         {
             Number(index + 1), DateRange(campaign.Date, campaign.EndDate), campaign.Name, campaign.TypeName, campaign.CommunityName,
@@ -267,11 +267,15 @@ public static class WordExporter
         document.CellTable(rows, [18, 32, 18, 32]);
     }
 
-    private static void WriteLedgerInfo(Document document, string from, string to, string community, SettingsDto settings, string preparedDate) =>
+    private static void WriteLedgerInfo(Document document, string from, string to, string community, SettingsDto settings, string preparedDate, string? pointScope)
+    {
         document.CellTable([
             [new("统计范围", Header: true), new(ChineseDate(from) + "至" + ChineseDate(to)), new("所属社区", Header: true), new(community == "全部社区" ? "全部" : community)],
             [new("制表单位", Header: true), new(string.IsNullOrWhiteSpace(settings.IssuingUnit) ? settings.StreetName : settings.IssuingUnit), new("制表日期", Header: true), new(preparedDate, Align: "center")]
         ], [12, 48, 12, 28]);
+        if (!string.IsNullOrEmpty(pointScope))
+            document.Table(null, [["点位", pointScope]], [12, 88], labelColumn: true);
+    }
 
     private static void WriteSignature(Document document, SettingsDto settings, string date)
     {

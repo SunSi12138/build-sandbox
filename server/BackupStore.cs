@@ -328,7 +328,7 @@ public sealed partial class Store
         "SELECT id,issue_id,kind,action_date,notes FROM issue_actions LIMIT 0;",
         "SELECT id,inspection_id,issue_id,action_id,point_id,campaign_id,phase,relative_path,width,height,uploaded_at,has_thumb FROM photos LIMIT 0;",
         "SELECT id,name FROM campaign_types LIMIT 0;",
-        "SELECT id,name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes FROM campaigns LIMIT 0;"
+        "SELECT id,name,point_id,point_name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes FROM campaigns LIMIT 0;"
     ];
 
     public RestoreResultDto Restore(RestoreRequest request)

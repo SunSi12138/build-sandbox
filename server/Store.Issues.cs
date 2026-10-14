@@ -81,15 +81,15 @@ public sealed partial class Store
         }
     }
 
-    public IssueDto[] GetLedgerIssues(string from, string to, string? communityId = null)
+    public IssueDto[] GetLedgerIssues(string from, string to, string? communityId = null, string[]? pointIds = null)
     {
         lock (_gate)
         {
             from = DateText(from, "开始日期");
             to = DateText(to, "结束日期");
             CheckDateRange(from, to);
-            return ReadIssueList("WHERE n.inspection_date>=$from AND n.inspection_date<=$to AND ($community='' OR n.community_id=$community) ORDER BY n.inspection_date,n.rowid,x.rowid;",
-                Today, [("$from", from), ("$to", to), ("$community", communityId ?? "")]);
+            return ReadIssueList("WHERE n.inspection_date>=$from AND n.inspection_date<=$to AND ($community='' OR n.community_id=$community)" + LedgerPointSql(pointIds?.Length ?? 0, "n.point_id") + " ORDER BY n.inspection_date,n.rowid,x.rowid;",
+                Today, [("$from", from), ("$to", to), ("$community", communityId ?? ""), .. LedgerPointParameters(pointIds)]);
         }
     }
 

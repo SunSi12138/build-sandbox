@@ -283,7 +283,7 @@ public sealed class StoreV2Tests
         {
             var preview = await store.PrepareRestoreAsync(input, CancellationToken.None);
             Assert.Equal(1, preview.PhotoCount);
-            Assert.Equal(2, preview.SchemaVersion);
+            Assert.Equal(Store.SchemaVersion, preview.SchemaVersion);
             store.Restore(new(preview.Token, true));
         }
         using (var thumb = store.OpenPhoto(photo.Id, true))
@@ -302,7 +302,7 @@ public sealed class StoreV2Tests
         var point = environment.CreatePoint(store);
         var type = store.GetCampaignTypes()[0];
         var before = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "before");
-        var request = new CampaignWriteRequest("整治活动", type.Id, point.CommunityId, "整治地点", Store.Today, "清理路面", ParticipantCount: 5,
+        var request = new CampaignWriteRequest("整治活动", type.Id, point.Id, Store.Today, "清理路面", ParticipantCount: 5,
             VehicleCount: 1, GarbageTons: 1.235m, AreaSqm: 2.225m, BeforePhotoIds: [before.Id]);
         var saved = store.SaveCampaign(null, request);
         Assert.Equal(1.24m, saved.Campaign.GarbageTons);

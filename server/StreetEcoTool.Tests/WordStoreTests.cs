@@ -205,7 +205,7 @@ public sealed class WordStoreTests
         var before = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1600, 900), "before");
         var after = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1200, 800), "after");
         var process = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(900, 1200), "process");
-        var request = new CampaignWriteRequest("河道整治", type.Id, fixture.Community.Id, "沿河道路", Store.Today, "清理道路垃圾。",
+        var request = new CampaignWriteRequest("河道整治", type.Id, fixture.Point.Id, Store.Today, "清理道路垃圾。",
             ParticipantCount: 12, VehicleCount: 1, GarbageTons: 2.35m, AreaSqm: 100.50m, Outcome: "道路已清洁。",
             BeforePhotoIds: [before.Id], ProcessPhotoIds: [process.Id], AfterPhotoIds: [after.Id]);
         var detail = fixture.Store.SaveCampaign(null, request);

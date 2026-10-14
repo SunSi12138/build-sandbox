@@ -16,7 +16,7 @@ public sealed record PointTypeWriteRequest(string Name);
 public sealed record BootstrapDto(SettingsDto Settings, CommunityDto[] Communities, PointTypeDto[] PointTypes, string Today, CampaignTypeDto[]? CampaignTypes = null);
 public sealed record PointWriteRequest(string Name, string CommunityId, string TypeId, string Address, string? Contact = null, string? Phone = null, string Frequency = "irregular", string? Notes = null, bool Disabled = false, double? Longitude = null, double? Latitude = null, string[]? PhotoIds = null, bool Temporary = false);
 public sealed record PointDto(string Id, string Name, string CommunityId, string CommunityName, string TypeId, string TypeName, string Address, string Contact, string Phone, string Frequency, string Notes, bool Disabled, string? LastInspectionDate, int OpenIssueCount, double? Longitude = null, double? Latitude = null, bool Temporary = false, string? CoverPhotoId = null, int PhotoCount = 0);
-public sealed record PointDetailDto(PointDto Point, InspectionDto[] Inspections, IssueDto[] OpenIssues, PhotoDto[]? Photos = null);
+public sealed record PointDetailDto(PointDto Point, InspectionDto[] Inspections, IssueDto[] OpenIssues, PhotoDto[]? Photos = null, CampaignDto[]? Campaigns = null);
 public sealed record InspectionCreateRequest(string? PointId, string Date, string Inspector, string Result, string? Notes = null, string? NoticeNumber = null, IssueCreateRequest[]? Issues = null, string[]? PhotoIds = null, PointWriteRequest? NewPoint = null);
 public sealed record IssueCreateRequest(string Description, string Requirement, string Deadline, string? ResponsibleUnit = null, string[]? PhotoIds = null);
 public sealed record IssueUpdateRequest(string Description, string Requirement, string Deadline, string ResponsibleUnit);
@@ -50,13 +50,13 @@ public sealed record InspectionReviewItem(string IssueId, string Conclusion, str
 public sealed record InspectionReviewRequest(string Date, InspectionReviewItem[] Items);
 public sealed record CampaignTypeDto(string Id, string Name);
 public sealed record CampaignTypeWriteRequest(string Name);
-public sealed record CampaignWriteRequest(string Name, string TypeId, string CommunityId, string Location, string Date, string Content,
+public sealed record CampaignWriteRequest(string Name, string TypeId, string? PointId, string Date, string Content,
     string? EndDate = null, string? Organizer = null, string? Participants = null, int? ParticipantCount = null, int? VehicleCount = null,
     decimal? GarbageTons = null, decimal? AreaSqm = null, string? Outcome = null, string? Notes = null,
-    string[]? BeforePhotoIds = null, string[]? ProcessPhotoIds = null, string[]? AfterPhotoIds = null);
+    string[]? BeforePhotoIds = null, string[]? ProcessPhotoIds = null, string[]? AfterPhotoIds = null, PointWriteRequest? NewPoint = null);
 public sealed record CampaignDto(string Id, string Name, string TypeId, string TypeName, string CommunityId, string CommunityName,
     string Location, string Date, string? EndDate, string Organizer, string Participants, int? ParticipantCount, int? VehicleCount,
-    decimal? GarbageTons, decimal? AreaSqm, string Content, string Outcome, string Notes, int PhotoCount);
+    decimal? GarbageTons, decimal? AreaSqm, string Content, string Outcome, string Notes, int PhotoCount, string PointId = "", string PointName = "", bool PointTemporary = false);
 public sealed record CampaignDetailDto(CampaignDto Campaign, PhotoDto[] Photos);
 public sealed record CampaignQuery(string? Q = null, string? CommunityId = null, string? TypeId = null, string? From = null,
-    string? To = null, int Page = 1, int PageSize = 30);
+    string? To = null, int Page = 1, int PageSize = 30, string? PointId = null);

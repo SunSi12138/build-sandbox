@@ -35,7 +35,8 @@ public sealed class CurrentSchemaTests
 
     [Theory]
     [InlineData(1)]
-    [InlineData(3)]
+    [InlineData(2)]
+    [InlineData(4)]
     [InlineData(0)]
     public void NoncurrentOrUnversionedPopulatedDatabaseIsRefusedWithoutChanges(int version)
     {
@@ -81,11 +82,11 @@ public sealed class CurrentSchemaTests
         using var environment = new V2Environment();
         using var store = environment.Open();
         var point = environment.CreatePoint(store);
-        for (var i = 0; i < count; i++) store.SaveCampaign(null, new("活动" + i, store.GetCampaignTypes()[0].Id, point.CommunityId, "地点", Store.Today, "内容"));
+        for (var i = 0; i < count; i++) store.SaveCampaign(null, new("活动" + i, store.GetCampaignTypes()[0].Id, point.Id, Store.Today, "内容"));
         using var input = File.OpenRead(store.CreateBackupZip());
         var preview = await store.PrepareRestoreAsync(input, CancellationToken.None);
         Assert.Equal(count, preview.CampaignCount);
-        Assert.Equal(2, preview.SchemaVersion);
+        Assert.Equal(Store.SchemaVersion, preview.SchemaVersion);
         var result = store.Restore(new(preview.Token, true));
         Assert.True(result.Ok);
         Assert.Equal(count, store.ListCampaigns(new()).Total);

@@ -120,12 +120,12 @@ public sealed partial class Store
         }
     }
 
-    public InspectionDto[] GetLedgerInspections(string from, string to, string? communityId = null)
+    public InspectionDto[] GetLedgerInspections(string from, string to, string? communityId = null, string[]? pointIds = null)
     {
         lock (_gate)
         {
             var parameters = InspectionParameters(new(CommunityId: communityId, From: from, To: to));
-            return ReadInspectionList(InspectionWhere + " ORDER BY n.inspection_date,n.rowid;", parameters);
+            return ReadInspectionList(InspectionWhere + LedgerPointSql(pointIds?.Length ?? 0, "n.point_id") + " ORDER BY n.inspection_date,n.rowid;", [.. parameters, .. LedgerPointParameters(pointIds)]);
         }
     }
 
@@ -150,10 +150,7 @@ public sealed partial class Store
             var inspectionId = NewId();
             using (var transaction = _db.BeginTransaction())
             {
-                var pointId = request.NewPoint is null ? Text(request.PointId, "排查点位", 100, true)
-                    : SavePointCore(null, request.NewPoint with { Frequency = "irregular", Disabled = false }, transaction, createTemporary: true);
-                var point = GetPointInternal(pointId, transaction);
-                if (point.Disabled) throw new ApiException(409, "该点位已停用，请先启用后再排查。");
+                var point = ResolveRecordPoint(request.PointId, request.NewPoint, transaction);
                 var community = RequireCommunity(point.CommunityId, transaction);
                 var validatedIssues = inputIssues.Select(issue => new IssueCreateRequest(Text(issue.Description, "问题描述", 8000, true),
                     Text(issue.Requirement, "整改要求", 8000), DateText(issue.Deadline, "整改期限"),
@@ -205,13 +202,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var inspection = GetInspection(id);
-            var removeTemporary = inspection.PointTemporary;
-            if (removeTemporary)
-            {
-                using var others = Command("SELECT COUNT(*) FROM inspections WHERE point_id=$point AND id<>$id;", null,
-                    ("$point", inspection.PointId), ("$id", id));
-                removeTemporary = Convert.ToInt32(others.ExecuteScalar()) == 0;
-            }
+            var removeTemporary = IsLastTemporaryRecord(inspection.PointId, inspectionId: id);
             var photos = ReadPhotos(inspectionId: id, includeIssuePhotos: true).Select(photo => photo.Id).ToList();
             if (removeTemporary) photos.AddRange(ReadPhotos(pointId: inspection.PointId).Select(photo => photo.Id));
             ExecuteWithPhotoDeletion(photos.ToArray(), transaction =>
