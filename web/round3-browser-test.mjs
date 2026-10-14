@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { expect } from 'playwright/test'
 import { execFileSync } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 export async function verifyRound3({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg, evidence }) {
@@ -198,6 +198,10 @@ export async function verifyRound3({ browser, origin, directOrigin, api, test, r
       await page.screenshot({ path: path.join(evidence, 'round3-template.png'), fullPage: true, animations: 'disabled' })
     })
     assert.deepEqual(errors, [], 'Round-three flows caused unhandled errors')
+  } catch (error) {
+    await page.screenshot({ path: path.join(evidence, 'round3-failure.png'), fullPage: true }).catch(() => {})
+    await writeFile(path.join(evidence, 'round3-failure.html'), await page.content()).catch(() => {})
+    throw error
   } finally {
     await api('/settings', { method: 'PUT', body: originalSettings })
     await context.close()

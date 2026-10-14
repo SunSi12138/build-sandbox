@@ -111,15 +111,15 @@ onBeforeUnmount(() => { clearTimeout(pointTimer); pointSequence++ })
             <UButton v-for="option in kindOptions" :key="option.value" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="kind === option.value" :data-testid="`ledger-kind-${option.value}`" :disabled="disabled" @click="kind = option.value">{{ option.label }}</UButton>
           </div>
         </UFormField>
-        <UFormField v-if="props.kind === 'point'" label="点位" required>
-          <UInput v-model="pointSearch" type="search" placeholder="搜索点位" class="w-full" :disabled="disabled" data-testid="ledger-point-search" />
+        <template v-if="props.kind === 'point'"><UFormField label="点位" required>
+          <UInput v-model="pointSearch" type="search" placeholder="搜索点位" class="w-full" :disabled="disabled" data-testid="ledger-point-search" /></UFormField>
           <div v-if="selectedPoints.length" class="mt-2 flex flex-wrap gap-1"><UButton v-for="point in selectedPoints" :key="point.id" :label="point.name" trailing-icon="i-lucide-x" color="neutral" variant="soft" :disabled="disabled" :aria-label="`移除点位 ${point.name}`" @click="selectPoint(point, false)" /></div>
           <div class="mt-2 max-h-48 overflow-y-auto" data-testid="ledger-point-options">
-            <UCheckbox v-for="point in pointOptions" :key="point.id" :label="point.name" :model-value="selectedPoints.some(p => p.id === point.id)" :disabled="disabled" class="check-row" @update:model-value="selectPoint(point, $event)" />
+            <UCheckbox v-for="point in pointOptions" :key="point.id" :id="`ledger-point-${point.id}`" :label="point.name" :aria-label="point.name" :model-value="selectedPoints.some(p => p.id === point.id)" :disabled="disabled" class="check-row" @update:model-value="selectPoint(point, $event)" />
             <p v-if="!pointsBusy && !pointOptions.length" class="text-xs text-muted">暂无点位</p>
             <UButton v-if="pointOptions.length < pointTotal" label="加载更多" color="neutral" variant="link" :loading="pointsBusy" :disabled="disabled" @click="listPoints(false)" />
           </div>
-        </UFormField>
+        </template>
         <UFormField label="时间范围" help="日期单独选择，默认本月">
           <div class="chip-row"><UButton v-for="option in ranges" :key="option.value" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="range === option.value" :disabled="disabled" @click="selectRange(option.value)">{{ option.label }}</UButton></div>
         </UFormField>
