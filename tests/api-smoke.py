@@ -476,7 +476,13 @@ class ApiSmoke:
         require(self.json("GET", "/api/settings") == self.settings, "Restored settings are not served by the reopened connection")
         self.json("GET", "/api/points/" + extra["id"], expected=404)
         preserved = (self.install / restored["preservedBackup"]).resolve()
-        require(preserved.is_relative_to((self.install / "backup").resolve()), "Preserved backup path escaped the backup directory")
+        backup_dir = (self.install / "backup").resolve()
+        try:
+            preserved.relative_to(backup_dir)
+            inside_backup = True
+        except ValueError:
+            inside_backup = False
+        require(inside_backup, "Preserved backup path escaped the backup directory")
         require(database_rows(preserved / "app.db") == current["database"], "Pre-restore database was not preserved intact")
         preserved_photos = {path.relative_to(preserved / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in sorted((preserved / "photos").rglob("*")) if path.is_file()}
