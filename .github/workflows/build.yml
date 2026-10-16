@@ -63,8 +63,6 @@ jobs:
         include:
           - os: windows-2022
             rid: win-x86
-          - os: ubuntu-24.04-arm
-            rid: linux-arm64
           - os: ubuntu-22.04
             rid: linux-x64
     runs-on: ${{ matrix.os }}
@@ -119,9 +117,52 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+
+  native-arm64:
+    name: AOT linux-arm64 (GLIBC 2.31)
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ubuntu:20.04
+    timeout-minutes: 35
+    steps:
+      - name: Install build prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git clang zlib1g-dev libicu-dev python3 binutils
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Publish NativeAOT for Kylin V10
+        run: dotnet publish server/StreetEcoTool.csproj -c Release -r linux-arm64 -o publish -p:PublishAot=true -p:SelfContained=true -warnaserror
+      - name: Verify GLIBC compatibility and stage executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          cp publish/StreetEcoTool bin/StreetEcoTool-linux-arm64
+          chmod +x bin/StreetEcoTool-linux-arm64
+          max_glibc="$(readelf --version-info bin/StreetEcoTool-linux-arm64 | grep -oE 'GLIBC_[0-9]+\\.[0-9]+' | sort -Vu | tail -1 || true)"
+          echo "Maximum required GLIBC: ${max_glibc:-none}"
+          if [ -n "$max_glibc" ] && [ "$(printf '%s\\n' GLIBC_2.31 "$max_glibc" | sort -V | tail -1)" != GLIBC_2.31 ]; then
+            echo "::error::Linux ARM64 executable requires $max_glibc, exceeding Kylin V10 GLIBC_2.31"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bin-linux-arm64
+          path: bin/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Run ARM64 API and Word smoke tests
+        run: |
+          python3 tests/api-smoke.py --executable ./publish/StreetEcoTool --report api-smoke-report.json
+          python3 tests/word-smoke.py --executable ./publish/StreetEcoTool --report word-smoke-report.json
+
+
   package:
     name: Assemble one portable package
-    needs: [web, native, browser, word-layout]
+    needs: [web, native, native-arm64, browser, word-layout]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
