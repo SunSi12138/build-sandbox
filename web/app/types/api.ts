@@ -1,6 +1,6 @@
 export type IssueStatus = 'pending' | 'feedback' | 'closed'
 export type Frequency = 'weekly' | 'monthly' | 'quarterly' | 'irregular'
-export type PhotoPhase = 'site' | 'after' | 'review' | 'point' | 'before' | 'process'
+export type PhotoPhase = 'site' | 'after' | 'review' | 'point' | 'before' | 'process' | 'activity'
 export type RectifyStatus = 'none' | 'pending' | 'feedback' | 'closed'
 export type InspectionResult = 'normal' | 'issues'
 
@@ -12,7 +12,9 @@ export interface CommunityDto { id: string; name: string; title: string }
 export interface CommunityWriteRequest { name: string; title: string }
 export interface PointTypeDto { id: string; name: string }
 export interface PointTypeWriteRequest { name: string }
-export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto[]; pointTypes: PointTypeDto[]; campaignTypes?: CampaignTypeDto[]; today: string }
+export interface IssueTypeDto { id: string; name: string }
+export interface ActivityTypeDto { id: string; name: string }
+export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto[]; pointTypes: PointTypeDto[]; campaignTypes?: CampaignTypeDto[]; issueTypes?: IssueTypeDto[]; activityTypes?: ActivityTypeDto[]; today: string }
 
 export interface PointWriteRequest {
   name: string; communityId: string; typeId: string; address: string
@@ -30,8 +32,8 @@ export interface InspectionCreateRequest {
   pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; inspector: string; result: InspectionResult; notes?: string | null
   noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]
 }
-export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[] }
-export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string }
+export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[]; issueTypeId?: string }
+export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string; issueTypeId: string }
 export interface InspectionDto {
   id: string; pointId: string; pointName: string; communityId: string; communityName: string; communityTitle: string
   typeId: string; typeName: string; address: string; contact: string; phone: string; date: string
@@ -43,7 +45,7 @@ export interface InspectionDetailDto { inspection: InspectionDto; issues: IssueD
 export interface IssueDto {
   id: string; inspectionId: string; pointId: string; pointName: string; communityId: string; communityName: string
   inspectionDate: string; description: string; requirement: string; deadline: string; responsibleUnit: string; status: IssueStatus
-  feedbackDate: string | null; feedbackNotes: string; reviewDate: string | null; reviewConclusion: string; closedDate: string | null; overdue: boolean
+  feedbackDate: string | null; feedbackNotes: string; reviewDate: string | null; reviewConclusion: string; closedDate: string | null; overdue: boolean; issueTypeId: string; issueTypeName: string
 }
 export interface IssueDetailDto { issue: IssueDto; inspection: InspectionDto; photos: PhotoDto[]; actions: IssueActionDto[] }
 export interface IssueActionDto { id: string; kind: 'feedback' | 'review' | 'return'; date: string; notes: string; photos: PhotoDto[] }
@@ -53,7 +55,7 @@ export interface ReturnIssueRequest { reason?: string }
 export interface PhotoDto {
   id: string; width: number; height: number; phase: PhotoPhase; url: string; uploadedAt: string
   inspectionId: string | null; issueId: string | null; actionId: string | null
-  pointId: string | null; campaignId: string | null; hasThumb: boolean
+  pointId: string | null; campaignId: string | null; activityId: string | null; hasThumb: boolean
 }
 export interface PhotoUploadDto { id: string; width: number; height: number }
 export interface IssueReminderGroupDto { count: number; items: IssueDto[] }
@@ -72,7 +74,7 @@ export interface BackupOverviewDto { items: BackupEntryDto[]; retentionCount: nu
 export interface BackupManifest { formatVersion: number; schemaVersion: number; createdAt: string; application: string }
 export interface RestorePreviewDto {
   token: string; createdAt: string; schemaVersion: number; photoCount: number; pointCount: number
-  inspectionCount: number; issueCount: number; campaignCount: number; expandedBytes: number; expiresAt: string
+  inspectionCount: number; issueCount: number; campaignCount: number; activityCount: number; expandedBytes: number; expiresAt: string
 }
 export interface RestoreRequest { token: string; confirm: boolean }
 export interface RestoreResultDto { ok: boolean; preservedBackup: string; message: string }
@@ -81,7 +83,7 @@ export interface PointQuery {
   q?: string; communityId?: string; typeId?: string; disabled?: 'false' | 'true' | 'all'
   page?: number; pageSize?: number; recent?: boolean; missed?: boolean; temporary?: 'false' | 'true' | 'all'
 }
-export interface InspectionQuery { pointId?: string; communityId?: string; from?: string; to?: string; q?: string; page?: number; pageSize?: number; rectify?: RectifyStatus; overdue?: boolean; dueSoon?: boolean; typeId?: string; temporary?: boolean }
+export interface InspectionQuery { pointId?: string; communityId?: string; from?: string; to?: string; q?: string; page?: number; pageSize?: number; rectify?: RectifyStatus; overdue?: boolean; dueSoon?: boolean; typeId?: string; temporary?: boolean; issueTypeId?: string }
 export interface InspectionUpdateRequest { date: string; inspector: string; noticeNumber?: string; notes?: string }
 export interface InspectionCountsDto { all: number; none: number; pending: number; feedback: number; closed: number; issueCount: number }
 export interface InspectionFeedbackRequest { date: string; items: { issueId: string; notes: string; photoIds: string[] }[] }
@@ -106,3 +108,17 @@ export interface CampaignDto {
 }
 export interface CampaignDetailDto { campaign: CampaignDto; photos: PhotoDto[] }
 export interface CampaignQuery { pointId?: string; q?: string; communityId?: string; typeId?: string; from?: string; to?: string; page?: number; pageSize?: number }
+
+export interface ActivityWriteRequest {
+  name: string; typeId: string; date: string; content: string
+  communityId?: string | null; endDate?: string | null; location?: string | null; organizer?: string | null
+  participants?: string | null; participantCount?: number | null
+  outcome?: string | null; notes?: string | null; photoIds?: string[]
+}
+export interface ActivityDto {
+  id: string; name: string; typeId: string; typeName: string; communityId: string | null
+  communityName: string; location: string; date: string; endDate: string | null; organizer: string
+  participants: string; participantCount: number | null; content: string; outcome: string; notes: string; photoCount: number
+}
+export interface ActivityDetailDto { activity: ActivityDto; photos: PhotoDto[] }
+export interface ActivityQuery { q?: string; communityId?: string; typeId?: string; from?: string; to?: string; page?: number; pageSize?: number }

@@ -114,6 +114,8 @@ onMounted(() => { void fetchSettings() })
         <SettingsDictionary kind="communities" :items="bootstrap?.communities ?? []" @changed="dictionaryChanged" />
         <SettingsDictionary kind="point-types" :items="bootstrap?.pointTypes ?? []" @changed="dictionaryChanged" />
         <SettingsDictionary kind="campaign-types" :items="bootstrap?.campaignTypes ?? []" @changed="dictionaryChanged" />
+        <SettingsDictionary kind="issue-types" :items="bootstrap?.issueTypes ?? []" @changed="dictionaryChanged" />
+        <SettingsDictionary kind="activity-types" :items="bootstrap?.activityTypes ?? []" @changed="dictionaryChanged" />
       </div>
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
     </template>

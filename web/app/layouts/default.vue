@@ -8,6 +8,7 @@ const links = [
   { to: '/points', label: '点位管理', short: '点位', icon: 'i-lucide-map-pin' },
   { to: '/inspections', label: '排查记录', short: '排查', icon: 'i-lucide-clipboard-list' },
   { to: '/campaigns', label: '整治记录', short: '整治', icon: 'i-lucide-brush-cleaning' },
+  { to: '/activities', label: '活动记录', short: '活动', icon: 'i-lucide-calendar-days' },
   { to: '/settings', label: '工具设置', short: '设置', icon: 'i-lucide-settings' }
 ]
 function active(path: string) { return path === '/' ? route.path === '/' : route.path.startsWith(path) }
