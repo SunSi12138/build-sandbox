@@ -24,7 +24,7 @@ export const frequencyOptions: { label: string; value: Frequency }[] = [
   { label: '每季', value: 'quarterly' }, { label: '不定期', value: 'irregular' }
 ]
 export function phaseLabel(phase: string): string {
-  return ({ site: '现场', after: '整改后', review: '复查', point: '现场', before: '整治前', process: '整治中' } as Record<PhotoPhase, string>)[phase as PhotoPhase] ?? phase
+  return ({ site: '现场', after: '整改后', review: '复查', point: '现场', before: '整治前', process: '整治中', activity: '活动' } as Record<PhotoPhase, string>)[phase as PhotoPhase] ?? phase
 }
 export function todayLocal(): string {
   const date = new Date()

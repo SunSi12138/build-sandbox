@@ -138,7 +138,7 @@ async function save() {
           <UFormField name="notes" label="备注" class="field-full"><UTextarea v-model="state.notes" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="disabled" /></UFormField>
         </div>
       </section>
-      <section class="form-section"><h2>活动照片</h2><PhotoUploader v-model="state.photos" phase="activity" :quality="bootstrap?.settings.jpegQuality" :disabled="disabled" :max-count="20" @busy="uploadBusy = $event" @failed="uploadFailed = $event" /></section>
+      <section class="form-section"><h2>活动照片</h2><PhotoUploader v-model="state.photos" phase="activity" :quality="bootstrap?.settings.jpegQuality" :disabled="disabled" :max="20" @busy="uploadBusy = $event" @failed="uploadFailed = $event" /></section>
     </div>
     <div class="form-actions"><UButton type="button" to="/activities" color="neutral" variant="outline" :disabled="saving">取消</UButton><UButton type="submit" :loading="saving" :disabled="disabled || uploadBusy || uploadFailed" data-testid="activity-save">保存活动</UButton></div>
   </UForm>
