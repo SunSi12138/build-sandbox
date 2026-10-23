@@ -264,7 +264,7 @@ public static class WordExporter
         if (selected.Length > 0)
         {
             document.Section("活动照片");
-            WriteCampaignPhotoTables(document, selected, activity.Name + " · " + activity.Date);
+            document.Gallery(selected.Select(photo => (photo, "")).ToArray(), activity.Name + " · " + activity.Date + " · 活动照片");
         }
     }
 
@@ -291,7 +291,7 @@ public static class WordExporter
         foreach (var item in withPhotos)
         {
             document.Paragraph($"（{ChineseNumber(item.Index + 1)}）{item.Activity.Name}", "Heading2");
-            WriteCampaignPhotoTables(document, item.Photos, item.Activity.Name + " · " + item.Activity.Date);
+            document.Gallery(item.Photos.Select(photo => (photo, "")).ToArray(), item.Activity.Name + " · " + item.Activity.Date + " · 活动照片");
         }
     }
 

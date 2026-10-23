@@ -124,6 +124,8 @@ public sealed partial class Store
     {
         lock (_gate)
         {
+            if (!string.IsNullOrWhiteSpace(communityId)) _ = RequireCommunity(communityId);
+            if (!string.IsNullOrWhiteSpace(typeId)) _ = RequireActivityType(typeId);
             var parameters = ActivityParameters(new(CommunityId: communityId, TypeId: typeId, From: from, To: to));
             return ReadActivities(ActivityWhere + " ORDER BY a.activity_date,a.rowid;", parameters);
         }
