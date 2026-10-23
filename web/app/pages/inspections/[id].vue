@@ -17,6 +17,7 @@ import {
   statusLabel,
   todayLocal,
 } from '~/utils/format'
+const { bootstrap } = useAppData()
 const route = useRoute(),
   toast = useToast()
 const focus = useDialogFocus(
