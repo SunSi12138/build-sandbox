@@ -48,6 +48,14 @@ public static class Api
         RequestDelegate getSettings = context => Write(context, store.GetSettings(), AppJsonContext.Default.SettingsDto);
         RequestDelegate saveSettings = async context => await Write(context, store.SaveSettings(await Read(context, AppJsonContext.Default.SettingsDto)), AppJsonContext.Default.SettingsDto);
         RequestDelegate dashboard = context => Write(context, store.GetDashboard(), AppJsonContext.Default.DashboardDto);
+        RequestDelegate issueTypes = context => Write(context, store.GetIssueTypes(), AppJsonContext.Default.IssueTypeDtoArray);
+        RequestDelegate addIssueType = async context => await Write(context, store.SaveIssueType(null, await Read(context, AppJsonContext.Default.IssueTypeWriteRequest)), AppJsonContext.Default.IssueTypeDto, 201);
+        RequestDelegate changeIssueType = async context => await Write(context, store.SaveIssueType(Id(context), await Read(context, AppJsonContext.Default.IssueTypeWriteRequest)), AppJsonContext.Default.IssueTypeDto);
+        RequestDelegate deleteIssueType = context => { RequireDeleteConfirmation(context); store.DeleteIssueType(Id(context)); return Deleted(context); };
+        app.MapGet("/api/issue-types", issueTypes);
+        app.MapPost("/api/issue-types", addIssueType);
+        app.MapPut("/api/issue-types/{id}", changeIssueType);
+        app.MapDelete("/api/issue-types/{id}", deleteIssueType);
         app.MapGet("/api/health", health);
         app.MapGet("/api/bootstrap", bootstrap);
         app.MapGet("/api/settings", getSettings);
@@ -95,7 +103,7 @@ public static class Api
         static InspectionQuery InspectionFilters(HttpContext context) => new(Query(context, "pointId"), Query(context, "communityId"),
             Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30),
             Query(context, "rectify"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "typeId"), Flag(context, "temporary"),
-            Flag(context, "awaitingReview"), Flag(context, "openOnly"));
+            Flag(context, "awaitingReview"), Flag(context, "openOnly"), Query(context, "issueTypeId"));
         RequestDelegate inspections = context => Write(context, store.ListInspections(InspectionFilters(context)), AppJsonContext.Default.InspectionPage);
         RequestDelegate inspectionCounts = context => Write(context, store.GetInspectionCounts(InspectionFilters(context)), AppJsonContext.Default.InspectionCountsDto);
         RequestDelegate inspection = context => Write(context, store.GetInspectionDetail(Id(context)), AppJsonContext.Default.InspectionDetailDto);
@@ -133,7 +141,26 @@ public static class Api
         app.MapPut("/api/campaigns/{id}", updateCampaign);
         app.MapDelete("/api/campaigns/{id}", deleteCampaign);
 
-        RequestDelegate issues = context => Write(context, store.ListIssues(new(Query(context, "status"), Query(context, "communityId"), Query(context, "pointId"), Query(context, "inspectionId"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30))), AppJsonContext.Default.IssuePage);
+        RequestDelegate activityTypes = context => Write(context, store.GetActivityTypes(), AppJsonContext.Default.ActivityTypeDtoArray);
+        RequestDelegate addActivityType = async context => await Write(context, store.SaveActivityType(null, await Read(context, AppJsonContext.Default.ActivityTypeWriteRequest)), AppJsonContext.Default.ActivityTypeDto, 201);
+        RequestDelegate changeActivityType = async context => await Write(context, store.SaveActivityType(Id(context), await Read(context, AppJsonContext.Default.ActivityTypeWriteRequest)), AppJsonContext.Default.ActivityTypeDto);
+        RequestDelegate deleteActivityType = context => { RequireDeleteConfirmation(context); store.DeleteActivityType(Id(context)); return Deleted(context); };
+        app.MapGet("/api/activity-types", activityTypes);
+        app.MapPost("/api/activity-types", addActivityType);
+        app.MapPut("/api/activity-types/{id}", changeActivityType);
+        app.MapDelete("/api/activity-types/{id}", deleteActivityType);
+        RequestDelegate activities = context => Write(context, store.ListActivities(new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"), Query(context, "from"), Query(context, "to"), Number(context, "page", 1), Number(context, "pageSize", 30))), AppJsonContext.Default.ActivityPage);
+        RequestDelegate activity = context => Write(context, store.GetActivityDetail(Id(context)), AppJsonContext.Default.ActivityDetailDto);
+        RequestDelegate addActivity = async context => await Write(context, store.SaveActivity(null, await Read(context, AppJsonContext.Default.ActivityWriteRequest)), AppJsonContext.Default.ActivityDetailDto, 201);
+        RequestDelegate changeActivity = async context => await Write(context, store.SaveActivity(Id(context), await Read(context, AppJsonContext.Default.ActivityWriteRequest)), AppJsonContext.Default.ActivityDetailDto);
+        RequestDelegate deleteActivity = context => { RequireDeleteConfirmation(context); store.DeleteActivity(Id(context)); return Deleted(context); };
+        app.MapGet("/api/activities", activities);
+        app.MapPost("/api/activities", addActivity);
+        app.MapGet("/api/activities/{id}", activity);
+        app.MapPut("/api/activities/{id}", changeActivity);
+        app.MapDelete("/api/activities/{id}", deleteActivity);
+
+        RequestDelegate issues = context => Write(context, store.ListIssues(new(Query(context, "status"), Query(context, "communityId"), Query(context, "pointId"), Query(context, "inspectionId"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30), Query(context, "typeId"))), AppJsonContext.Default.IssuePage);
         RequestDelegate issue = context => Write(context, store.GetIssueDetail(Id(context)), AppJsonContext.Default.IssueDetailDto);
         RequestDelegate updateIssue = async context => await Write(context, store.UpdateIssue(Id(context), await Read(context, AppJsonContext.Default.IssueUpdateRequest)), AppJsonContext.Default.IssueDetailDto);
         RequestDelegate feedback = async context => await Write(context, store.RecordFeedback(Id(context), await Read(context, AppJsonContext.Default.FeedbackRequest)), AppJsonContext.Default.IssueDetailDto);
