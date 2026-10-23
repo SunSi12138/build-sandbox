@@ -46,7 +46,7 @@ button:disabled { cursor:default; }
 .page-actions { flex:none; display:flex; align-items:center; gap:4px; }
 .page-actions [data-slot="leadingIcon"] { width:16px;height:16px; }
 .page-meta { font-size:12px;line-height:18px;color:var(--text-3); }
-.mobile-tabs { position:fixed; bottom:0; left:0; right:0; z-index:40; height:calc(56px + env(safe-area-inset-bottom)); padding-bottom:env(safe-area-inset-bottom); display:grid;grid-template-columns:repeat(5,minmax(0,1fr));background:var(--surface);border-top:1px solid var(--border); }
+.mobile-tabs { position:fixed; bottom:0; left:0; right:0; z-index:40; height:calc(56px + env(safe-area-inset-bottom)); padding-bottom:env(safe-area-inset-bottom); display:grid;grid-template-columns:repeat(6,minmax(0,1fr));background:var(--surface);border-top:1px solid var(--border); }
 .mobile-tab { position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;min-height:56px;color:var(--text-3);font-size:11px;line-height:15px;text-decoration:none; }
 .mobile-tab .iconify { width:22px;height:22px; }
 .mobile-tab.is-active { color:var(--brand-600); }
@@ -234,26 +234,22 @@ a.list-row:hover { background:var(--surface-2); }
   .check-wrapper { margin-left:0; }
 }
 
-/* Person/unit inputs keep API strings while presenting editable tags. */
-.name-tags { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 100%; vertical-align: middle; }
-.name-tags [data-slot="base"] { max-width: 100%; overflow-wrap: anywhere; height: auto; min-height: 20px; white-space: normal; }
-.names-field { min-width: 0; width: 100%; }
-.names-editor { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; min-height: var(--control-h); border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 4px; background: var(--surface); }
-.names-editor:focus-within { outline: 2px solid var(--brand-600); outline-offset: -1px; }
-.names-disabled { opacity: .65; }
-.names-input { flex: 1; min-width: 72px; }
-.names-input input { width: 100%; padding-left: 4px; }
-.name-edit-tag { display: inline-flex; align-items: center; max-width: 100%; }
-.name-edit-tag [data-slot="base"] { overflow-wrap: anywhere; height: auto; white-space: normal; }
-.name-remove { min-width: 26px; min-height: 28px; padding: 4px; }
+/* Names read as text; editable chips use the component library's input. */
+.name-text { overflow-wrap:anywhere; }
+.names-field { min-width:0; width:100%; }
+.names-editor { width:100%; min-height:var(--control-h); gap:6px; padding:4px 6px; border-radius:6px; background:var(--surface); }
+.names-editor .name-edit-tag { display:inline-flex; align-items:center; gap:0; max-width:100%; padding:0 0 0 8px; min-height:28px; border:0; border-radius:5px; background:var(--neutral-bg); color:var(--text-2); box-shadow:none; }
+.names-editor .name-tag-text { font-size:13px; line-height:20px; white-space:normal; overflow-wrap:anywhere; }
+.names-editor .name-remove { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; min-width:28px; min-height:28px; margin:0; border-radius:0 5px 5px 0; color:var(--text-3); }
+.names-editor .name-remove:hover { background:var(--border); color:var(--text); }
+.names-editor .names-input { flex:1; min-width:72px; min-height:28px; padding:2px 4px; font-size:14px; }
 .coordinate-label { display: inline-flex; align-items: center; white-space: nowrap; }
 .coordinate-picker { min-height: 28px; padding: 0 4px; margin-left: 4px; }
 .deadline-label { display: inline-flex; align-items: baseline; white-space: nowrap; gap: 6px; }
 @media (max-width:767px) {
-  .name-remove { min-width: 40px; min-height: 40px; }
+  .names-editor .name-remove { width:40px; height:40px; min-width:40px; min-height:40px; }
+  .names-editor .name-edit-tag, .names-editor .names-input { min-height:40px; }
   .coordinate-picker { min-width: 40px; min-height: 40px; margin-top: -8px; margin-bottom: -8px; }
 }
 
-/* Table cells keep full name tags on one line; the existing table viewport scrolls. */
-.table-wrap .name-tags { flex-wrap: nowrap; max-width: none; white-space: nowrap; }
-.table-wrap .name-tags [data-slot="base"] { flex-shrink: 0; white-space: nowrap; overflow-wrap: normal; height: 20px; padding-top: 0; padding-bottom: 0; }
+.table-wrap .name-text { display:inline-block; max-width:24ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; vertical-align:middle; }

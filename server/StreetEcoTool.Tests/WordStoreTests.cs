@@ -11,7 +11,7 @@ public sealed class WordStoreTests
     public void NormalInspectionExportsRecordButRejectsUnnecessaryNotice()
     {
         using var fixture = new StoreFixture();
-        var detail = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
+        var detail = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
         var record = fixture.Store.ExportInspectionWord(detail.Inspection.Id, false);
         Assert.True(File.Exists(record.FilePath));
         Assert.StartsWith("排查记录单_", record.FileName, StringComparison.Ordinal);
@@ -57,7 +57,7 @@ public sealed class WordStoreTests
         var overall = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1600, 800), "site");
         var first = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1200, 800), "site");
         var second = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1000, 800), "site");
-        var detail = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", "现场备注", "手填-01",
+        var detail = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", "现场备注", "手填-01",
             [new("问题甲", "要求甲", Store.Today, PhotoIds: [first.Id]), new("问题乙", "要求乙", Store.Today, PhotoIds: [second.Id])], [overall.Id]));
         var issue = detail.Issues[0];
         var after = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(800, 1200), "after");
@@ -89,7 +89,7 @@ public sealed class WordStoreTests
         using var fixture = new StoreFixture();
         var today = DateOnly.ParseExact(Store.Today, "yyyy-MM-dd", CultureInfo.InvariantCulture);
         string Day(int offset) => today.AddDays(offset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var inspection = fixture.Store.CreateInspection(new(fixture.Point.Id, Day(-3), "测试排查人", "issues", Issues:
+        var inspection = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Day(-3), "测试排查人", "issues", Issues:
             [new("反复出现的环境问题", "清理现场并防止再次堆放", Day(0))]));
         var issue = Assert.Single(inspection.Issues);
         const string feedback = "第一次反馈：已完成垃圾清理并设置围挡。";
@@ -112,9 +112,9 @@ public sealed class WordStoreTests
         using var input = archive.GetEntry("word/document.xml")!.Open();
         var xml = XDocument.Load(input);
         XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-        var table = xml.Descendants(w + "tbl").Single(t => t.Element(w + "tblGrid")?.Elements().Count() == 9);
+        var table = xml.Descendants(w + "tbl").Single(t => t.Element(w + "tblGrid")?.Elements().Count() == 10);
         var rows = table.Elements(w + "tr").Skip(1).SkipLast(1).ToArray();
-        var text = string.Join("\n", Enumerable.Range(0, 9).Select(column => string.Concat(rows.SelectMany(row => row.Elements(w + "tc").ElementAt(column).Descendants(w + "t")).Select(t => t.Value))))
+        var text = string.Join("\n", Enumerable.Range(0, 10).Select(column => string.Concat(rows.SelectMany(row => row.Elements(w + "tc").ElementAt(column).Descendants(w + "t")).Select(t => t.Value))))
             + string.Concat(table.Elements(w + "tr").Last().Descendants(w + "t").Select(t => t.Value));
         Assert.Contains("待整改", text);
         Assert.Contains("历次反馈", text);
@@ -159,7 +159,7 @@ public sealed class WordStoreTests
     public void RectificationRecordRequiresAllIssuesClosedAndPreservesReturnActions()
     {
         using var fixture = new StoreFixture();
-        var detail = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", Issues:
+        var detail = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", Issues:
             [new("问题甲", "清理甲", Store.Today), new("问题乙", "清理乙", Store.Today)]));
         var rejected = Assert.Throws<ApiException>(() => fixture.Store.ExportRectificationWord(detail.Inspection.Id));
         Assert.Equal(400, rejected.StatusCode); Assert.Equal("尚有 2 项问题未闭环", rejected.Message);
@@ -184,7 +184,7 @@ public sealed class WordStoreTests
     public void InspectionLedgerIncludesNormalAndProblemRecordsWithSnapshotNames()
     {
         using var fixture = new StoreFixture();
-        _ = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
+        _ = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
         var detail = fixture.CreateIssue();
         fixture.Store.RecordFeedback(detail.Issues[0].Id, new(Store.Today, "反馈完成"));
         fixture.Store.SavePoint(fixture.Point.Id, new("新点位名", fixture.Community.Id, fixture.Point.TypeId, "新地址"));
@@ -225,6 +225,84 @@ public sealed class WordStoreTests
         Assert.Equal(400, Assert.Throws<ApiException>(() => fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, typeId: "missing")).StatusCode);
     }
 
+    [Fact]
+    public void CurrentInspectionAndIssueExportsMatchCombinedFiltersWithoutPagination()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var types = store.GetIssueTypes();
+        var yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        InspectionDetailDto Create(string inspector, bool matching) => store.CreateInspection(new(fixture.Point.Id, yesterday, inspector, "issues", Issues:
+            [new("应导出的分类问题", "清理", matching ? yesterday : Store.Today, IssueTypeId: types[0].Id),
+             new("其他类别不应混入", "清理", yesterday, IssueTypeId: types[1].Id)]));
+        var wanted = Create("筛选人员甲", true);
+        _ = Create("筛选人员乙", true);
+        _ = Create("筛选人员甲", false); // Only a different category is overdue.
+        var filters = new InspectionQuery(Q: "筛选人员甲", TypeId: fixture.Point.TypeId, IssueTypeId: types[0].Id,
+            Rectify: "pending", Overdue: true, OpenOnly: true, Page: 99, PageSize: 1);
+        var list = store.ListInspections(filters with { Page = 1 });
+        Assert.Equal(wanted.Inspection.Id, Assert.Single(list.Items).Id);
+        Assert.Equal(1, list.MatchingIssueCount);
+        var issues = store.GetLedgerIssues(yesterday, Store.Today, filters: filters);
+        Assert.Equal(wanted.Issues[0].Id, Assert.Single(issues).Id);
+        var inspection = DocumentText(store.ExportInspectionLedgerWord("", "", filters: filters).FilePath);
+        Assert.Contains("共 1 次排查", inspection);
+        Assert.DoesNotContain("筛选人员乙", inspection);
+        var ledger = DocumentText(store.ExportLedgerWord("", "", filters: filters).FilePath);
+        Assert.Contains("应导出的分类问题", ledger);
+        Assert.DoesNotContain("其他类别不应混入", ledger);
+        Assert.Contains("共 1 条", ledger);
+        Assert.Empty(store.GetLedgerInspections(yesterday, Store.Today, filters: filters with { Temporary = true }));
+    }
+
+    [Theory]
+    [InlineData("", "")]
+    [InlineData("2000-01-01", "")]
+    [InlineData("", "2099-12-31")]
+    public void CurrentCampaignExportKeepsSearchAndPointFilters(string from, string to)
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var type = store.GetCampaignTypes()[0];
+        var other = store.SavePoint(null, new("另一点位", fixture.Community.Id, fixture.Point.TypeId, "地址", Frequency: "weekly"));
+        store.SaveCampaign(null, new("筛选整治", type.Id, fixture.Point.Id, Store.Today, "命中整治内容"));
+        store.SaveCampaign(null, new("筛选整治", type.Id, other.Id, Store.Today, "其他点位不得导出"));
+        store.SaveCampaign(null, new("无关整治", type.Id, fixture.Point.Id, Store.Today, "未搜索命中不得导出"));
+        var filters = new CampaignQuery(Q: "筛选整治", PointId: fixture.Point.Id, Page: 99);
+        var text = DocumentText(store.ExportCampaignLedgerWord(from, to, filters: filters).FilePath);
+        Assert.Contains("命中整治内容", text);
+        Assert.DoesNotContain("其他点位不得导出", text);
+        Assert.DoesNotContain("未搜索命中不得导出", text);
+    }
+
+    [Fact]
+    public void CurrentActivityExportKeepsSearchAndIncludesOnlyMatchingPhotos()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var type = store.GetActivityTypes()[0];
+        var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "activity");
+        var otherPhoto = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "activity");
+        store.SaveActivity(null, new("筛选学习", type.Id, Store.Today, "匹配活动内容", PhotoIds: [photo.Id]));
+        store.SaveActivity(null, new("其他学习", type.Id, Store.Today, "不应出现的活动内容", PhotoIds: [otherPhoto.Id]));
+        var file = store.ExportActivityLedgerWord("", "", includePhotos: true, filters: new(Q: "筛选学习", Page: 99));
+        Assert.Contains("匹配活动内容", DocumentText(file.FilePath));
+        Assert.DoesNotContain("不应出现的活动内容", DocumentText(file.FilePath));
+        Assert.Equal(new[] { "120x80" }, MediaDimensions(file.FilePath));
+    }
+
+    [Fact]
+    public void CurrentExportHandlesEmptyRangesButStillRejectsInvalidDates()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var empty = store.ExportActivityLedgerWord("", "", filters: new());
+        Assert.Contains("共 0", DocumentText(empty.FilePath));
+        Assert.Equal(400, Assert.Throws<ApiException>(() => store.ExportActivityLedgerWord("bad", "", filters: new())).StatusCode);
+        Assert.Equal(400, Assert.Throws<ApiException>(() => store.ExportActivityLedgerWord("2026-12-31", "2026-01-01", filters: new())).StatusCode);
+        Assert.Equal(400, Assert.Throws<ApiException>(() => store.ExportInspectionLedgerWord("", "", filters: new(Rectify: "unknown"))).StatusCode);
+    }
+
     private static string DocumentText(string path)
     {
         using var archive = ZipFile.OpenRead(path);
@@ -260,7 +338,7 @@ public sealed class WordStoreTests
             Community = Store.SaveCommunity(null, new("原始社区", "原始社区居民委员会"));
             Point = Store.SavePoint(null, new("原始点位", Community.Id, Store.GetPointTypes()[0].Id, "原始地址", Frequency: "weekly"));
         }
-        public InspectionDetailDto CreateIssue(string? photoId = null) => Store.CreateInspection(new(Point.Id, StreetEcoTool.Store.Today, "测试排查人", "issues", Issues:
+        public InspectionDetailDto CreateIssue(string? photoId = null) => Store.CreateTypedInspection(new(Point.Id, StreetEcoTool.Store.Today, "测试排查人", "issues", Issues:
             [new("环境问题", "清理并保持", StreetEcoTool.Store.Today, PhotoIds: photoId is null ? [] : [photoId])]));
         public void Dispose() { Store.Dispose(); System.IO.Directory.Delete(Directory, true); }
     }

@@ -60,14 +60,21 @@ def day(value: dt.date) -> str:
 
 
 def database_rows(path: Path) -> dict:
-    with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database:
-        tables = [row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        # Names come from this test application's schema; quote identifiers rather
-        # than treating them as SQL fragments. Values elsewhere are parameterized.
-        return {
-            table: database.execute('SELECT * FROM "' + table.replace('"', '""') + '" ORDER BY 1').fetchall()
-            for table in tables
-        }
+    # Inspect a private copy, including WAL commits. A just-restored WAL-mode
+    # database can lack sidecars; read-only opening it fails on some SQLite
+    # builds. Never create inspection sidecars beside the live database.
+    with tempfile.TemporaryDirectory(prefix="hbtool-test-snapshot-") as temporary:
+        snapshot = Path(temporary) / "app.db"
+        for suffix in ("", "-wal", "-journal"):
+            source = Path(str(path) + suffix)
+            if source.exists():
+                shutil.copy2(source, Path(str(snapshot) + suffix))
+        with contextlib.closing(sqlite3.connect(snapshot)) as database:
+            tables = [row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+            return {
+                table: database.execute('SELECT * FROM "' + table.replace('"', '""') + '" ORDER BY 1').fetchall()
+                for table in tables
+            }
 
 
 class ApiSmoke:
@@ -85,6 +92,7 @@ class ApiSmoke:
         self.process: subprocess.Popen | None = None
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.timeout = timeout
+        self.skip_listening = False
         self.origin = ""
         self.report = {"platform": sys.platform, "executable": executable.name, "cases": [], "requests": [], "processes": [], "passed": False}
         public = self.install / "wwwroot"
@@ -175,6 +183,8 @@ class ApiSmoke:
         photo_root = photo_root or (self.install / "photos")
         return {
             "database": database_rows(self.data / "app.db"),
+            "attachments": {path.relative_to(self.install / "attachments").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                            for path in sorted((self.install / "attachments").rglob("*")) if path.is_file()},
             "photos": {path.relative_to(photo_root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                        for path in sorted(photo_root.rglob("*")) if path.is_file()},
         }
@@ -199,7 +209,7 @@ class ApiSmoke:
         return self.json("POST", "/api/inspections", self.inspection_body(point_id, **kwargs), expected=201)
 
     def issue_body(self, description: str, deadline: dt.date, photo_ids=None, responsible=None) -> dict:
-        return {"description": description, "requirement": "清理并拍照反馈", "deadline": day(deadline), "photoIds": photo_ids or [], "responsibleUnit": responsible}
+        return {"description": description, "requirement": "清理并拍照反馈", "deadline": day(deadline), "photoIds": photo_ids or [], "responsibleUnit": responsible, "issueTypeId": self.bootstrap["issueTypes"][0]["id"]}
 
     def upload(self, phase="site") -> dict:
         photo = self.json("PUT", "/api/photos?" + urllib.parse.urlencode({"phase": phase}), raw=JPEG, content_type="image/jpeg", expected=(200, 201))
@@ -231,7 +241,7 @@ class ApiSmoke:
         require((self.data / "app.db").is_file(), "Database was not created next to the copied executable")
         require(not (self.cwd / "data").exists(), "Database incorrectly depends on the current working directory")
         require(self.sql_rows("PRAGMA journal_mode")[0][0].lower() == "wal", "WAL mode is not enabled")
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 3, "Current schema was not initialized")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 1, "Current schema was not initialized")
         require(self.sql_rows("PRAGMA application_id")[0][0] == 1397048143, "Database application identifier is missing")
         require({"餐饮油烟", "工地扬尘", "河道水体", "垃圾堆放", "小散乱污", "其他"}.issubset({row["name"] for row in self.bootstrap["pointTypes"]}), "Default point types are incomplete")
         self.settings = {"streetName": "测试街道 O'Brien", "issuingUnit": "生态环境办公室", "defaultInspector": "默认排查员",
@@ -436,13 +446,15 @@ class ApiSmoke:
             key = "photos/" + relative.replace("\\", "/")
             require(key in self.backup_entries, "Backup ZIP omitted a registered photo")
             require(hashlib.sha256(self.backup_entries[key]).hexdigest() == baseline["photos"][relative], "Backup photo bytes differ from stored evidence")
+        for relative, digest in baseline["attachments"].items():
+            require(hashlib.sha256(self.backup_entries["attachments/" + relative]).hexdigest() == digest, "Backup omitted or changed attachment bytes")
         changed_settings = {**self.settings, "streetName": "恢复前的当前数据，应自动归档"}
         self.json("PUT", "/api/settings", changed_settings)
         extra = self.create_point("测试快照之后新增点位")
         self.upload()
         current = self.fingerprint()
         preview = self.json("PUT", "/api/backups/restore/prepare", raw=backup, content_type="application/zip")
-        require(preview["campaignCount"] == len(baseline["database"]["campaigns"]) and preview["pointCount"] == len(baseline["database"]["points"]) and preview["photoCount"] == len(photo_rows), "Restore preview counts are incorrect")
+        require(preview["remediationCount"] == len(baseline["database"]["activity_remediations"]) and preview["activityCount"] == len(baseline["database"]["activities"]) and preview["matterCount"] == len(baseline["database"]["matters"]) and preview["attachmentCount"] == len(baseline["database"]["attachments"]) and preview["pointCount"] == len(baseline["database"]["points"]) and preview["photoCount"] == len(photo_rows), "Restore preview counts are incorrect")
         self.json("POST", "/api/backups/restore", {"token": preview["token"]}, expected=400)
         require(self.fingerprint() == current, "Restore without a second confirmation changed current data")
         self.json("POST", "/api/backups/restore", {"token": "0" * 32, "confirm": True}, expected=(404, 410))
@@ -487,6 +499,11 @@ class ApiSmoke:
         preserved_photos = {path.relative_to(preserved / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                             for path in sorted((preserved / "photos").rglob("*")) if path.is_file()}
         require(preserved_photos == current["photos"], "Pre-restore photos were not preserved intact")
+        preserved_attachments = {path.relative_to(preserved / "attachments").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                                 for path in sorted((preserved / "attachments").rglob("*")) if path.is_file()}
+        require(preserved_attachments == current["attachments"], "Pre-restore attachments were not preserved intact")
+        _, attachment_bytes = self.request("GET", "/api/attachments/" + self.attachment_id)
+        require(attachment_bytes == self.attachment_payload, "Restored attachment endpoint changed original bytes")
 
     @staticmethod
     def make_zip(entries: dict[str, bytes]) -> bytes:
@@ -541,8 +558,10 @@ class ApiSmoke:
                     source.rename(previous / source.name)
             (storage_root / "photos").rename(previous / "photos")
             (storage_root / "photos").mkdir()
+            (storage_root / "attachments").rename(previous / "attachments")
+            (storage_root / "attachments").mkdir()
             for name, payload in self.backup_entries.items():
-                if name == "app.db" or name.startswith("photos/"):
+                if name == "app.db" or name.startswith(("photos/", "attachments/")):
                     destination = self.data / name if name == "app.db" else storage_root / name
                     destination.parent.mkdir(parents=True, exist_ok=True)
                     destination.write_bytes(payload)
@@ -565,6 +584,9 @@ class ApiSmoke:
                 preserved_photos = {path.relative_to(previous / "photos").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                                     for path in sorted((previous / "photos").rglob("*")) if path.is_file()}
                 require(preserved_photos == before["photos"], "Crash recovery discarded preserved old photos")
+                preserved_attachments = {path.relative_to(previous / "attachments").as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                                         for path in sorted((previous / "attachments").rglob("*")) if path.is_file()}
+                require(preserved_attachments == before["attachments"], "Crash recovery discarded preserved attachments")
             else:
                 require(self.json("GET", "/api/settings")["streetName"] == before["database"]["settings"][0][1], "An uncommitted restore changed live settings")
             self.stop()
@@ -642,39 +664,40 @@ class ApiSmoke:
         self.request("GET", "/photos/" + cleanup_photo["id"], expected=404)
 
         community = self.json("POST", "/api/communities", {"name": "V2整治社区", "title": "V2整治社区居民委员会"}, expected=201)
-        campaign_type = self.json("POST", "/api/campaign-types", {"name": "V2整治类型"}, expected=201)
-        require({"卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他"}.issubset({item["name"] for item in self.json("GET", "/api/campaign-types")}), "Campaign default types are incomplete")
+        campaign_type = self.json("POST", "/api/remediation-types", {"name": "V2整治类型"}, expected=201)
+        require({"卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他"}.issubset({item["name"] for item in self.json("GET", "/api/remediation-types")}), "Campaign default types are incomplete")
         before_photo, process_photo, after_photo = self.upload("before"), self.upload("process"), self.upload("after")
-        campaign_body = {"name": "V2环境整治", "typeId": campaign_type["id"], "pointId": None,
+        campaign_body = {"name": "V2环境整治", "typeId": next(t["id"] for t in self.bootstrap["activityTypes"] if t["template"] == "remediation"), "pointId": None,
                          "newPoint": {**self.point_body("整治临时点"), "communityId": community["id"], "address": "V2整治路段"},
                          "date": day(self.today), "endDate": None, "organizer": "组织单位", "participants": "志愿者", "participantCount": 12,
-                         "vehicleCount": 2, "garbageTons": 1.235, "areaSqm": 10.555, "content": "清理路段", "outcome": "路面整洁", "notes": "备注",
-                         "beforePhotoIds": [before_photo["id"]], "processPhotoIds": [process_photo["id"]], "afterPhotoIds": [after_photo["id"]]}
+                         "content": "清理路段", "outcome": "路面整洁", "notes": "备注",
+                         "remediation": {"typeId": campaign_type["id"], "vehicleCount": 2, "garbageTons": 1.235, "areaSqm": 10.555,
+                         "beforePhotoIds": [before_photo["id"]], "processPhotoIds": [process_photo["id"]], "afterPhotoIds": [after_photo["id"]]}}
         before = self.fingerprint()
-        self.json("POST", "/api/campaigns", {**campaign_body, "participantCount": -1}, expected=400)
-        self.json("POST", "/api/campaigns", {**campaign_body, "endDate": day(self.today - dt.timedelta(days=1))}, expected=400)
+        self.json("POST", "/api/activities", {**campaign_body, "participantCount": -1}, expected=400)
+        self.json("POST", "/api/activities", {**campaign_body, "endDate": day(self.today - dt.timedelta(days=1))}, expected=400)
         require(self.fingerprint() == before, "Invalid campaign changed data or photo ownership")
-        campaign = self.json("POST", "/api/campaigns", campaign_body, expected=201)
-        campaign_id = campaign["campaign"]["id"]
-        require(campaign["campaign"]["garbageTons"] == 1.24 and campaign["campaign"]["areaSqm"] == 10.56 and len(campaign["photos"]) == 3, "Campaign rounding or three-phase photos failed")
-        require(ids(self.json("GET", "/api/campaigns?" + urllib.parse.urlencode({"q": "V2环境整治", "communityId": community["id"], "typeId": campaign_type["id"], "from": day(self.today), "to": day(self.today)}))["items"]) == {campaign_id}, "Combined campaign filters failed")
-        self.json("PUT", "/api/campaign-types/" + campaign_type["id"], {"name": "整治类别已更名"})
+        campaign = self.json("POST", "/api/activities", campaign_body, expected=201)
+        campaign_id = campaign["activity"]["id"]
+        require(campaign["activity"]["remediation"]["garbageTons"] == 1.24 and campaign["activity"]["remediation"]["areaSqm"] == 10.56 and len(campaign["photos"]) == 3, "Campaign rounding or three-phase photos failed")
+        require(ids(self.json("GET", "/api/activities?" + urllib.parse.urlencode({"q": "V2环境整治", "communityId": community["id"], "template": "remediation", "remediationTypeId": campaign_type["id"], "from": day(self.today), "to": day(self.today)}))["items"]) == {campaign_id}, "Combined campaign filters failed")
+        self.json("PUT", "/api/remediation-types/" + campaign_type["id"], {"name": "整治类别已更名"})
         self.json("PUT", "/api/communities/" + community["id"], {"name": "整治社区已更名", "title": "已更名居民委员会"})
-        edited_campaign = self.json("PUT", "/api/campaigns/" + campaign_id, {**campaign_body, "pointId": campaign["campaign"]["pointId"], "newPoint": None, "content": "修订整治内容"})
-        require(edited_campaign["campaign"]["communityName"] == community["name"] and edited_campaign["campaign"]["typeName"] == campaign_type["name"], "Editing campaign text replaced historical dictionary snapshots")
-        self.json("DELETE", "/api/campaign-types/" + campaign_type["id"] + "?confirm=true", expected=409)
+        edited_campaign = self.json("PUT", "/api/activities/" + campaign_id, {**campaign_body, "pointId": campaign["activity"]["pointId"], "newPoint": None, "content": "修订整治内容"})
+        require(edited_campaign["activity"]["communityName"] == community["name"] and edited_campaign["activity"]["remediation"]["typeName"] == campaign_type["name"], "Editing campaign text replaced historical dictionary snapshots")
+        self.json("DELETE", "/api/remediation-types/" + campaign_type["id"] + "?confirm=true", expected=409)
         self.json("DELETE", "/api/communities/" + community["id"] + "?confirm=true", expected=409)
-        self.assert_docx("/api/campaigns/" + campaign_id + "/export/record")
+        self.assert_docx("/api/activities/" + campaign_id + "/export/record")
         period = "?" + urllib.parse.urlencode({"from": day(self.today.replace(day=1)), "to": day(self.today), "photos": "true"})
-        for kind in ("rectification-ledger", "inspection-ledger", "campaign-ledger"):
+        for kind in ("rectification-ledger", "inspection-ledger", "remediation-ledger"):
             self.assert_docx("/api/exports/" + kind + period)
-        self.json("DELETE", "/api/campaigns/" + campaign_id, expected=400)
-        self.json("DELETE", "/api/campaigns/" + campaign_id + "?confirm=true", expected=204)
-        self.json("GET", "/api/campaigns/" + campaign_id, expected=404)
+        self.json("DELETE", "/api/activities/" + campaign_id, expected=400)
+        self.json("DELETE", "/api/activities/" + campaign_id + "?confirm=true", expected=204)
+        self.json("GET", "/api/activities/" + campaign_id, expected=404)
         for photo in (before_photo, process_photo, after_photo):
             self.request("GET", "/photos/" + photo["id"], expected=404)
-        self.json("DELETE", "/api/campaign-types/" + campaign_type["id"], expected=400)
-        self.json("DELETE", "/api/campaign-types/" + campaign_type["id"] + "?confirm=true", expected=204)
+        self.json("DELETE", "/api/remediation-types/" + campaign_type["id"], expected=400)
+        self.json("DELETE", "/api/remediation-types/" + campaign_type["id"] + "?confirm=true", expected=204)
         self.json("DELETE", "/api/communities/" + community["id"] + "?confirm=true", expected=204)
         require(self.sql_rows("PRAGMA foreign_key_check") == [], "Version 2 mutations broke foreign keys")
 
@@ -810,7 +833,7 @@ class ApiSmoke:
             require(hashes() == before, "Refused data or photos were modified")
             text = (result.stdout + result.stderr).decode("utf-8", errors="replace")
             require("不支持" in text or "不受支持" in text, "Unsupported data needs an explicit explanation")
-        for version in (1, 2, 4):
+        for version in (2, 3, 4):
             with contextlib.closing(sqlite3.connect(database)) as connection:
                 connection.execute(f"PRAGMA user_version={version}")
                 connection.commit()
@@ -825,8 +848,156 @@ class ApiSmoke:
         journal.write_text('{"backupName":"before-restore-legacy","committed":false}')
         rejected(); journal.unlink()
         self.start()
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 3, "Current schema failed to reopen")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 1, "Current schema failed to reopen")
         self.stop()
+
+    def test_activities_and_types(self) -> None:
+        issue_types = self.json("GET", "/api/issue-types")
+        require(bool(issue_types) and issue_types[0]["id"] == self.bootstrap["issueTypes"][0]["id"], "Missing problem dictionary")
+        new_type = self.json("POST", "/api/issue-types", {"name": "特殊环保问题"}, expected=201)
+        require(self.json("PUT", "/api/issue-types/" + new_type["id"], {"name": "特殊污染问题"})["name"] == "特殊污染问题", "Problem type rename failed")
+        issue = {**self.issue_body("分类回归问题", self.today), "issueTypeId": new_type["id"]}
+        invalid = self.inspection_body(self.point["id"], issues=[{**issue, "issueTypeId": ""}])
+        self.json("POST", "/api/inspections", invalid, expected=400)
+        classified = self.create_inspection(self.point["id"], issues=[issue])
+        require(classified["issues"][0]["issueTypeName"] == "特殊污染问题", "Issue classification was not saved")
+        self.json("DELETE", "/api/issue-types/" + new_type["id"] + "?confirm=true", expected=409)
+        self.json("PUT", "/api/issue-types/" + new_type["id"], {"name": "分类改名"})
+        detail = self.json("GET", "/api/inspections/" + classified["inspection"]["id"])
+        require(detail["issues"][0]["issueTypeName"] == "特殊污染问题", "Issue history changed after dictionary rename")
+        filtered = self.json("GET", "/api/inspections?issueTypeId=" + new_type["id"])
+        require(ids(filtered["items"]) == {classified["inspection"]["id"]}, "Issue type filter matched wrong inspections")
+        self.json("DELETE", "/api/inspections/" + classified["inspection"]["id"] + "?confirm=true", expected=204)
+        self.json("DELETE", "/api/issue-types/" + new_type["id"] + "?confirm=true", expected=204)
+        baseline_activity_ids = ids(self.json("GET", "/api/activities?pageSize=200")["items"])
+        types = self.json("GET", "/api/activity-types")
+        require(len(types) >= 6, "Default activity types are incomplete")
+        custom = self.json("POST", "/api/activity-types", {"name": "专题部署"}, expected=201)
+        photo = self.upload("activity")
+        body = {"name": "环保工作部署会议", "typeId": custom["id"], "communityId": self.community["id"],
+                "date": day(self.today), "location": "街道会议室", "organizer": "生态环境办公室",
+                "participants": "各社区环保负责人", "participantCount": 12,
+                "content": "部署近期环境卫生整治工作和宣传任务。", "outcome": "明确工作分工。", "notes": "会议记录",
+                "photoIds": [photo["id"]]}
+        created = self.json("POST", "/api/activities", body, expected=201)
+        activity_id = created["activity"]["id"]
+        require(created["activity"]["typeName"] == "专题部署" and len(created["photos"]) == 1, "Activity or photo was not saved")
+        self.json("DELETE", "/api/activity-types/" + custom["id"] + "?confirm=true", expected=409)
+        self.json("PUT", "/api/activity-types/" + custom["id"], {"name": "环保会议"})
+        detail = self.json("GET", "/api/activities/" + activity_id)
+        require(detail["activity"]["typeName"] == "专题部署", "Historical activity category was rewritten")
+        listing = self.json("GET", "/api/activities?typeId=" + custom["id"])
+        require(activity_id in ids(listing["items"]), "Activity type filter lost record")
+        require(self.json("GET", "/api/activities?typeId=missing")["total"] == 0, "Invalid activity type matched unexpected records")
+        for route in ("/api/activities/" + activity_id + "/export/record",
+                      "/api/exports/activity-ledger?from=" + day(self.today) + "&to=" + day(self.today) + "&photos=true"):
+            _, document = self.request("GET", route)
+            with zipfile.ZipFile(io.BytesIO(document)) as archive:
+                images = [name for name in archive.namelist() if name.startswith("word/media/")]
+                require(len(images) == 1 and archive.read(images[0]) == JPEG, "Activity export lost the original photo")
+                require("专题部署" in archive.read("word/document.xml").decode("utf-8"), "Activity export lost historical type name")
+        _, backup = self.request("GET", "/api/backups/download")
+        preview = self.json("PUT", "/api/backups/restore/prepare", raw=backup, content_type="application/zip")
+        require(preview["activityCount"] == len(baseline_activity_ids) + 1, "Restore preview lost activity count")
+        self.json("DELETE", "/api/activities/" + activity_id + "?confirm=true", expected=204)
+        self.json("POST", "/api/backups/restore", {"token": preview["token"], "confirm": True})
+        restored = self.json("GET", "/api/activities/" + activity_id)
+        require(restored == detail, "Backup restore changed activity data or photos")
+        edited = self.json("PUT", "/api/activities/" + activity_id, {**body, "name": "环保专题学习", "participantCount": 20, "photoIds": []})
+        require(edited["activity"]["name"] == "环保专题学习" and edited["activity"]["participantCount"] == 20 and not edited["photos"], "Activity edit/photo removal failed")
+        for path in ("/api/activities/" + activity_id + "/export/record",
+                     "/api/exports/activity-ledger?from=" + day(self.today) + "&to=" + day(self.today) + "&photos=false"):
+            headers, payload = self.request("GET", path)
+            require(payload.startswith(b"PK") and len(payload) > 1000, "Activity Word document is not a DOCX package")
+        self.json("DELETE", "/api/activities/" + activity_id + "?confirm=true", expected=204)
+        require(ids(self.json("GET", "/api/activities?pageSize=200")["items"]) == baseline_activity_ids, "Activity deletion removed unrelated records or kept the deleted record")
+        self.json("DELETE", "/api/activity-types/" + custom["id"] + "?confirm=true", expected=204)
+        require(not self.sql_rows("PRAGMA foreign_key_check"), "Activity workflow violated foreign keys")
+
+    def test_matters_tags_attachments(self) -> None:
+        point = self.create_point("事项关联点位")
+        a = self.json("POST", "/api/tags", {"name": "专项主题"}, expected=201)
+        b = self.json("POST", "/api/tags", {"name": "重点办理"}, expected=201)
+        self.json("POST", "/api/tags", {"name": " 专项主题 "}, expected=409)
+        self.json("PUT", "/api/points/" + point["id"] + "/tags", {"tagIds": [a["id"], b["id"]]})
+        body = {"title": "群众反映垃圾堆积", "source": "public", "receivedDate": day(self.today), "content": "请现场核实并处理", "pointId": point["id"],
+                "handler": "经办人", "referenceNumber": "测试交办编号", "contact": "反映人", "phone": "13800000000", "deadline": day(self.today), "tagIds": [a["id"], b["id"]]}
+        first = self.json("POST", "/api/matters", body, expected=201)
+        second = self.json("POST", "/api/matters", {**body, "title": "热线转办油烟", "source": "hotline", "tagIds": [a["id"]]}, expected=201)
+        require(first["status"] == "pending" and first["inspectionCount"] == 0 and first["openIssueCount"] == 0, "New matter state is incorrect")
+        self.json("POST", "/api/matters", {**body, "source": "invalid"}, expected=400)
+        issue1 = {**self.issue_body("垃圾堆积", self.today), "matterIds": [first["id"]]}
+        issue2 = {**self.issue_body("油烟扰民", self.today), "matterIds": [second["id"]]}
+        inspection = self.json("POST", "/api/inspections", {**self.inspection_body(point["id"], issues=[issue1, issue2]),
+            "source": "matter", "matterIds": [first["id"], second["id"]], "tagIds": [a["id"], b["id"]]}, expected=201)
+        inspection_id = inspection["inspection"]["id"]
+        issues_by_description = {issue["description"]: issue for issue in inspection["issues"]}
+        first_issue, second_issue = issues_by_description["垃圾堆积"], issues_by_description["油烟扰民"]
+        require(inspection["inspection"]["source"] == "matter" and ids(inspection["inspection"]["matters"]) == {first["id"], second["id"]}, "Inspection source/links lost")
+        require(ids(first_issue["matters"]) == {first["id"]} and ids(second_issue["matters"]) == {second["id"]}, "Issue-specific matter links were mixed")
+        detail = self.json("GET", "/api/matters/" + first["id"])
+        require(detail["matter"]["status"] == "processing" and detail["matter"]["inspectionCount"] == 1 and detail["matter"]["issueCount"] == 1, "Reverse matter counts are incorrect")
+        self.json("PUT", "/api/inspections/" + inspection_id + "/relations", {"tagIds": [a["id"], b["id"]], "matterIds": [first["id"], second["id"]]})
+        require(ids(self.json("GET", "/api/inspections/" + inspection_id)["inspection"]["tags"]) == {a["id"], b["id"]}, "Combined relation endpoint lost tag assignments")
+        self.json("PUT", "/api/issues/" + first_issue["id"] + "/matters", {"matterIds": [first["id"], "missing"]}, expected=404)
+        require(ids(self.json("GET", "/api/issues/" + first_issue["id"])["issue"]["matters"]) == {first["id"]}, "Invalid link replacement was not atomic")
+        self.json("POST", "/api/matters/" + first["id"] + "/actions", {"kind": "reply", "date": day(self.today), "notes": "已联系并告知办理进展"})
+        self.json("POST", "/api/matters/" + first["id"] + "/actions", {"kind": "close", "date": day(self.today), "notes": "已解决", "outcome": "resolved"}, expected=409)
+        self.json("POST", "/api/issues/" + first_issue["id"] + "/feedback", {"date": day(self.today), "notes": "垃圾已清理"})
+        self.json("POST", "/api/issues/" + first_issue["id"] + "/review", {"date": day(self.today), "conclusion": "现场复查通过"})
+        closed = self.json("POST", "/api/matters/" + first["id"] + "/actions", {"kind": "close", "date": day(self.today), "notes": "已完成处理", "outcome": "resolved"})
+        require(closed["matter"]["status"] == "closed" and closed["matter"]["openIssueCount"] == 0, "Resolved matter failed to close")
+        self.json("PUT", "/api/matters/" + first["id"], body, expected=409)
+        reopened = self.json("POST", "/api/matters/" + first["id"] + "/actions", {"kind": "reopen", "date": day(self.today), "notes": "补充办理材料"})
+        require([action["kind"] for action in reopened["actions"]] == ["reply", "close", "reopen"] and reopened["matter"]["closedDate"] is None, "Reopen erased history or retained close state")
+        transferred = self.json("POST", "/api/matters/" + second["id"] + "/actions", {"kind": "close", "date": day(self.today), "notes": "移交相关部门", "outcome": "transferred"})
+        require(transferred["matter"]["status"] == "closed" and transferred["matter"]["openIssueCount"] == 1, "Transfer incorrectly closed the outstanding issue")
+        self.json("DELETE", "/api/matters/" + first["id"] + "?confirm=true", expected=409)
+
+        general_type = next(t["id"] for t in self.bootstrap["activityTypes"] if t["template"] == "general")
+        remediation_type = next(t for t in self.bootstrap["activityTypes"] if t["template"] == "remediation")
+        self.json("DELETE", "/api/activity-types/" + remediation_type["id"] + "?confirm=true", expected=409)
+        activity = self.json("POST", "/api/activities", {"name": "事项现场宣传", "typeId": general_type, "date": day(self.today), "content": "说明垃圾分类要求",
+            "pointId": point["id"], "tagIds": [a["id"], b["id"]], "matterIds": [first["id"]], "issueIds": [first_issue["id"]]}, expected=201)
+        require(activity["activity"]["template"] == "general" and activity["activity"]["pointId"] == point["id"] and ids(activity["activity"]["relatedIssues"]) == {first_issue["id"]}, "Unified activity links were not serialized")
+        remediation = self.json("POST", "/api/activities", {"name": "事项清理整治", "typeId": remediation_type["id"], "date": day(self.today), "content": "开展清理",
+            "pointId": point["id"], "tagIds": [a["id"]], "matterIds": [first["id"]], "remediation": {"typeId": self.bootstrap["remediationTypes"][0]["id"], "garbageTons": 1.25}}, expected=201)
+        require(remediation["activity"]["template"] == "remediation" and remediation["activity"]["remediation"]["garbageTons"] == 1.25, "Nested remediation payload lost")
+        self.json("PUT", "/api/activities/" + activity["activity"]["id"], {"name": "不允许转换", "typeId": remediation_type["id"], "date": day(self.today), "content": "内容", "pointId": point["id"], "remediation": {"typeId": self.bootstrap["remediationTypes"][0]["id"]}}, expected=409)
+        tags_query = urllib.parse.urlencode({"tagId": [a["id"], b["id"]]}, doseq=True)
+        require(ids(self.json("GET", "/api/matters?" + tags_query)["items"]) == {first["id"]}, "Matter tags use OR instead of AND")
+        require(ids(self.json("GET", "/api/inspections?" + tags_query)["items"]) == {inspection_id}, "Inspection tag filtering incorrect")
+        require(ids(self.json("GET", "/api/activities?" + tags_query)["items"]) == {activity["activity"]["id"]}, "Activity tag filtering incorrect")
+        require(ids(self.json("GET", "/api/points?" + tags_query)["items"]) == {point["id"]}, "Point tag filtering incorrect")
+        self.assert_docx("/api/exports/remediation-ledger?" + urllib.parse.urlencode({"from": day(self.today), "to": day(self.today), "scope": "current", "tagId": a["id"], "matterId": first["id"]}))
+        self.json("PUT", "/api/tags/" + b["id"], {"name": "历史重点", "disabled": True})
+        self.json("PUT", "/api/points/" + point["id"] + "/tags", {"tagIds": [a["id"], b["id"]]})
+        self.json("PUT", "/api/matters/" + second["id"] + "/tags", {"tagIds": [a["id"], b["id"]]}, expected=400)
+        self.json("DELETE", "/api/tags/" + a["id"] + "?confirm=true", expected=409)
+        tag_usage = {tag["id"]: tag["usageCount"] for tag in self.json("GET", "/api/tags")}
+        require(tag_usage[a["id"]] == 6 and tag_usage[b["id"]] == 4, "Cross-module tag usage counts inflated")
+
+        payload = b"%PDF-1.7\noriginal attachment bytes\n%%EOF"
+        upload_path = "/api/points/" + point["id"] + "/attachments?" + urllib.parse.urlencode({"name": "检测报告.pdf"})
+        attachment = self.json("PUT", upload_path, raw=payload, content_type="application/pdf", expected=201)
+        require(attachment["size"] == len(payload) and attachment["sha256"] == hashlib.sha256(payload).hexdigest() and attachment["canPreview"], "Attachment metadata is incomplete")
+        headers, original = self.request("GET", "/api/attachments/" + attachment["id"] + "?preview=true")
+        require(original == payload and headers.get("Content-Type", "").startswith("application/pdf") and "inline" in headers.get("Content-Disposition", ""), "Attachment preview altered bytes or disposition")
+        require(headers.get("X-Content-Type-Options") == "nosniff" and "sandbox" in headers.get("Content-Security-Policy", ""), "Attachment preview hardening headers missing")
+        self.json("PUT", "/api/attachments/" + attachment["id"], {"name": "复核报告.pdf", "notes": "签字原件"})
+        self.json("PUT", "/api/attachments/" + attachment["id"], {"name": "错误.docx"}, expected=400)
+        self.json("PUT", "/api/points/" + point["id"] + "/attachments?" + urllib.parse.urlencode({"name": "../escape.pdf"}), raw=payload, expected=400)
+        self.json("PUT", upload_path, raw=b"not PDF", expected=400)
+        self.json("DELETE", "/api/attachments/" + attachment["id"], expected=400)
+        require(ids(self.json("GET", "/api/points/" + point["id"] + "/attachments")) == {attachment["id"]}, "Rejected attachment operations altered original")
+        point_detail = self.json("GET", "/api/points/" + point["id"])
+        require(ids(point_detail["attachments"]) == {attachment["id"]} and ids(point_detail["activities"]) == {activity["activity"]["id"], remediation["activity"]["id"]}, "Point detail omitted unified records")
+        disposable = self.json("PUT", "/api/points/" + point["id"] + "/attachments?name=delete.txt", raw=b"temporary", expected=201)
+        self.json("DELETE", "/api/attachments/" + disposable["id"] + "?confirm=true", expected=204)
+        self.request("GET", "/api/attachments/" + disposable["id"], expected=404)
+        # Leave the matter, relationships and PDF in place to exercise complete backup/restart below.
+        self.attachment_id, self.attachment_payload = attachment["id"], payload
+        require(not self.sql_rows("PRAGMA foreign_key_check"), "New-domain workflow violated referential integrity")
 
     def run(self) -> None:
         self.start(seed=True)
@@ -836,13 +1007,19 @@ class ApiSmoke:
             ("normal/multi-issue inspections, JPEG upload and transactional photo association", self.test_inspections_and_photos),
             ("feedback, optional-photo review, closure and return audit trail", self.test_state_transitions),
             ("calendar periods, deadline boundaries and dashboard/list agreement", self.test_dashboard),
-            ("v2 temporary points, thumbnails, batch rollback, editing, campaigns and seven Word exports", self.test_version2_workflows),
+            ("temporary points, thumbnails, batch rollback and unified remediation", self.test_version2_workflows),
+            ("issue categories, activity CRUD, photos and activity exports", self.test_activities_and_types),
+            ("matters, shared tags, point attachments and linked activities", self.test_matters_tags_attachments),
             ("loopback-only listening, IPv6, live rebinding, remote 403, command override and missing-adapter fallback", self.test_listening),
             ("consistent backup, restore confirmation, invalid ZIP and failed-preservation safety", self.test_backups),
             ("orphan cleanup, future-record reminders, graceful restart and idempotent demo seed", self.test_cleanup_and_restart),
             ("restart recovery before and after restore commit, with old evidence retained", self.test_interrupted_restore),
             ("unsupported versions and legacy layout are rejected without changing files", self.test_unsupported_data_is_unchanged),
         ):
+            if self.skip_listening and action == self.test_listening:
+                self.report["cases"].append({"name": name, "skipped": True, "reason": "Explicit --skip-listening: host non-loopback adapter checks unavailable; business API cases remain enabled."})
+                print("SKIP " + name + " (explicit --skip-listening)", flush=True)
+                continue
             self.case(name, action)
         self.report["passed"] = True
 
@@ -854,6 +1031,7 @@ def main() -> int:
     parser.add_argument("--work-root", type=Path, help="Optional parent for the fresh temporary application directory")
     parser.add_argument("--startup-timeout", type=float, default=30)
     parser.add_argument("--keep-temp", action="store_true", help="Keep only this test's temporary installation for troubleshooting")
+    parser.add_argument("--skip-listening", action="store_true", help="Exclude host adapter/rebinding integration checks; record an explicit skipped case")
     args = parser.parse_args()
     executable = args.executable.resolve()
     require(executable.is_file(), "The NativeAOT executable does not exist: " + str(executable))
@@ -862,6 +1040,7 @@ def main() -> int:
     report_path = args.report.resolve()
     report_path.parent.mkdir(parents=True, exist_ok=True)
     suite = ApiSmoke(executable, args.work_root, args.startup_timeout)
+    suite.skip_listening = args.skip_listening
     result = 0
     try:
         suite.run()

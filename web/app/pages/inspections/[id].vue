@@ -17,6 +17,7 @@ import {
   statusLabel,
   todayLocal,
 } from '~/utils/format'
+const { bootstrap } = useAppData()
 const route = useRoute(),
   toast = useToast()
 const focus = useDialogFocus(
@@ -65,6 +66,7 @@ const issueState = reactive<IssueUpdateRequest>({
   requirement: '',
   deadline: '',
   responsibleUnit: '',
+  issueTypeId: '',
 })
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 watch(
@@ -188,6 +190,7 @@ function openEdit() {
   Object.assign(editState, {
     date: detail.value.inspection.date,
     inspector: detail.value.inspection.inspector,
+    source: detail.value.inspection.source,
     noticeNumber: detail.value.inspection.noticeNumber,
     notes: detail.value.inspection.notes,
   })
@@ -246,12 +249,14 @@ function openIssueEdit(issue: IssueDto) {
     requirement: issue.requirement,
     deadline: issue.deadline,
     responsibleUnit: issue.responsibleUnit,
+    issueTypeId: issue.issueTypeId,
   })
   issueEditError.value = ''
   issueEditOpen.value = true
 }
 function validateIssue(): FormError[] {
   const errors: FormError[] = []
+  if (!issueState.issueTypeId) errors.push({ name: 'issueTypeId', message: '请选择问题类型' })
   if (!issueState.description.trim())
     errors.push({ name: 'description', message: '请填写问题描述' })
   if (!issueState.deadline) errors.push({ name: 'deadline', message: '请选择整改期限' })
@@ -379,6 +384,7 @@ watch(() => route.query.issue, revealIssue)
             >逾期 {{ overdueDays(detail.inspection.nearestDeadline) }} 天</StatusBadge
           >
         </div>
+        <RecordRelations kind="inspection" :id="detail.inspection.id" :tags="detail.inspection.tags" :matters="detail.inspection.matters" @changed="load" />
         <section class="panel">
           <div class="panel-head">
             <h2 class="section-title">基本信息</h2>
@@ -435,6 +441,9 @@ watch(() => route.query.issue, revealIssue)
                   >{{ detail.inspection.phone }}</a
                 ><span v-else>—</span>
               </dd>
+            </div>
+            <div>
+              <dt>排查来源</dt><dd>{{ detail.inspection.source === 'matter' ? '事项核查' : detail.inspection.source === 'other' ? '其他' : '日常巡查' }}</dd>
             </div>
             <div>
               <dt>排查日期</dt>
@@ -510,7 +519,7 @@ watch(() => route.query.issue, revealIssue)
             <div v-if="expanded[issue.id]" :id="`issue-body-${issue.id}`" class="issue-body">
               <dl class="detail-grid">
                 <div class="detail-wide">
-                  <dt>问题描述</dt>
+                  <dt>问题类型</dt><dd>{{ issue.issueTypeName }}</dd><dt>问题描述</dt>
                   <dd class="whitespace-pre-wrap">{{ issue.description }}</dd>
                 </div>
                 <div class="detail-wide">
@@ -522,6 +531,7 @@ watch(() => route.query.issue, revealIssue)
                   <dd><NameTags :value="issue.responsibleUnit" /></dd>
                 </div>
               </dl>
+              <RecordRelations kind="issue" :id="issue.id" :matters="issue.matters" @changed="load" />
               <IssuePhotoGroups :photos="issueDetails.get(issue.id)?.photos ?? []" />
               <UCollapsible v-model:open="historyOpen[issue.id]"
                 ><UButton
@@ -630,6 +640,7 @@ watch(() => route.query.issue, revealIssue)
               :maxlength="100"
               class="w-full"
               :disabled="editing" /></UFormField
+          ><UFormField name="source" label="排查来源" class="field-full"><USelect v-model="editState.source" :items="detail?.inspection.matters.length ? [{ label: '事项核查', value: 'matter' }] : [{ label: '日常巡查', value: 'routine' }, { label: '其他', value: 'other' }]" :disabled="editing || !!detail?.inspection.matters.length" class="w-full" /></UFormField
           ><UFormField name="noticeNumber" label="通知单编号" class="field-full"
             ><UInput
               v-model="editState.noticeNumber"
@@ -676,7 +687,7 @@ watch(() => route.query.issue, revealIssue)
           :validate="validateIssue"
           class="field-grid"
           @submit="saveIssue"
-          ><UFormField name="description" label="问题描述" required class="field-full"
+          ><UFormField name="issueTypeId" label="问题类型" required class="field-full"><USelect v-model="issueState.issueTypeId" :items="(bootstrap?.issueTypes ?? []).map(item => ({ label: item.name, value: item.id }))" placeholder="请选择" class="w-full" :disabled="issueEditing" /></UFormField><UFormField name="description" label="问题描述" required class="field-full"
             ><UTextarea
               v-model="issueState.description"
               :rows="3"
@@ -759,7 +770,7 @@ watch(() => route.query.issue, revealIssue)
       title="删除排查？"
       :description="
         detail?.inspection.pointTemporary
-          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查或整治，该临时点位及其点位照片也将删除。'
+          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查或整治，该临时点位及其没有其他活动、事项或附件时，点位照片也将删除。'
           : '删除后，问题、办理记录和照片无法恢复'
       "
       :dismissible="!deleting"

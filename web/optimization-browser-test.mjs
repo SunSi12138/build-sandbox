@@ -19,11 +19,11 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
   const goto = async route => page.goto(origin + '/#' + route, { waitUntil: 'networkidle' })
   const responseFor = (path, method) => page.waitForResponse(response => new URL(response.url()).pathname === '/api' + path && response.request().method() === method)
   const serverPhotoStatus = async id => (await fetch(directOrigin + '/photos/' + id)).status
-  const draft = async () => page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v2')))
+  const draft = async () => page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v4')))
   const choose = async (locator, name) => { await locator.click(); await page.getByRole('option', { name, exact: true }).click() }
   async function beginInspection() {
     await goto('/points')
-    await page.evaluate(() => localStorage.removeItem('street-eco.inspection-draft.v2'))
+    await page.evaluate(() => localStorage.removeItem('street-eco.inspection-draft.v4'))
     await goto('/inspections/new')
     await page.getByTestId('inspection-point-search').fill(point.name)
     await page.getByTestId('inspection-point-option').filter({ hasText: point.name }).click()
@@ -133,7 +133,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
     })
 
     await test('F04 all dirty batch close paths preserve edits unless explicitly discarded', async () => {
-      const record = await api('/inspections', { method: 'POST', body: { pointId: point.id, date: bootstrap.today, inspector: '关闭回归', result: 'issues', issues: [{ description: '问题甲', deadline: bootstrap.today }, { description: '问题乙', deadline: bootstrap.today }] } })
+      const record = await api('/inspections', { method: 'POST', body: { pointId: point.id, date: bootstrap.today, inspector: '关闭回归', result: 'issues', issues: [{ issueTypeId: bootstrap.issueTypes[0].id, description: '问题甲', deadline: bootstrap.today }, { issueTypeId: bootstrap.issueTypes[1].id, description: '问题乙', deadline: bootstrap.today }] } })
       await goto('/inspections/' + record.inspection.id)
       const feedback = () => page.getByRole('dialog', { name: '记录反馈', exact: true })
       await page.getByTestId('batch-feedback').click()
@@ -178,31 +178,31 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       await page.getByRole('dialog', { name: '放弃未提交内容？', exact: true }).getByRole('button', { name: '放弃', exact: true }).click()
     })
 
-    await test('F03 campaign loading and slow-save locks cover every editable control', async () => {
-      await goto('/campaigns/new')
-      await page.getByTestId('campaign-name').fill('慢请求整治')
-      await choose(page.getByTestId('campaign-type'), bootstrap.campaignTypes[0].name)
-      await page.getByTestId('campaign-point-search').fill(point.name)
-      await page.getByTestId('campaign-point-option').filter({ hasText: point.name }).click()
-      await page.getByTestId('campaign-content').fill('请妥善保管，让每一项现场记录按原文上传。')
+    await test('F03 remediation activity loading and slow-save locks cover every editable control', async () => {
+      await goto('/activities/new?template=remediation')
+      await page.getByTestId('activity-name').fill('慢请求整治')
+      await choose(page.getByTestId('activity-remediation-type'), bootstrap.remediationTypes[0].name)
+      await page.getByTestId('activity-point-search').fill(point.name)
+      await page.getByTestId('activity-point-option').filter({ hasText: point.name }).click()
+      await page.getByTestId('activity-content').fill('请妥善保管，让每一项现场记录按原文上传。')
       let entered
       const ready = new Promise(resolve => { entered = resolve })
-      await page.route('**/api/campaigns', async route => {
+      await page.route('**/api/activities', async route => {
         if (route.request().method() !== 'POST') return route.continue()
         entered()
         await new Promise(resolve => setTimeout(resolve, 2000))
         await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: '测试保存失败' }) })
       })
-      await page.getByTestId('campaign-save').click(); await ready
+      await page.getByTestId('activity-save').click(); await ready
       const fields = await page.locator('main form input, main form textarea, main form button[role="combobox"]').evaluateAll(elements => elements.map(element => ({ type: element.type, disabled: element.disabled })))
       assert(fields.length >= 10)
       assert(fields.every(field => field.disabled), JSON.stringify(fields))
-      await page.evaluate(() => { location.hash = '/campaigns' })
-      await page.waitForURL('**/#/campaigns/new')
+      await page.evaluate(() => { location.hash = '/activities' })
+      await page.waitForURL('**/#/activities/new?template=remediation')
       await expect(page.getByRole('alert').filter({ hasText: '测试保存失败' })).toBeVisible()
-      await expect(page.getByTestId('campaign-name')).toBeEnabled()
-      await expect(page.getByTestId('campaign-name')).toHaveValue('慢请求整治')
-      assert((await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v3')))?.includes('慢请求整治'))
+      await expect(page.getByTestId('activity-name')).toBeEnabled()
+      await expect(page.getByTestId('activity-name')).toHaveValue('慢请求整治')
+      assert((await page.evaluate(() => localStorage.getItem('street-eco.activity-draft.v2')))?.includes('慢请求整治'))
     })
     await test('M01 measure 50-issue draft input without weakening persistence', async () => {
       await beginInspection()
@@ -215,7 +215,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
         pictures.push(await response.json())
       }
       const envelope = await draft()
-      assert.equal(envelope.version, 2)
+      assert.equal(envelope.version, 4)
       assert.equal(envelope.draft.result, 'issues')
       // Leave the live editor before seeding a large persisted fixture. Its
       // beforeunload/pagehide handlers correctly flush its one in-memory issue;
@@ -224,8 +224,8 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       await page.getByRole('link', { name: '返回', exact: true }).first().click()
       await expect(page.getByTestId('inspection-save')).toHaveCount(0)
       await page.evaluate(({ envelope, pictures, today }) => {
-        envelope.draft.issues = Array.from({ length: 50 }, (_, i) => ({ key: i + 1, description: '性能观察问题' + i + '现场检查。'.repeat(100), requirement: '保留最后输入。', deadline: today, responsibleUnit: '测试社区', photos: i < 2 ? [pictures[i]] : [] }))
-        localStorage.setItem('street-eco.inspection-draft.v2', JSON.stringify(envelope))
+        envelope.draft.issues = Array.from({ length: 50 }, (_, i) => ({ key: i + 1, issueTypeId: envelope.draft.issues[0].issueTypeId, description: '性能观察问题' + i + '现场检查。'.repeat(100), requirement: '保留最后输入。', deadline: today, responsibleUnit: '测试社区', photos: i < 2 ? [pictures[i]] : [] }))
+        localStorage.setItem('street-eco.inspection-draft.v4', JSON.stringify(envelope))
       }, { envelope, pictures, today: bootstrap.today })
       await goto('/inspections/new')
       await expect(page.getByTestId('inspection-issue-description')).toHaveCount(50)
@@ -238,7 +238,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
         Storage.prototype.setItem = function (key, value) {
           const start = performance.now()
           const result = original.call(this, key, value)
-          if (key === 'street-eco.inspection-draft.v2') writes.push({ milliseconds: performance.now() - start, characters: value.length })
+          if (key === 'street-eco.inspection-draft.v4') writes.push({ milliseconds: performance.now() - start, characters: value.length })
           return result
         }
         const input = document.querySelectorAll('[data-testid="inspection-issue-description"]')[49]

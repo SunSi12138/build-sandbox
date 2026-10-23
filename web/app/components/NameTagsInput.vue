@@ -23,6 +23,7 @@ watch(model, value => {
   tags.value = splitNames(normalizeNames(value))
   text.value = ''
   published = value
+  if (input.value?.inputRef) input.value.inputRef.value = ''
   error.value = ''
 })
 function update(value: string | number | undefined) {
@@ -35,7 +36,7 @@ function update(value: string | number | undefined) {
   error.value = ''
   if (composing) text.value = raw
   else {
-    const pieces = raw.split(/[，,。.\s]+/u)
+    const pieces = raw.split(/[，,、；;\s]+/u)
     text.value = pieces.pop() ?? ''
     tags.value.push(...pieces.filter(Boolean))
     if (input.value?.inputRef) input.value.inputRef.value = text.value
@@ -50,10 +51,12 @@ function commit() {
 }
 function keydown(event: KeyboardEvent) {
   if (props.disabled || event.isComposing || composing || event.keyCode === 229) return
-  if (event.key === 'Enter') { event.preventDefault(); commit() }
+  if (event.key === 'Enter') { event.preventDefault(); event.stopImmediatePropagation(); commit(); if (input.value?.inputRef) input.value.inputRef.value = '' }
   else if (event.key === 'Backspace' && !text.value && tags.value.length) {
     event.preventDefault()
+    event.stopImmediatePropagation()
     text.value = tags.value.pop() ?? ''
+    if (input.value?.inputRef) input.value.inputRef.value = text.value
     publish()
   }
 }
@@ -65,13 +68,12 @@ function paste(event: ClipboardEvent) {
   const end = element?.selectionEnd ?? start
   update(text.value.slice(0, start) + event.clipboardData.getData('text/plain') + text.value.slice(end))
 }
-function remove(index: number) {
-  if (props.disabled) return
-  tags.value.splice(index, 1)
+function updateTags(value: string[]) {
+  tags.value = value
   error.value = ''
   publish()
-  input.value?.inputRef?.focus()
 }
+function nativeInput(event: Event) { update((event.target as HTMLInputElement).value) }
 function compositionEnd(event: CompositionEvent) {
   composing = false
   update((event.target as HTMLInputElement).value)
@@ -82,13 +84,13 @@ function compositionEnd(event: CompositionEvent) {
 
 <template>
   <div class="names-field">
-    <div class="names-editor" :class="{ 'names-disabled': disabled }">
-      <span v-for="(tag, index) in tags" :key="index" class="name-edit-tag">
-        <UBadge color="neutral" variant="subtle">{{ tag }}</UBadge>
-        <UButton type="button" icon="i-lucide-x" color="neutral" variant="ghost" class="name-remove" :aria-label="`移除 ${tag}`" :disabled="disabled" @mousedown.prevent @click="remove(index)" />
-      </span>
-      <UInput ref="input" v-bind="$attrs" :model-value="text" :disabled="disabled" :maxlength="remaining" variant="none" class="names-input" :ui="{ base: 'ring-0 focus:ring-0 shadow-none' }" @update:model-value="update" @keydown="keydown" @paste="paste" @compositionstart="composing = true" @compositionend="compositionEnd" />
-    </div>
+    <UInputTags ref="input" v-bind="$attrs" :model-value="tags" :disabled="disabled"
+      :max-length="remaining" delimiter="" :add-on-blur="false" :duplicate="true"
+      :ui="{ root: 'names-editor', item: 'name-edit-tag', itemText: 'name-tag-text', itemDelete: 'name-remove', input: 'names-input', itemDeleteIcon: 'size-3.5' }"
+      @update:model-value="updateTags" @input="nativeInput" @keydown.capture="keydown"
+      @paste.capture="paste" @compositionstart="composing = true" @compositionend="compositionEnd">
+      <template #item-delete="{ item }"><UIcon name="i-lucide-x" class="size-3.5" /><span class="sr-only">移除 {{ item }}</span></template>
+    </UInputTags>
     <p v-if="error" class="text-xs text-error" role="alert">{{ error }}</p>
   </div>
 </template>

@@ -154,10 +154,10 @@ class WordSmoke(api_smoke.ApiSmoke):
         description = "逐段核验：围挡内堆放材料，需覆盖裸露区域并清运垃圾。" * 140
         self.create_inspection(self.point["id"], issues=[self.issue_body(description, self.today - dt.timedelta(days=1))])
         text, _, document = self.download(self.ledger_route, "ledger-long-text.docx")
-        table = next(table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 9)
-        continued = [row for row in table.findall(W + "tr") if len(row.findall(W + "tc")) == 9 and "".join(row.findall(W + "tc")[0].itertext()) == "3"]
+        table = next(table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 10)
+        continued = [row for row in table.findall(W + "tr") if len(row.findall(W + "tc")) == 10 and "".join(row.findall(W + "tc")[0].itertext()) == "3"]
         require(len(continued) > 1, "An oversized Word row must continue as separately bounded rows")
-        combined = "".join("".join(row.findall(W + "tc")[4].itertext()) for row in continued)
+        combined = "".join("".join(row.findall(W + "tc")[5].itertext()) for row in continued)
         require(combined == description, "Long issue description was truncated in Word export")
         require("共 3 条，已闭环 1，待复查 0，待整改 2，其中逾期 1" in text, "Long ledger summary is wrong")
         require(not list((self.data.parent / "temp").glob("*.docx")), "Completed downloads left temporary DOCX files")
@@ -181,24 +181,51 @@ class WordSmoke(api_smoke.ApiSmoke):
         main = [table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 10][0]
         require(len(main.findall(W + "tr")[-1].findall(W + "tc")) == 1, "Inspection ledger summary is not the final merged table row")
         self.download("/api/exports/rectification-ledger?" + query, "rectification-ledger.docx")
-        types = self.json("GET", "/api/campaign-types")
+        types = self.json("GET", "/api/remediation-types")
+        remediation_type = next(item for item in self.bootstrap["activityTypes"] if item["template"] == "remediation")
         before, process, after = self.upload("before"), self.upload("process"), self.upload("after")
-        campaign = self.json("POST", "/api/campaigns", {
-            "name": "沿河卫生整治", "typeId": types[0]["id"], "pointId": self.point["id"], "date": self.today.isoformat(),
-            "organizer": "版式验收街道办事处", "participants": "社区工作人员与志愿者", "participantCount": 18, "vehicleCount": 2,
-            "garbageTons": 1.25, "areaSqm": 360.50, "content": "清理河道沿线垃圾，修剪杂草。", "outcome": "河岸环境恢复整洁。", "notes": "现场设置垃圾收集点。",
-            "beforePhotoIds": [before["id"]], "processPhotoIds": [process["id"]], "afterPhotoIds": [after["id"]]
+        campaign = self.json("POST", "/api/activities", {
+            "name": "沿河卫生整治", "typeId": remediation_type["id"], "pointId": self.point["id"], "date": self.today.isoformat(),
+            "organizer": "版式验收街道办事处", "participants": "社区工作人员与志愿者", "participantCount": 18,
+            "content": "清理河道沿线垃圾，修剪杂草。", "outcome": "河岸环境恢复整洁。", "notes": "现场设置垃圾收集点。",
+            "remediation": {"typeId": types[0]["id"], "vehicleCount": 2, "garbageTons": 1.25, "areaSqm": 360.50,
+                            "beforePhotoIds": [before["id"]], "processPhotoIds": [process["id"]], "afterPhotoIds": [after["id"]]}
         }, expected=201)
-        campaign_id = campaign["campaign"]["id"]
-        text, photos, _ = self.download(f"/api/campaigns/{campaign_id}/export/record", "campaign-record.docx")
+        campaign_id = campaign["activity"]["id"]
+        text, photos, _ = self.download(f"/api/activities/{campaign_id}/export/record", "campaign-record.docx")
         require(photos == 3 and "整治前" in text and "整治中" in text and "整治后" in text, "Campaign record omitted a photo phase")
-        text, photos, document = self.download("/api/exports/campaign-ledger?" + query + "&photos=true&typeId=" + types[0]["id"], "campaign-ledger-photos.docx")
+        text, photos, document = self.download("/api/exports/remediation-ledger?" + query + "&photos=true&remediationTypeId=" + types[0]["id"], "campaign-ledger-photos.docx")
         require(photos == 3 and "共 1 次整治，累计参加 18 人、出动车辆 2 辆、清运垃圾 1.25 吨、清理面积 360.50 ㎡" in text, "Campaign ledger totals or photos are wrong")
         main = [table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 11][0]
         require(len(main.findall(W + "tr")[-1].findall(W + "tc")) == 1, "Campaign ledger summary is not merged")
-        _, photos, _ = self.download("/api/exports/campaign-ledger?" + query, "campaign-ledger-no-photos.docx")
+        _, photos, _ = self.download("/api/exports/remediation-ledger?" + query, "campaign-ledger-no-photos.docx")
         require(photos == 0, "Campaign no-photo ledger contains images")
-        self.request("GET", "/api/exports/campaign-ledger?" + query + "&typeId=missing", expected=400)
+        self.request("GET", "/api/exports/remediation-ledger?" + query + "&remediationTypeId=missing", expected=400)
+
+    def activity_exports(self):
+        types = [item for item in self.json("GET", "/api/activity-types") if item["template"] == "general"]
+        photo = self.upload("activity")
+        result = self.json("POST", "/api/activities", {
+            "name": "环保宣传学习活动", "typeId": types[0]["id"], "communityId": self.community["id"],
+            "date": self.today.isoformat(), "location": "社区活动室", "participants": "社区工作人员",
+            "organizer": "街道生态办", "participantCount": 16,
+            "content": "开展环境保护政策宣传和集中学习。", "outcome": "完成宣传任务。",
+            "photoIds": [photo["id"]]
+        }, expected=201)
+        record = result["activity"]
+        text, photos, document = self.download(f"/api/activities/{record['id']}/export/record", "activity-record.docx")
+        require(photos == 1 and "环保宣传学习活动" in text and "开展情况" in text, "Activity record export lost key fields/photos")
+        query = "from=" + self.today.isoformat() + "&to=" + self.today.isoformat()
+        text, photos, document = self.download("/api/exports/activity-ledger?" + query + "&photos=true&typeId=" + types[0]["id"], "activity-ledger.docx")
+        require("共 1 次活动" in text and "16 人" in text and photos == 1, "Activity ledger totals or photos incorrect")
+        main = [table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 10][0]
+        require(len(main.findall(W + "tr")[-1].findall(W + "tc")) == 1, "Activity ledger summary not merged")
+        text, photos, _ = self.download("/api/exports/activity-ledger?" + query + "&photos=true", "activity-ledger-unified.docx")
+        require("共 2 次活动" in text and "34 人" in text and photos == 4, "Unified activity ledger must include general and remediation activities")
+        require("沿河卫生整治" in text and "环保宣传学习活动" in text, "Unified activity ledger omitted an activity template")
+        self.request("GET", "/api/exports/activity-ledger?" + query + "&typeId=missing", expected=400)
+        source_text, _, _ = self.download("/api/inspections/" + self.inspection_id + "/export/record", "record-types.docx")
+        require("问题类型" in source_text, "Inspection record omitted issue category")
 
     def run(self):
         self.start()
@@ -207,6 +234,7 @@ class WordSmoke(api_smoke.ApiSmoke):
         self.case("landscape ledger, comparison photos, exact summary and invalid filters", self.ledger)
         self.case("long text is retained and downloaded temporary files are removed", self.long_text)
         self.case("rectification record, inspection ledger, campaign record and campaign ledger", self.new_exports)
+        self.case("activity record and activity ledger, classified issue Word fields", self.activity_exports)
 
 
 def main():

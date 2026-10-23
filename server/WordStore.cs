@@ -28,17 +28,16 @@ public sealed partial class Store
         }
     }
 
-    public WordDownload ExportLedgerWord(string from, string to, string? communityId = null, bool includePhotos = false, string[]? pointIds = null)
+    public WordDownload ExportLedgerWord(string from, string to, string? communityId = null, bool includePhotos = false, string[]? pointIds = null, InspectionQuery? filters = null)
     {
         lock (_gate)
         {
-            from = DateText(from, "开始日期");
-            to = DateText(to, "结束日期");
+            (from, to) = LedgerDates(from, to, "inspections", "inspection_date", filters is not null);
             CheckDateRange(from, to);
             CommunityDto? community = null;
             if (!string.IsNullOrEmpty(communityId)) community = RequireCommunity(Text(communityId, "所属社区", 100, true));
             var selectedPoints = ExportPoints(pointIds);
-            var issues = GetLedgerIssues(from, to, community?.Id, selectedPoints.Select(p => p.Id).ToArray());
+            var issues = GetLedgerIssues(from, to, community?.Id, selectedPoints.Select(p => p.Id).ToArray(), filters);
             WordPhoto[] photos = [];
             if (includePhotos)
             {
@@ -83,16 +82,15 @@ public sealed partial class Store
         }
     }
 
-    public WordDownload ExportInspectionLedgerWord(string from, string to, string? communityId = null, string[]? pointIds = null)
+    public WordDownload ExportInspectionLedgerWord(string from, string to, string? communityId = null, string[]? pointIds = null, InspectionQuery? filters = null)
     {
         lock (_gate)
         {
-            from = DateText(from, "开始日期");
-            to = DateText(to, "结束日期");
+            (from, to) = LedgerDates(from, to, "inspections", "inspection_date", filters is not null);
             CheckDateRange(from, to);
             var community = string.IsNullOrEmpty(communityId) ? null : RequireCommunity(Text(communityId, "所属社区", 100, true));
             var selectedPoints = ExportPoints(pointIds);
-            var inspections = GetLedgerInspections(from, to, community?.Id, selectedPoints.Select(p => p.Id).ToArray());
+            var inspections = GetLedgerInspections(from, to, community?.Id, selectedPoints.Select(p => p.Id).ToArray(), filters);
             var name = community?.Name ?? "全部社区";
             var ledger = new WordInspectionLedger(from, to, name, inspections, Today, selectedPoints.Length == 0 ? null : string.Join("、", selectedPoints.Select(p => p.Name)));
             var settings = GetSettings();
@@ -100,22 +98,68 @@ public sealed partial class Store
         }
     }
 
-    public WordDownload ExportCampaignLedgerWord(string from, string to, string? communityId = null, string? typeId = null, bool includePhotos = false, string[]? pointIds = null)
+    public WordDownload ExportCampaignLedgerWord(string from, string to, string? communityId = null, string? typeId = null, bool includePhotos = false, string[]? pointIds = null, CampaignQuery? filters = null)
     {
         lock (_gate)
         {
-            from = DateText(from, "开始日期");
-            to = DateText(to, "结束日期");
+            (from, to) = LedgerDates(from, to, "activities", "activity_date", filters is not null);
             CheckDateRange(from, to);
             var community = string.IsNullOrEmpty(communityId) ? null : RequireCommunity(Text(communityId, "所属社区", 100, true));
             var selectedPoints = ExportPoints(pointIds);
-            var campaigns = GetLedgerCampaigns(from, to, community?.Id, typeId, selectedPoints.Select(p => p.Id).ToArray());
-            var photos = includePhotos ? ResolveWordPhotos(campaigns.SelectMany(campaign => ReadPhotos(campaignId: campaign.Id))) : [];
+            var campaigns = GetLedgerCampaigns(from, to, community?.Id, typeId, selectedPoints.Select(p => p.Id).ToArray(), filters);
+            var photos = includePhotos ? ResolveWordPhotos(campaigns.SelectMany(campaign => ReadPhotos(activityId: campaign.Id))) : [];
             var name = community?.Name ?? "全部社区";
             var ledger = new WordCampaignLedger(from, to, name, campaigns, photos, includePhotos, Today, selectedPoints.Length == 0 ? null : string.Join("、", selectedPoints.Select(p => p.Name)));
             var settings = GetSettings();
             return WriteWordTemporary(WordExporter.FileName("整治台账", name, to), destination => WordExporter.WriteCampaignLedger(destination, ledger, settings));
         }
+    }
+
+    public WordDownload ExportActivityWord(string id)
+    {
+        lock (_gate)
+        {
+            var detail = GetActivityDetail(id);
+            if (detail.Activity.Template == "remediation") return ExportCampaignWord(id);
+            var photos = ResolveWordPhotos(detail.Photos);
+            var settings = GetSettings();
+            return WriteWordTemporary(WordExporter.FileName("活动开展情况记录单", detail.Activity.Name, detail.Activity.Date),
+                destination => WordExporter.WriteActivityRecord(destination, detail, settings, photos));
+        }
+    }
+
+    public WordDownload ExportActivityLedgerWord(string from, string to, string? communityId = null, string? typeId = null, bool includePhotos = false, ActivityQuery? filters = null)
+    {
+        lock (_gate)
+        {
+            (from, to) = LedgerDates(from, to, "activities", "activity_date", filters is not null);
+            CheckDateRange(from, to);
+            var community = string.IsNullOrWhiteSpace(communityId) ? null : RequireCommunity(communityId);
+            if (!string.IsNullOrWhiteSpace(typeId)) _ = RequireActivityType(typeId);
+            var activities = GetLedgerActivities(from, to, community?.Id, typeId, filters);
+            var photos = includePhotos ? ResolveWordPhotos(activities.SelectMany(activity => ReadPhotos(activityId: activity.Id))) : [];
+            var name = community?.Name ?? "全部社区";
+            var ledger = new WordActivityLedger(from, to, name, activities, photos, includePhotos, Today);
+            return WriteWordTemporary(WordExporter.FileName("活动台账", name, to),
+                destination => WordExporter.WriteActivityLedger(destination, ledger, GetSettings()));
+        }
+    }
+
+    private (string From, string To) LedgerDates(string from, string to, string table, string column, bool current)
+    {
+        if (!current) return (DateText(from, "开始日期"), DateText(to, "结束日期"));
+        var start = OptionalDate(from, "开始日期");
+        var end = OptionalDate(to, "结束日期");
+        CheckDateRange(start, end);
+        // Table/column are fixed call-site constants; user input remains parameterized.
+        using var command = Command($"SELECT MIN({column}),MAX({column}) FROM {table};");
+        using var row = command.ExecuteReader();
+        row.Read();
+        var earliest = row.IsDBNull(0) ? Today : row.GetString(0);
+        var latest = row.IsDBNull(1) ? Today : row.GetString(1);
+        start ??= string.CompareOrdinal(earliest, end ?? latest) > 0 ? end! : earliest;
+        end ??= string.CompareOrdinal(latest, start) < 0 ? start : latest;
+        return (start, end);
     }
 
     private WordIssueHistory[] ReadWordIssueHistory(IssueDto[] issues)
@@ -167,21 +211,32 @@ public sealed partial class Store
         RequestDelegate record = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), false));
         RequestDelegate notice = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), true));
         RequestDelegate rectification = async context => await SendWordAsync(context, ExportRectificationWord(Api.Id(context)));
-        RequestDelegate campaign = async context => await SendWordAsync(context, ExportCampaignWord(Api.Id(context)));
+        RequestDelegate activity = async context => await SendWordAsync(context, ExportActivityWord(Api.Id(context)));
+        RequestDelegate activityLedger = async context => await SendWordAsync(context, ExportActivityLedgerWord(
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(),
+            context.Request.Query["communityId"].ToString(), context.Request.Query["typeId"].ToString(), WordPhotoOption(context), CurrentExport(context) ? Api.ActivityFilters(context) : null));
         RequestDelegate ledger = async context => await SendWordAsync(context, ExportLedgerWord(
-            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), WordPhotoOption(context), ExportPointIds(context)));
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), WordPhotoOption(context), ExportPointIds(context), CurrentExport(context) ? Api.InspectionFilters(context) : null));
         RequestDelegate inspectionLedger = async context => await SendWordAsync(context, ExportInspectionLedgerWord(
-            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), ExportPointIds(context)));
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), ExportPointIds(context), CurrentExport(context) ? Api.InspectionFilters(context) : null));
         RequestDelegate campaignLedger = async context => await SendWordAsync(context, ExportCampaignLedgerWord(
-            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), context.Request.Query["typeId"].ToString(), WordPhotoOption(context), ExportPointIds(context)));
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), context.Request.Query["remediationTypeId"].ToString(), WordPhotoOption(context), ExportPointIds(context), CurrentExport(context) ? Api.CampaignFilters(context) : null));
         app.MapGet("/api/inspections/{id}/export/record", record);
         app.MapGet("/api/inspections/{id}/export/notice", notice);
         app.MapGet("/api/inspections/{id}/export/rectification", rectification);
-        app.MapGet("/api/campaigns/{id}/export/record", campaign);
+        app.MapGet("/api/activities/{id}/export/record", activity);
+        app.MapGet("/api/exports/activity-ledger", activityLedger);
         app.MapGet("/api/exports/rectification-ledger", ledger);
         app.MapGet("/api/exports/inspection-ledger", inspectionLedger);
-        app.MapGet("/api/exports/campaign-ledger", campaignLedger);
+        app.MapGet("/api/exports/remediation-ledger", campaignLedger);
     }
+
+    private static bool CurrentExport(HttpContext context) => context.Request.Query["scope"].ToString() switch
+    {
+        "" or "custom" => false,
+        "current" => true,
+        _ => throw new ApiException(400, "导出范围必须是 current 或 custom")
+    };
 
     private static string[] ExportPointIds(HttpContext context) =>
         context.Request.Query["pointId"].Select(id => id ?? "").ToArray();

@@ -77,6 +77,7 @@ async function remove() {
   }
 }
 const menu = computed(() => [
+  { label: '登记事项', to: `/matters/new?pointId=${id.value}` },
   ...(detail.value?.point.temporary
     ? [
         {
@@ -120,7 +121,7 @@ watch(id, load, { immediate: true })
           :disabled="detail.point.disabled"
           class="header-action"
           ><span class="mobile-only">排查</span><span class="desktop-only">新增排查</span></UButton
-        ><UButton :to="{ path: '/campaigns/new', query: { pointId: id } }" :disabled="detail.point.disabled" color="neutral" variant="outline" class="header-action" data-testid="point-new-campaign"><span class="mobile-only">整治</span><span class="desktop-only">新增整治</span></UButton><UDropdownMenu :items="menu"
+        ><UButton :to="{ path: '/activities/new', query: { pointId: id, template: 'remediation' } }" :disabled="detail.point.disabled" color="neutral" variant="outline" class="header-action" data-testid="point-new-activity"><span class="mobile-only">整治</span><span class="desktop-only">新增整治</span></UButton><UDropdownMenu :items="menu"
           ><UButton
             icon="i-lucide-ellipsis"
             color="neutral"
@@ -238,10 +239,13 @@ watch(id, load, { immediate: true })
             :return-to="route.fullPath"
           /><EmptyState v-if="!detail.inspections.length" title="暂无排查记录" />
         </section>
-        <section class="panel" data-testid="point-campaign-history">
-          <div class="panel-head"><h2 class="section-title">历史整治</h2><UButton :to="`/campaigns?pointId=${id}`" label="查看全部" color="neutral" variant="link" /></div>
-          <NuxtLink v-for="record in detail.campaigns ?? []" :key="record.id" :to="`/campaigns/${record.id}`" class="list-row"><div class="row-body"><p class="row-title"><span>{{ record.name }}</span></p><p class="row-secondary">{{ record.date }} · {{ record.typeName }}</p></div></NuxtLink>
-          <EmptyState v-if="!detail.campaigns?.length" title="暂无整治记录" />
+        <RecordRelations kind="point" :id="id" :tags="detail.point.tags" @changed="load" />
+        <PointAttachments :point-id="id" />
+        <section v-if="detail.matters.length" class="panel"><div class="panel-head"><h2 class="section-title">相关事项</h2></div><div class="panel-body"><MatterLinks :matters="detail.matters" /></div></section>
+        <section class="panel" data-testid="activity-history">
+          <div class="panel-head"><h2 class="section-title">相关活动</h2><UButton :to="`/activities?pointId=${id}`" label="查看全部" color="neutral" variant="link" /></div>
+          <NuxtLink v-for="record in detail.activities ?? []" :key="record.id" :to="`/activities/${record.id}`" class="list-row"><div class="row-body"><p class="row-title"><span>{{ record.name }}</span></p><p class="row-secondary">{{ record.date }} · {{ record.typeName }}</p></div></NuxtLink>
+          <EmptyState v-if="!detail.activities?.length" title="暂无相关活动" />
         </section> </template
     ></PageState>
     <PointEditor v-model:open="editorOpen" :point="detail?.point" @saved="saved" /><PointPromote

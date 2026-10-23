@@ -9,7 +9,7 @@ export interface UploadOptions {
 export function uploadPhoto(blob: Blob, phase: PhotoPhase, options: UploadOptions = {}): Promise<PhotoUploadDto> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) { reject(cancelledPhotoOperation()); return }
-    if (blob.size > MAX_UPLOAD_BYTES) { reject(new Error('压缩后的照片仍超过 10 MB，请在设置里调低 JPEG 质量后重试。')); return }
+    if (blob.size > MAX_UPLOAD_BYTES) { reject(new Error('压缩后的照片仍超过 10 MB，请在设置里降低照片清晰度后重试。')); return }
     const request = new XMLHttpRequest()
     let settled = false
     const abort = () => request.abort()

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Security.Cryptography;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.Data.Sqlite;
@@ -11,7 +12,7 @@ namespace StreetEcoTool;
 public sealed record BackupEntryDto(string Name, string Date, long Bytes);
 public sealed record BackupOverviewDto(BackupEntryDto[] Items, int RetentionCount);
 public sealed record BackupManifest(int FormatVersion, int SchemaVersion, string CreatedAt, string Application);
-public sealed record RestorePreviewDto(string Token, string CreatedAt, int SchemaVersion, int PhotoCount, int PointCount, int InspectionCount, int IssueCount, long ExpandedBytes, string ExpiresAt, int CampaignCount);
+public sealed record RestorePreviewDto(string Token, string CreatedAt, int SchemaVersion, int PhotoCount, int PointCount, int InspectionCount, int IssueCount, long ExpandedBytes, string ExpiresAt, int RemediationCount, int ActivityCount, int MatterCount, int AttachmentCount, int TagCount);
 public sealed record RestoreRequest(string Token, bool Confirm = false);
 public sealed record RestoreResultDto(bool Ok, string PreservedBackup, string Message);
 internal sealed record RestoreJournal(string BackupName, bool Committed);
@@ -111,6 +112,15 @@ public sealed partial class Store
                 var manifest = archive.CreateEntry("manifest.json");
                 using (var output = manifest.Open())
                     JsonSerializer.Serialize(output, new BackupManifest(1, SchemaVersion, DateTime.Now.ToString("O", CultureInfo.InvariantCulture), "StreetEcoTool"), BackupJsonContext.Default.BackupManifest);
+                using (var attachments = Command("SELECT id,relative_path FROM attachments ORDER BY relative_path;"))
+                using (var files = attachments.ExecuteReader())
+                    while (files.Read())
+                    {
+                        var relative = files.GetString(1);
+                        var file = AttachmentStorage.ResolvePath(AttachmentsDir, files.GetString(0), relative);
+                        if (!File.Exists(file)) throw new IOException("数据库中登记的附件缺失，请检查完整备份。");
+                        archive.CreateEntryFromFile(file, "attachments/" + relative, CompressionLevel.NoCompression);
+                    }
                 using var photoCommand = Command("SELECT id,relative_path,has_thumb FROM photos ORDER BY relative_path;");
                 using var photoRows = photoCommand.ExecuteReader();
                 while (photoRows.Read())
@@ -142,6 +152,7 @@ public sealed partial class Store
         var extracted = Path.Combine(staging, "content");
         Directory.CreateDirectory(extracted);
         Directory.CreateDirectory(Path.Combine(extracted, "photos"));
+        Directory.CreateDirectory(Path.Combine(extracted, "attachments"));
         try
         {
             await using (var file = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 64 * 1024, FileOptions.Asynchronous))
@@ -178,7 +189,7 @@ public sealed partial class Store
             if (name.EndsWith('/'))
             {
                 var trimmed = name.TrimEnd('/');
-                if (trimmed != "photos" && !(trimmed.StartsWith("photos/", StringComparison.Ordinal) && IsPhotoMonth(trimmed[7..])))
+                if (trimmed is not ("photos" or "attachments") && !(trimmed.StartsWith("photos/", StringComparison.Ordinal) && IsPhotoMonth(trimmed[7..])) && !(trimmed.StartsWith("attachments/", StringComparison.Ordinal) && IsPhotoMonth(trimmed[12..])))
                     throw new InvalidDataException("压缩包包含非预期目录。");
                 if (entry.Length != 0) throw new InvalidDataException("压缩包目录条目无效。");
                 continue;
@@ -188,7 +199,8 @@ public sealed partial class Store
                 "app.db" => 256L * 1024 * 1024,
                 "manifest.json" => 16L * 1024,
                 _ when IsArchivePhotoPath(name) => name.EndsWith(".thumb.jpg", StringComparison.Ordinal) ? PhotoStorage.MaximumThumbnailBytes : PhotoStorage.MaximumUploadBytes,
-                _ => throw new InvalidDataException("压缩包只能包含 app.db、manifest.json 与 photos 中的 JPEG 照片。")
+                _ when IsArchiveAttachmentPath(name) => AttachmentStorage.MaximumBytes,
+                _ => throw new InvalidDataException("压缩包只能包含数据库、清单、照片和附件。")
             };
             if (entry.Length < 1 || entry.Length > limit) throw new InvalidDataException($"压缩包中的 {name} 为空或超过大小限制。");
             expanded = checked(expanded + entry.Length);
@@ -225,6 +237,16 @@ public sealed partial class Store
             ((parts[1].Length == 36 && parts[1].EndsWith(".jpg", StringComparison.Ordinal)) ||
              (parts[1].Length == 42 && parts[1].EndsWith(".thumb.jpg", StringComparison.Ordinal))) &&
             parts[1][..32].All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+    }
+
+    private static bool IsArchiveAttachmentPath(string name)
+    {
+        if (!name.StartsWith("attachments/", StringComparison.Ordinal)) return false;
+        var parts = name[12..].Split('/');
+        if (parts.Length != 2 || !IsPhotoMonth(parts[0]) || parts[1].Length < 36) return false;
+        var id = parts[1][..32];
+        try { _ = AttachmentStorage.ResolvePath(Path.GetTempPath(), id, name[12..]); return true; }
+        catch (Exception error) when (error is InvalidDataException or ApiException) { return false; }
     }
 
     private static RestorePreviewDto ValidateRestoreDirectory(string directory, string token, long expanded)
@@ -267,12 +289,39 @@ public sealed partial class Store
         using (var dates = connection.CreateCommand())
         {
             dates.CommandText = "SELECT inspection_date FROM inspections UNION ALL SELECT deadline FROM issues UNION ALL SELECT feedback_date FROM issues UNION ALL SELECT review_date FROM issues UNION ALL SELECT closed_date FROM issues UNION ALL SELECT action_date FROM issue_actions;";
-            dates.CommandText = dates.CommandText.TrimEnd(';') + " UNION ALL SELECT campaign_date FROM campaigns UNION ALL SELECT end_date FROM campaigns;";
+            dates.CommandText = dates.CommandText.TrimEnd(';') + " UNION ALL SELECT activity_date FROM activities UNION ALL SELECT end_date FROM activities UNION ALL SELECT received_date FROM matters UNION ALL SELECT deadline FROM matters UNION ALL SELECT closed_date FROM matters UNION ALL SELECT action_date FROM matter_actions;";
             using var reader = dates.ExecuteReader();
             while (reader.Read())
                 if (!reader.IsDBNull(0) && !DateOnly.TryParseExact(reader.GetString(0), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
                     throw new InvalidDataException("备份包含格式无效的业务日期。");
         }
+        if (Number(connection, "SELECT COUNT(*) FROM activities a LEFT JOIN activity_remediations r ON r.activity_id=a.id WHERE (a.template='remediation' AND r.activity_id IS NULL) OR (a.template='general' AND r.activity_id IS NOT NULL);") != 0)
+            throw new InvalidDataException("活动模板与整治数据不一致。");
+        if (Number(connection, "SELECT COUNT(*) FROM activity_types WHERE template='remediation' AND built_in=1;") != 1)
+            throw new InvalidDataException("内置整治类型不完整。");
+        if (Number(connection, "SELECT COUNT(*) FROM photos p JOIN activities a ON a.id=p.activity_id WHERE (a.template='general' AND p.phase<>'activity') OR (a.template='remediation' AND p.phase NOT IN ('before','process','after'));") != 0)
+            throw new InvalidDataException("活动照片阶段不一致。");
+        var attachmentCount = 0;
+        var attachmentFiles = new HashSet<string>(StringComparer.Ordinal);
+        using (var attachments = connection.CreateCommand())
+        {
+            attachments.CommandText = "SELECT id,name,relative_path,size,content_type,sha256 FROM attachments;";
+            using var rows = attachments.ExecuteReader();
+            while (rows.Read())
+            {
+                var relative = rows.GetString(2); var extension = Path.GetExtension(relative);
+                var file = AttachmentStorage.ResolvePath(Path.Combine(directory, "attachments"), rows.GetString(0), relative);
+                if (!File.Exists(file) || new FileInfo(file).Length != rows.GetInt64(3) || rows.GetInt64(3) is < 1 or > AttachmentStorage.MaximumBytes)
+                    throw new InvalidDataException("附件缺失或大小与数据库不一致。");
+                if (rows.GetString(4) != AttachmentStorage.ContentType(extension) || !string.Equals(Path.GetExtension(rows.GetString(1)), extension, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("附件类型不一致。");
+                var bytes = File.ReadAllBytes(file); AttachmentStorage.Validate(bytes, extension);
+                if (Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant() != rows.GetString(5)) throw new InvalidDataException("附件校验值不一致。");
+                attachmentFiles.Add(Path.GetFullPath(file)); attachmentCount++;
+            }
+        }
+        if (Directory.EnumerateFiles(Path.Combine(directory, "attachments"), "*", SearchOption.AllDirectories).Any(file => !attachmentFiles.Contains(Path.GetFullPath(file))))
+            throw new InvalidDataException("备份包含未登记的附件。");
         var photoFiles = new HashSet<string>(StringComparer.Ordinal);
         var photoCount = 0;
         using (var photos = connection.CreateCommand())
@@ -314,7 +363,7 @@ public sealed partial class Store
         }
         return new RestorePreviewDto(token, createdAt, checked((int)version), photoCount,
             checked((int)Number(connection, "SELECT count(*) FROM points;")), checked((int)Number(connection, "SELECT count(*) FROM inspections;")),
-            checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM campaigns;")));
+            checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM activity_remediations;")), checked((int)Number(connection, "SELECT count(*) FROM activities;")), checked((int)Number(connection, "SELECT count(*) FROM matters;")), attachmentCount, checked((int)Number(connection, "SELECT count(*) FROM tags;")));
     }
 
     private static readonly string[] RequiredSchemaQueries =
@@ -323,12 +372,27 @@ public sealed partial class Store
         "SELECT id,name,title FROM communities LIMIT 0;",
         "SELECT id,name FROM point_types LIMIT 0;",
         "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary FROM points LIMIT 0;",
-        "SELECT id,point_id,inspection_date,inspector,result,notes,notice_number,point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone FROM inspections LIMIT 0;",
-        "SELECT id,inspection_id,description,requirement,deadline,responsible_unit,status,feedback_date,feedback_notes,review_date,review_conclusion,closed_date FROM issues LIMIT 0;",
+        "SELECT id,point_id,inspection_date,inspector,result,notes,notice_number,source,point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone FROM inspections LIMIT 0;",
+        "SELECT id,inspection_id,issue_type_id,issue_type_name,description,requirement,deadline,responsible_unit,status,feedback_date,feedback_notes,review_date,review_conclusion,closed_date FROM issues LIMIT 0;",
+        "SELECT id,name FROM issue_types LIMIT 0;",
+        "SELECT id,name,template,built_in FROM activity_types LIMIT 0;",
+        "SELECT id,name,type_id,type_name,template,point_id,point_name,community_id,community_name,location,activity_date,end_date,organizer,participants,participant_count,content,outcome,notes FROM activities LIMIT 0;",
         "SELECT id,issue_id,kind,action_date,notes FROM issue_actions LIMIT 0;",
-        "SELECT id,inspection_id,issue_id,action_id,point_id,campaign_id,phase,relative_path,width,height,uploaded_at,has_thumb FROM photos LIMIT 0;",
-        "SELECT id,name FROM campaign_types LIMIT 0;",
-        "SELECT id,name,point_id,point_name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes FROM campaigns LIMIT 0;"
+        "SELECT id,inspection_id,issue_id,action_id,point_id,activity_id,phase,relative_path,width,height,uploaded_at,has_thumb FROM photos LIMIT 0;",
+        "SELECT id,name FROM remediation_types LIMIT 0;",
+        "SELECT activity_id,type_id,type_name,vehicle_count,garbage_tons,area_sqm FROM activity_remediations LIMIT 0;",
+        "SELECT id,title,source,received_date,content,point_id,location,deadline,handler,reference_number,contact,phone,status,closed_date,outcome,conclusion FROM matters LIMIT 0;",
+        "SELECT id,matter_id,kind,action_date,handler,notes,outcome FROM matter_actions LIMIT 0;",
+        "SELECT id,name,disabled FROM tags LIMIT 0;",
+        "SELECT id,point_id,name,notes,relative_path,size,content_type,uploaded_at,sha256 FROM attachments LIMIT 0;",
+        "SELECT activity_id,issue_id FROM activity_issues LIMIT 0;",
+        "SELECT point_id,tag_id FROM point_tags LIMIT 0;",
+        "SELECT inspection_id,tag_id FROM inspection_tags LIMIT 0;",
+        "SELECT activity_id,tag_id FROM activity_tags LIMIT 0;",
+        "SELECT matter_id,tag_id FROM matter_tags LIMIT 0;",
+        "SELECT inspection_id,matter_id FROM inspection_matters LIMIT 0;",
+        "SELECT issue_id,matter_id FROM issue_matters LIMIT 0;",
+        "SELECT activity_id,matter_id FROM activity_matters LIMIT 0;"
     ];
 
     public RestoreResultDto Restore(RestoreRequest request)
@@ -366,8 +430,10 @@ public sealed partial class Store
                 CloseConnection();
                 MoveDatabaseFiles(DataDir, previous);
                 Directory.Move(PhotosDir, Path.Combine(previous, "photos"));
+                Directory.Move(AttachmentsDir, Path.Combine(previous, "attachments"));
                 File.Move(Path.Combine(source, "app.db"), DatabasePath);
                 Directory.Move(Path.Combine(source, "photos"), PhotosDir);
+                Directory.Move(Path.Combine(source, "attachments"), AttachmentsDir);
                 ReopenConnection();
                 WriteRestoreJournal(journalPath, new RestoreJournal(backupName, true));
             }
@@ -381,7 +447,7 @@ public sealed partial class Store
             TryDeleteFile(journalPath);
             TryDeleteDirectory(staging);
             _maintenanceDate = null;
-            return new RestoreResultDto(true, $"backup/{backupName}", "恢复完成。覆盖前的数据库和照片已自动保留。");
+            return new RestoreResultDto(true, $"backup/{backupName}", "恢复完成。覆盖前的数据库、照片和附件已保留。");
         }
     }
 
@@ -415,12 +481,13 @@ public sealed partial class Store
                 foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(Path.Combine(dataDir, "app.db" + suffix));
                 MoveDatabaseFiles(previous, dataDir);
             }
-            var oldPhotos = Path.Combine(previous, "photos");
-            if (Directory.Exists(oldPhotos))
+            foreach (var name in new[] { "photos", "attachments" })
             {
-                var photos = Path.Combine(root, "photos");
-                if (Directory.Exists(photos)) Directory.Delete(photos, true);
-                Directory.Move(oldPhotos, photos);
+                var old = Path.Combine(previous, name);
+                if (!Directory.Exists(old)) continue;
+                var destination = Path.Combine(root, name);
+                if (Directory.Exists(destination)) Directory.Delete(destination, true);
+                Directory.Move(old, destination);
             }
         }
         File.Delete(journalPath);
@@ -444,7 +511,7 @@ public sealed partial class Store
         while ((count = await source.ReadAsync(buffer, cancellationToken)) != 0)
         {
             total = checked(total + count);
-            if (total > limit) throw new ApiException(413, "恢复压缩包超过 4 GiB，请在服务器上使用已保留的备份目录手动恢复。");
+            if (total > limit) throw new ApiException(413, limit == AttachmentStorage.MaximumBytes ? "单个附件不能超过 25 MB。" : "恢复压缩包超过 4 GiB，请使用已保留的备份目录恢复。");
             await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
         }
     }
