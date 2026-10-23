@@ -11,7 +11,7 @@ public sealed class WordStoreTests
     public void NormalInspectionExportsRecordButRejectsUnnecessaryNotice()
     {
         using var fixture = new StoreFixture();
-        var detail = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
+        var detail = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
         var record = fixture.Store.ExportInspectionWord(detail.Inspection.Id, false);
         Assert.True(File.Exists(record.FilePath));
         Assert.StartsWith("排查记录单_", record.FileName, StringComparison.Ordinal);
@@ -57,7 +57,7 @@ public sealed class WordStoreTests
         var overall = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1600, 800), "site");
         var first = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1200, 800), "site");
         var second = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(1000, 800), "site");
-        var detail = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", "现场备注", "手填-01",
+        var detail = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", "现场备注", "手填-01",
             [new("问题甲", "要求甲", Store.Today, PhotoIds: [first.Id]), new("问题乙", "要求乙", Store.Today, PhotoIds: [second.Id])], [overall.Id]));
         var issue = detail.Issues[0];
         var after = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(800, 1200), "after");
@@ -89,7 +89,7 @@ public sealed class WordStoreTests
         using var fixture = new StoreFixture();
         var today = DateOnly.ParseExact(Store.Today, "yyyy-MM-dd", CultureInfo.InvariantCulture);
         string Day(int offset) => today.AddDays(offset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var inspection = fixture.Store.CreateInspection(new(fixture.Point.Id, Day(-3), "测试排查人", "issues", Issues:
+        var inspection = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Day(-3), "测试排查人", "issues", Issues:
             [new("反复出现的环境问题", "清理现场并防止再次堆放", Day(0))]));
         var issue = Assert.Single(inspection.Issues);
         const string feedback = "第一次反馈：已完成垃圾清理并设置围挡。";
@@ -159,7 +159,7 @@ public sealed class WordStoreTests
     public void RectificationRecordRequiresAllIssuesClosedAndPreservesReturnActions()
     {
         using var fixture = new StoreFixture();
-        var detail = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", Issues:
+        var detail = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "issues", Issues:
             [new("问题甲", "清理甲", Store.Today), new("问题乙", "清理乙", Store.Today)]));
         var rejected = Assert.Throws<ApiException>(() => fixture.Store.ExportRectificationWord(detail.Inspection.Id));
         Assert.Equal(400, rejected.StatusCode); Assert.Equal("尚有 2 项问题未闭环", rejected.Message);
@@ -184,7 +184,7 @@ public sealed class WordStoreTests
     public void InspectionLedgerIncludesNormalAndProblemRecordsWithSnapshotNames()
     {
         using var fixture = new StoreFixture();
-        _ = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
+        _ = fixture.Store.CreateTypedInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
         var detail = fixture.CreateIssue();
         fixture.Store.RecordFeedback(detail.Issues[0].Id, new(Store.Today, "反馈完成"));
         fixture.Store.SavePoint(fixture.Point.Id, new("新点位名", fixture.Community.Id, fixture.Point.TypeId, "新地址"));
@@ -260,7 +260,7 @@ public sealed class WordStoreTests
             Community = Store.SaveCommunity(null, new("原始社区", "原始社区居民委员会"));
             Point = Store.SavePoint(null, new("原始点位", Community.Id, Store.GetPointTypes()[0].Id, "原始地址", Frequency: "weekly"));
         }
-        public InspectionDetailDto CreateIssue(string? photoId = null) => Store.CreateInspection(new(Point.Id, StreetEcoTool.Store.Today, "测试排查人", "issues", Issues:
+        public InspectionDetailDto CreateIssue(string? photoId = null) => Store.CreateTypedInspection(new(Point.Id, StreetEcoTool.Store.Today, "测试排查人", "issues", Issues:
             [new("环境问题", "清理并保持", StreetEcoTool.Store.Today, PhotoIds: photoId is null ? [] : [photoId])]));
         public void Dispose() { Store.Dispose(); System.IO.Directory.Delete(Directory, true); }
     }

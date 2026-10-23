@@ -99,7 +99,7 @@ public sealed class PointCampaignTests
         var id = campaign.Campaign.PointId;
         var pointPhoto = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
         store.AttachPointPhotos(id, new([pointPhoto.Id]));
-        var inspection = store.CreateInspection(new(id, Store.Today, "张三", "normal"));
+        var inspection = store.CreateTypedInspection(new(id, Store.Today, "张三", "normal"));
         if (deleteInspectionFirst) store.DeleteInspection(inspection.Inspection.Id);
         else store.DeleteCampaign(campaign.Campaign.Id);
         Assert.Equal(id, store.GetPoint(id).Id);
@@ -122,8 +122,8 @@ public sealed class PointCampaignTests
         var c = store.SavePoint(null, new("丙点位", a.CommunityId, a.TypeId, "丙地址"));
         foreach (var point in new[] { a, b, c })
         {
-            store.CreateInspection(new(point.Id, Store.Today, "张三 李四", "normal"));
-            store.CreateInspection(new(point.Id, Store.Today, "张三 李四", "issues", Issues: [new(point.Name + "问题", "整改", Store.Today)]));
+            store.CreateTypedInspection(new(point.Id, Store.Today, "张三 李四", "normal"));
+            store.CreateTypedInspection(new(point.Id, Store.Today, "张三 李四", "issues", Issues: [new(point.Name + "问题", "整改", Store.Today)]));
             var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "before");
             store.SaveCampaign(null, Campaign(store, point.Id) with { Name = point.Name + "整治", ParticipantCount = 2, BeforePhotoIds = [photo.Id] });
         }
