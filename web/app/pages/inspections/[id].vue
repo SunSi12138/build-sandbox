@@ -89,7 +89,7 @@ const issueDetails = computed(
 )
 const exportItems = computed(() => [
   {
-    label: '导出排查记录单',
+    label: '导出检查记录单',
     onSelect: () => {
       void exportRecord('record')
     },
@@ -117,17 +117,17 @@ const exportItems = computed(() => [
 ])
 async function exportRecord(kind: string) {
   try {
-    await downloadWord(`/api/inspections/${id.value}/export/${kind}`, '排查导出.docx')
+    await downloadWord(`/api/inspections/${id.value}/export/${kind}`, '检查导出.docx')
   } catch (value) {
     toast.add({ title: errorMessage(value), color: 'error', duration: 0 })
   }
 }
 const moreItems = computed(() => [
-  { label: '编辑排查信息', onSelect: openEdit },
+  { label: '编辑检查信息', onSelect: openEdit },
   ...(detail.value?.inspection.pointTemporary
     ? [
         {
-          label: '转为常态点位',
+          label: '转为常态场所',
           onSelect: () => {
             promoteOpen.value = true
           },
@@ -135,7 +135,7 @@ const moreItems = computed(() => [
       ]
     : []),
   {
-    label: '删除排查',
+    label: '删除检查',
     color: 'error' as const,
     onSelect: () => {
       deleteError.value = ''
@@ -144,7 +144,7 @@ const moreItems = computed(() => [
   },
 ])
 useHead({
-  title: computed(() => `${detail.value?.inspection.pointName || '排查详情'} · 街道生态环保`),
+  title: computed(() => `${detail.value?.inspection.pointName || '检查详情'} · 社区管理`),
 })
 function assign(value: InspectionDetailDto) {
   detail.value = value
@@ -197,8 +197,8 @@ function openEdit() {
 function validateEdit(): FormError[] {
   const errors: FormError[] = []
   if (!editState.date || editState.date > todayLocal())
-    errors.push({ name: 'date', message: '排查日期不得晚于今天' })
-  if (!editState.inspector.trim()) errors.push({ name: 'inspector', message: '请填写排查人' })
+    errors.push({ name: 'date', message: '检查日期不得晚于今天' })
+  if (!editState.inspector.trim()) errors.push({ name: 'inspector', message: '请填写检查人' })
   return errors
 }
 async function saveEdit() {
@@ -320,7 +320,7 @@ watch(() => route.query.issue, revealIssue)
 </script>
 <template>
   <div class="page-stack">
-    <PageHeader :title="detail?.inspection.pointName || '排查详情'" :back="back"
+    <PageHeader :title="detail?.inspection.pointName || '检查详情'" :back="back"
       ><template #badge
         ><StatusBadge v-if="detail?.inspection.pointTemporary" tone="outline"
           >临时</StatusBadge
@@ -329,7 +329,7 @@ watch(() => route.query.issue, revealIssue)
         ><div class="hidden items-center gap-2 md:flex">
           <UButton
             @click="exportRecord('record')"
-            label="导出排查记录单"
+            label="导出检查记录单"
             color="neutral"
             variant="outline"
             data-testid="export-record"
@@ -384,15 +384,19 @@ watch(() => route.query.issue, revealIssue)
             <h2 class="section-title">基本信息</h2>
             <UButton
               v-if="detail.inspection.pointTemporary"
-              label="转为常态点位"
+              label="转为常态场所"
               variant="link"
               data-testid="promote-point"
               @click="promoteOpen = true"
             />
           </div>
           <dl class="detail-grid panel-body">
+            <div v-if="detail.inspection.inspectionTypeName"><dt>检查类型</dt><dd>{{ detail.inspection.inspectionTypeName }}</dd></div>
+            <div v-if="detail.inspection.useName"><dt>经营使用</dt><dd>{{ detail.inspection.useName }}</dd></div>
+            <div v-if="detail.inspection.result === 'incomplete'" class="detail-wide"><dt>未完成原因</dt><dd>{{ detail.inspection.incompleteReason }}</dd></div>
+            <div v-if="detail.inspection.createdAt"><dt>登记时间</dt><dd>{{ new Date(detail.inspection.createdAt).toLocaleString() }}</dd></div>
             <div>
-              <dt>点位</dt>
+              <dt>场所</dt>
               <dd>
                 <NuxtLink
                   :to="`/points/${detail.inspection.pointId}`"
@@ -437,11 +441,11 @@ watch(() => route.query.issue, revealIssue)
               </dd>
             </div>
             <div>
-              <dt>排查日期</dt>
+              <dt>检查日期</dt>
               <dd>{{ detail.inspection.date }}</dd>
             </div>
             <div>
-              <dt>排查人</dt>
+              <dt>检查人</dt>
               <dd><NameTags :value="detail.inspection.inspector" /></dd>
             </div>
             <div>
@@ -469,7 +473,7 @@ watch(() => route.query.issue, revealIssue)
                 data-testid="batch-feedback"
                 @click="openBatch('feedback')"
               /><UButton
-                label="复查闭环"
+                label="已完成"
                 color="neutral"
                 variant="outline"
                 :disabled="!detail.issues.some((issue) => issue.status === 'feedback')"
@@ -523,6 +527,7 @@ watch(() => route.query.issue, revealIssue)
                 </div>
               </dl>
               <IssuePhotoGroups :photos="issueDetails.get(issue.id)?.photos ?? []" />
+              <IssueProgress :issue="issue" @saved="load" />
               <UCollapsible v-model:open="historyOpen[issue.id]"
                 ><UButton
                   label="办理记录"
@@ -561,7 +566,7 @@ watch(() => route.query.issue, revealIssue)
                   @click="openBatch('feedback', issue.id)"
                 /><UButton
                   v-if="issue.status === 'feedback'"
-                  label="复查闭环"
+                  label="已完成"
                   color="neutral"
                   variant="outline"
                   @click="openBatch('review', issue.id)"
@@ -606,7 +611,7 @@ watch(() => route.query.issue, revealIssue)
       v-model:open="editOpen"
       :content="focus.content"
       @after:leave="focus.restoreFocus"
-      title="编辑排查信息"
+      title="编辑检查信息"
       :dismissible="!editing"
       :close="!editing"
       :ui="{ content: 'mobile-full-dialog' }"
@@ -617,14 +622,14 @@ watch(() => route.query.issue, revealIssue)
           :validate="validateEdit"
           class="field-grid"
           @submit="saveEdit"
-          ><UFormField name="date" label="排查日期" required
+          ><UFormField name="date" label="检查日期" required
             ><UInput
               v-model="editState.date"
               type="date"
               :max="todayLocal()"
               class="w-full"
               :disabled="editing" /></UFormField
-          ><UFormField name="inspector" label="排查人" required
+          ><UFormField name="inspector" label="检查人" required
             ><NameTagsInput
               v-model="editState.inspector"
               :maxlength="100"
@@ -756,10 +761,10 @@ watch(() => route.query.issue, revealIssue)
     ></UModal>
     <UModal
       v-model:open="deleteOpen"
-      title="删除排查？"
+      title="删除检查？"
       :description="
         detail?.inspection.pointTemporary
-          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查或整治，该临时点位及其点位照片也将删除。'
+          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时场所最后一条检查或整治，该临时场所及其场所照片也将删除。'
           : '删除后，问题、办理记录和照片无法恢复'
       "
       :dismissible="!deleting"

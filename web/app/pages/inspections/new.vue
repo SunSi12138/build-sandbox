@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { InspectionScopeValue } from '~/types/community'
 import type { InspectionCreateRequest, InspectionDetailDto, InspectionResult, PageDto, PhotoUploadDto, PointDetailDto, PointDto } from '~/types/api'
 import { errorMessage, queryText, todayLocal, parseCoordinates } from '~/utils/format'
 
@@ -12,6 +13,8 @@ interface IssueDraft {
 }
 interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
 interface InspectionDraft {
+  scope: InspectionScopeValue
+  submissionKey: string
   pointMode: 'regular' | 'temporary'
   newPoint: NewPointDraft
   pointId: string
@@ -25,7 +28,7 @@ interface InspectionDraft {
 }
 
 definePageMeta({ formPage: true })
-useHead({ title: '新增排查 · 街道生态环保' })
+useHead({ title: '新增检查 · 社区管理' })
 const DRAFT_KEY = 'street-eco.inspection-draft.v2'
 const route = useRoute()
 const router = useRouter()
@@ -42,7 +45,7 @@ let leaveDecision: ((leave: boolean) => void) | undefined
 
 function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
 function emptyDraft(pointId = ''): InspectionDraft {
-  return { pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
+  return { scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '' }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
 }
 const draft = reactive<InspectionDraft>(emptyDraft())
 const initializing = ref(true)
@@ -88,11 +91,11 @@ const draftSavedTime = computed(() => {
   const date = new Date(lastSavedAt.value)
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 })
-const destructiveTitle = computed(() => destructiveAction.value === 'clear' ? '清空这份排查草稿？'
-  : destructiveAction.value === 'normal' ? '改为正常排查？' : '移除这条问题？')
+const destructiveTitle = computed(() => destructiveAction.value === 'clear' ? '清空这份检查草稿？'
+  : destructiveAction.value === 'normal' ? '改为正常检查？' : '移除这条问题？')
 const destructiveDescription = computed(() => destructiveAction.value === 'clear'
   ? '草稿中的文字和照片选择将被清空，无法撤销。尚未保存的照片会自动清理。'
-  : destructiveAction.value === 'normal' ? `已登记的 ${draft.issues.length} 条问题及其照片选择将被移除，请确认本次排查没有发现问题。`
+  : destructiveAction.value === 'normal' ? `已登记的 ${draft.issues.length} 条问题及其照片选择将被移除，请确认本次检查没有发现问题。`
     : '这条问题的描述、整改要求、期限和照片选择将被移除，无法撤销。')
 
 function readPhotoList(value: unknown): PhotoUploadDto[] {
@@ -124,7 +127,8 @@ function loadLocalDraft() {
       pointMode: value.pointMode === 'temporary' ? 'temporary' : 'regular',
       newPoint: Object.fromEntries(Object.keys(emptyNewPoint()).map(key => [key, value.newPoint && typeof value.newPoint === 'object' && typeof (value.newPoint as Record<string, unknown>)[key] === 'string' ? (value.newPoint as Record<string, unknown>)[key] : ''])),
       pointId: text('pointId'), date: text('date') || today.value, inspector: text('inspector'),
-      result: value.result === 'issues' ? 'issues' : 'normal', notes: text('notes'), noticeNumber: text('noticeNumber'),
+      scope: value.scope && typeof value.scope === 'object' ? value.scope : emptyDraft().scope, submissionKey: text('submissionKey') || emptyDraft().submissionKey,
+      result: value.result === 'issues' ? 'issues' : value.result === 'incomplete' ? 'incomplete' : 'normal', notes: text('notes'), noticeNumber: text('noticeNumber'),
       photos: readPhotoList(value.photos),
       issues: issues.filter(issue => issue && typeof issue === 'object').slice(0, 50).map((issue: Record<string, unknown>) => ({
         key: nextIssueKey++, description: typeof issue.description === 'string' ? issue.description : '',
@@ -213,7 +217,9 @@ async function initialize() {
   if (!draftLoaded) loadLocalDraft()
   try {
     const data = await load()
-    if (!draftLoaded && !restored.value) { draft.date = data.today; draft.inspector = data.settings.defaultInspector }
+    if (!restored.value && queryText(route.query.typeId)) draft.scope.inspectionTypeId = queryText(route.query.typeId)
+    if (queryText(route.query.useId)) draft.scope.useId = queryText(route.query.useId)
+    if (!draftLoaded && !restored.value) { draft.date = data.today; draft.inspector = queryText(route.query.inspector) || data.settings.defaultInspector }
     const fromPoint = queryText(route.query.pointId) || queryText(route.query.point)
     if (!draftLoaded && fromPoint) {
       if (restored.value && (draft.pointMode === 'temporary' || (draft.pointId && draft.pointId !== fromPoint))) { requestedPoint.value = fromPoint; conflictOpen.value = true }
@@ -288,19 +294,21 @@ function keepRestoredDraft() {
 function validate(state: InspectionDraft) {
   const errors: { name: string; message: string }[] = []
   if (state.pointMode === 'temporary') {
-    if (!state.newPoint.name.trim()) errors.push({ name: 'newPoint.name', message: '请填写点位名称' })
-    if (!state.newPoint.communityId) errors.push({ name: 'newPoint.communityId', message: '请选择所属社区' })
-    if (!state.newPoint.typeId) errors.push({ name: 'newPoint.typeId', message: '请选择点位类型' })
+    if (!state.newPoint.name.trim()) errors.push({ name: 'newPoint.name', message: '请填写场所名称' })
+    if (!state.newPoint.communityId) errors.push({ name: 'newPoint.communityId', message: '请选择所属网格' })
+    if (!state.newPoint.typeId) errors.push({ name: 'newPoint.typeId', message: '请选择场所类型' })
     if (!state.newPoint.address.trim()) errors.push({ name: 'newPoint.address', message: '请填写详细地址' })
     const coords = parseCoordinates(state.newPoint.coordinates)
     if (coords.error) errors.push({ name: 'newPoint.coordinates', message: coords.error })
-  } else if (!state.pointId || !selectedPoint.value) errors.push({ name: 'pointId', message: '请选择一个排查点位。' })
-  else if (selectedPoint.value?.disabled) errors.push({ name: 'pointId', message: '该点位已停用，请选择其他点位或先启用。' })
-  if (!dateIsValid(state.date)) errors.push({ name: 'date', message: '请选择有效的排查日期。' })
-  else if (state.date > today.value) errors.push({ name: 'date', message: '排查日期不能晚于今天。' })
-  if (!state.inspector.trim()) errors.push({ name: 'inspector', message: '请填写排查人。' })
-  if (state.result === 'issues') {
-    if (!state.issues.length) errors.push({ name: 'result', message: '发现问题时，请至少登记一条问题。' })
+  } else if (!state.pointId || !selectedPoint.value) errors.push({ name: 'pointId', message: '请选择一个检查场所。' })
+  else if (selectedPoint.value?.disabled) errors.push({ name: 'pointId', message: '该场所已停用，请选择其他场所或先启用。' })
+  if (!dateIsValid(state.date)) errors.push({ name: 'date', message: '请选择有效的检查日期。' })
+  else if (state.date > today.value) errors.push({ name: 'date', message: '检查日期不能晚于今天。' })
+  if (!state.inspector.trim()) errors.push({ name: 'inspector', message: '请填写检查人。' })
+  if (!state.scope.inspectionTypeId) errors.push({ name: 'result', message: '请选择检查类型' })
+  if (state.result === 'incomplete' && !state.scope.incompleteReason.trim()) errors.push({ name: 'result', message: '请填写未完成原因' })
+  if (state.result !== 'normal') {
+    if (state.result === 'issues' && !state.issues.length) errors.push({ name: 'result', message: '发现问题时，请至少登记一条问题。' })
     state.issues.forEach((issue, index) => {
       if (!issue.description.trim()) errors.push({ name: `issues.${index}.description`, message: '请描述现场发现的问题。' })
       if (!dateIsValid(issue.deadline)) errors.push({ name: `issues.${index}.deadline`, message: '请选择有效的整改期限。' })
@@ -326,10 +334,11 @@ async function saveInspection() {
   saving.value = true
   persistDraft()
   const body: InspectionCreateRequest = {
+    ...draft.scope, submissionKey: draft.submissionKey,
     pointId: draft.pointMode === 'regular' ? draft.pointId : null,
     newPoint: draft.pointMode === 'temporary' ? { name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
     notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: draft.photos.map(photo => photo.id),
-    issues: draft.result === 'issues' ? draft.issues.map(issue => ({
+    issues: draft.result !== 'normal' ? draft.issues.map(issue => ({
       description: issue.description.trim(), requirement: issue.requirement, deadline: issue.deadline,
       responsibleUnit: issue.responsibleUnit, photoIds: issue.photos.map(photo => photo.id),
     })) : [],
@@ -385,16 +394,16 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-stack">
-    <PageHeader title="新增排查" back="/inspections"><template #actions><UButton type="button" color="neutral" variant="link" :disabled="saving || uploadsBusy || (!hasDraft && !unreadableDraft)" @click="destructiveAction = 'clear'; destructiveOpen = true">清空</UButton></template></PageHeader>
+    <PageHeader title="新增检查" back="/inspections"><template #actions><UButton type="button" color="neutral" variant="link" :disabled="saving || uploadsBusy || (!hasDraft && !unreadableDraft)" @click="destructiveAction = 'clear'; destructiveOpen = true">清空</UButton></template></PageHeader>
     <PageState :loading="initializing" :error="loadError" @retry="initialize">
       <UAlert v-if="storageError" :description="storageError" color="warning" variant="subtle" />
       <UForm id="inspection-form" :state="draft" :validate="validate" class="space-y-3" @submit="saveInspection" @error="validationFailed">
         <div class="form-sections">
-          <section class="form-section"><h2>点位</h2><div class="chip-row mb-2"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'regular'" :disabled="formDisabled" @click="draft.pointMode = 'regular'">常态点位</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'temporary'" :disabled="formDisabled" data-testid="temporary-point-mode" @click="draft.pointMode = 'temporary'">临时点位</UButton></div>
+          <section class="form-section"><h2>场所</h2><div class="chip-row mb-2"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'regular'" :disabled="formDisabled" @click="draft.pointMode = 'regular'">常态场所</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'temporary'" :disabled="formDisabled" data-testid="temporary-point-mode" @click="draft.pointMode = 'temporary'">临时场所</UButton></div>
             <div v-if="draft.pointMode === 'regular'">
-              <UFormField name="pointId" label="常态点位" required>
+              <UFormField name="pointId" label="常态场所" required>
                 <div v-if="selectedPoint && !pointPickerOpen" class="flex items-center gap-2"><p class="min-w-0 flex-1 truncate text-sm">{{ selectedPoint.name }} · {{ selectedPoint.communityName }} · {{ selectedPoint.typeName }}</p><UButton type="button" label="更换" color="neutral" variant="link" :disabled="formDisabled" @click="pointPickerOpen = true" /></div>
-                <div v-else><UInput v-model="pointSearch" type="search" icon="i-lucide-search" placeholder="搜索点位" aria-label="搜索常态点位" data-testid="inspection-point-search" class="mb-2 w-full" :disabled="formDisabled" /><p v-if="pointListError" class="text-sm text-error">{{ pointListError }}<UButton type="button" label="重试" color="error" variant="link" @click="fetchPointOptions()" /></p><div v-if="pointListLoading && !pointOptions.length"><USkeleton v-for="row in 3" :key="row" class="my-2 h-12 w-full rounded" /></div><button v-for="point in pointOptions" :key="point.id" type="button" class="flex h-14 w-full items-center border-b border-[var(--divider)] py-2 text-left" :disabled="formDisabled" :aria-pressed="draft.pointId === point.id" data-testid="inspection-point-option" @click="selectPoint(point)"><span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}</span></span><UIcon v-if="draft.pointId === point.id" name="i-lucide-check" class="size-4 text-primary" /></button><p v-if="!pointListLoading && !pointOptions.length" class="py-3 text-sm text-muted">暂无常态点位</p><UButton v-if="pointOptions.length < pointTotal" type="button" label="加载更多" color="neutral" variant="link" :loading="pointListLoading" @click="fetchPointOptions(false)" /></div>
+                <div v-else><UInput v-model="pointSearch" type="search" icon="i-lucide-search" placeholder="搜索场所" aria-label="搜索常态场所" data-testid="inspection-point-search" class="mb-2 w-full" :disabled="formDisabled" /><p v-if="pointListError" class="text-sm text-error">{{ pointListError }}<UButton type="button" label="重试" color="error" variant="link" @click="fetchPointOptions()" /></p><div v-if="pointListLoading && !pointOptions.length"><USkeleton v-for="row in 3" :key="row" class="my-2 h-12 w-full rounded" /></div><button v-for="point in pointOptions" :key="point.id" type="button" class="flex h-14 w-full items-center border-b border-[var(--divider)] py-2 text-left" :disabled="formDisabled" :aria-pressed="draft.pointId === point.id" data-testid="inspection-point-option" @click="selectPoint(point)"><span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}</span></span><UIcon v-if="draft.pointId === point.id" name="i-lucide-check" class="size-4 text-primary" /></button><p v-if="!pointListLoading && !pointOptions.length" class="py-3 text-sm text-muted">暂无常态场所</p><UButton v-if="pointOptions.length < pointTotal" type="button" label="加载更多" color="neutral" variant="link" :loading="pointListLoading" @click="fetchPointOptions(false)" /></div>
               </UFormField><p v-if="pointError" class="text-sm text-error">{{ pointError }}</p>
             </div>
             <div v-else class="field-grid">
@@ -403,9 +412,11 @@ onBeforeUnmount(() => {
               <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="经纬度" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full"  :disabled="formDisabled" /></UFormField>
             </div>
           </section>
-          <section class="form-section"><h2>排查信息</h2><div class="field-grid"><UFormField name="date" label="排查日期" required><UInput v-model="draft.date" type="date" :max="today" class="w-full" :disabled="formDisabled" data-testid="inspection-date" /></UFormField><UFormField name="inspector" label="排查人" required><NameTagsInput v-model="draft.inspector" :maxlength="100" class="w-full" :disabled="formDisabled" data-testid="inspection-inspector" /></UFormField><UFormField name="noticeNumber" label="通知单编号" class="field-full"><UInput v-model="draft.noticeNumber" :maxlength="100" class="w-full" :disabled="formDisabled" /></UFormField></div></section>
-          <section class="form-section"><h2>排查结果</h2><UFormField name="result"><div class="chip-row"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'normal'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-normal" @click="chooseResult('normal')">正常</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'issues'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-issues" @click="chooseResult('issues')">发现问题</UButton></div></UFormField>
-            <template v-if="draft.result === 'issues'"><div v-for="(issue, index) in draft.issues" :key="issue.key" class="problem-form"><div class="mb-2 flex items-center justify-between"><h3 class="text-sm font-semibold">问题 {{ index + 1 }}</h3><UButton type="button" label="移除" color="error" variant="link" :disabled="formDisabled || uploadsBusy" @click="issueToRemove = issue.key; destructiveAction = 'issue'; destructiveOpen = true" /></div><div class="field-grid"><UFormField :name="`issues.${index}.description`" label="问题描述" required class="field-full"><UTextarea v-model="issue.description" data-testid="inspection-issue-description" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.requirement`" label="整改要求" class="field-full"><UTextarea v-model="issue.requirement" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.deadline`" label="整改期限" class="field-full"><template #label><span class="deadline-label">整改期限<span class="text-error">*</span><span class="text-xs font-normal text-muted">默认排查日后7天</span></span></template><UInput v-model="issue.deadline" type="date" data-testid="inspection-issue-deadline" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.responsibleUnit`" label="责任单位"><NameTagsInput v-model="issue.responsibleUnit" :maxlength="200" class="w-full" :disabled="formDisabled" /></UFormField><UFormField label="问题照片" class="field-full"><PhotoUploader v-model="issue.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="issuePhotosBusy[issue.key] = $event" @failed="issuePhotosFailed[issue.key] = $event" /></UFormField></div></div><UButton type="button" label="添加问题" icon="i-lucide-plus" variant="outline" class="mt-3" :disabled="formDisabled || draft.issues.length >= 50" @click="addIssue" /></template>
+          <InspectionScope v-model="draft.scope" :point-id="draft.pointMode === 'regular' ? draft.pointId : ''" :disabled="formDisabled" />
+          <section class="form-section"><h2>检查信息</h2><div class="field-grid"><UFormField name="date" label="检查日期" required><UInput v-model="draft.date" type="date" :max="today" class="w-full" :disabled="formDisabled" data-testid="inspection-date" /></UFormField><UFormField name="inspector" label="检查人" required><NameTagsInput v-model="draft.inspector" :maxlength="100" class="w-full" :disabled="formDisabled" data-testid="inspection-inspector" /></UFormField><UFormField name="noticeNumber" label="通知单编号" class="field-full"><UInput v-model="draft.noticeNumber" :maxlength="100" class="w-full" :disabled="formDisabled" /></UFormField></div></section>
+          <section class="form-section"><h2>检查结果</h2><UFormField name="result"><div class="chip-row"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'normal'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-normal" @click="chooseResult('normal')">未发现问题</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'issues'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-issues" @click="chooseResult('issues')">发现问题</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'incomplete'" :disabled="formDisabled || uploadsBusy" @click="chooseResult('incomplete')">未完成检查</UButton></div></UFormField>
+            <UFormField v-if="draft.result === 'incomplete'" label="未完成原因" required class="mt-3"><UInput v-model="draft.scope.incompleteReason" placeholder="例如：关门、无法进入" class="w-full" /></UFormField>
+            <template v-if="draft.result !== 'normal'"><div v-for="(issue, index) in draft.issues" :key="issue.key" class="problem-form"><div class="mb-2 flex items-center justify-between"><h3 class="text-sm font-semibold">问题 {{ index + 1 }}</h3><UButton type="button" label="移除" color="error" variant="link" :disabled="formDisabled || uploadsBusy" @click="issueToRemove = issue.key; destructiveAction = 'issue'; destructiveOpen = true" /></div><div class="field-grid"><UFormField :name="`issues.${index}.description`" label="问题描述" required class="field-full"><UTextarea v-model="issue.description" data-testid="inspection-issue-description" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.requirement`" label="整改要求" class="field-full"><UTextarea v-model="issue.requirement" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.deadline`" label="整改期限" class="field-full"><template #label><span class="deadline-label">整改期限<span class="text-error">*</span><span class="text-xs font-normal text-muted">默认检查日后7天</span></span></template><UInput v-model="issue.deadline" type="date" data-testid="inspection-issue-deadline" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.responsibleUnit`" label="责任单位"><NameTagsInput v-model="issue.responsibleUnit" :maxlength="200" class="w-full" :disabled="formDisabled" /></UFormField><UFormField label="问题照片" class="field-full"><PhotoUploader v-model="issue.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="issuePhotosBusy[issue.key] = $event" @failed="issuePhotosFailed[issue.key] = $event" /></UFormField></div></div><UButton type="button" label="添加问题" icon="i-lucide-plus" variant="outline" class="mt-3" :disabled="formDisabled || draft.issues.length >= 50" @click="addIssue" /></template>
           </section>
           <section class="form-section"><h2>现场照片</h2><PhotoUploader v-model="draft.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="overallPhotosBusy = $event" @failed="overallPhotosFailed = $event" /></section>
           <section class="form-section"><UFormField name="notes" label="备注"><UTextarea v-model="draft.notes" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField></section>

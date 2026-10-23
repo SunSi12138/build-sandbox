@@ -101,8 +101,8 @@ onMounted(fetchBackups)
         <UAlert v-if="restoreError" :description="restoreError" color="error" variant="subtle" />
         <dl class="detail-grid">
           <div class="detail-wide"><dt>备份时间</dt><dd>{{ dateTime(preview.createdAt) }}</dd></div>
-          <div><dt>点位</dt><dd>{{ preview.pointCount }}</dd></div>
-          <div><dt>排查</dt><dd>{{ preview.inspectionCount }}</dd></div>
+          <div><dt>场所</dt><dd>{{ preview.pointCount }}</dd></div>
+          <div><dt>检查</dt><dd>{{ preview.inspectionCount }}</dd></div>
           <div><dt>问题</dt><dd>{{ preview.issueCount }}</dd></div>
           <div><dt>整治</dt><dd data-testid="restore-campaign-count">{{ preview.campaignCount }}</dd></div>
           <div><dt>照片</dt><dd>{{ preview.photoCount }}</dd></div>

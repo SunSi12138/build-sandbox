@@ -210,8 +210,8 @@ function validate(value: CampaignState): FormError[] {
       })
   if (!props.initial) {
     if (value.pointMode === 'regular') {
-      if (!value.pointId || !selectedPoint.value) errors.push({ name: 'pointId', message: '请选择点位' })
-      else if (selectedPoint.value.disabled) errors.push({ name: 'pointId', message: '该点位已停用' })
+      if (!value.pointId || !selectedPoint.value) errors.push({ name: 'pointId', message: '请选择场所' })
+      else if (selectedPoint.value.disabled) errors.push({ name: 'pointId', message: '该场所已停用' })
     } else {
       for (const [key, label] of [['name', '名称'], ['communityId', '社区'], ['typeId', '类型'], ['address', '详细地址']] as const)
         if (!value.newPoint[key].trim()) errors.push({ name: `newPoint.${key}`, message: `请填写${label}` })
@@ -340,7 +340,7 @@ function useRequestedPoint() {
   </p>
   <UForm :state="state" :validate="validate" class="form-sections" @submit="save">
     <RecordPointPicker v-if="!initial" v-model:mode="state.pointMode" v-model:point-id="state.pointId" v-model:new-point="state.newPoint" :disabled="formDisabled" @selected="selectedPoint = $event" @busy="pointLoading = $event" />
-    <section v-else class="form-section"><h2>点位</h2><NuxtLink :to="`/points/${initial.campaign.pointId}`" class="text-sm text-primary">{{ initial.campaign.pointName }}</NuxtLink><p class="text-xs text-muted">{{ initial.campaign.communityName }} · {{ initial.campaign.location }}</p></section>
+    <section v-else class="form-section"><h2>场所</h2><NuxtLink :to="`/points/${initial.campaign.pointId}`" class="text-sm text-primary">{{ initial.campaign.pointName }}</NuxtLink><p class="text-xs text-muted">{{ initial.campaign.communityName }} · {{ initial.campaign.location }}</p></section>
     <section class="form-section">
       <h2>基本信息</h2>
       <div class="field-grid">
@@ -528,7 +528,7 @@ function useRequestedPoint() {
       />
     </div>
   </UForm>
-  <UModal v-model:open="conflictOpen" title="草稿点位不同" description="是否将草稿改为当前点位？" :dismissible="false" :close="false"><template #footer><UButton label="继续草稿" color="neutral" variant="outline" @click="keepDraft" /><UButton label="使用当前点位" @click="useRequestedPoint" /></template></UModal>
+  <UModal v-model:open="conflictOpen" title="草稿场所不同" description="是否将草稿改为当前场所？" :dismissible="false" :close="false"><template #footer><UButton label="继续草稿" color="neutral" variant="outline" @click="keepDraft" /><UButton label="使用当前场所" @click="useRequestedPoint" /></template></UModal>
   <UModal
     v-model:open="leaveOpen"
     title="离开页面？"

@@ -18,6 +18,7 @@ namespace StreetEcoTool;
 [JsonSerializable(typeof(PointDetailDto))]
 [JsonSerializable(typeof(PageDto<PointDto>), TypeInfoPropertyName = "PointPage")]
 [JsonSerializable(typeof(InspectionCreateRequest))]
+[JsonSerializable(typeof(CheckItem[]))]
 [JsonSerializable(typeof(InspectionDto))]
 [JsonSerializable(typeof(InspectionDetailDto))]
 [JsonSerializable(typeof(PageDto<InspectionDto>), TypeInfoPropertyName = "InspectionPage")]

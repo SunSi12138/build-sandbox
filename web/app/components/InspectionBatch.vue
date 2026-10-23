@@ -28,7 +28,7 @@ onBeforeRouteLeave(() => {
 const uploading = computed(() => state.items.some(item => item.busy))
 const busy = computed(() => uploading.value || saving.value)
 watch(busy, value => emit('busy', value), { flush: 'sync' })
-const title = computed(() => props.mode === 'feedback' ? '记录反馈' : '复查闭环')
+const title = computed(() => props.mode === 'feedback' ? '记录反馈' : '已完成')
 const textLabel = computed(() => props.mode === 'feedback' ? '整改情况' : '复查结论')
 watch(open, value => {
   if (!value) return

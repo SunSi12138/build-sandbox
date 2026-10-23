@@ -10,7 +10,7 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
@@ -58,6 +58,7 @@ public sealed partial class Store : IDisposable
         _db.Open();
         using (var pragmas = Command("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000;")) pragmas.ExecuteNonQuery();
         if (initialize) InitializeCurrentDatabase();
+        InitializeCommunityTables();
     }
 
     private void InitializeCurrentDatabase()
@@ -82,12 +83,15 @@ public sealed partial class Store : IDisposable
             );
             CREATE TABLE inspections (
                 id TEXT PRIMARY KEY, point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT,
-                inspection_date TEXT NOT NULL, inspector TEXT NOT NULL, result TEXT NOT NULL CHECK(result IN ('normal','issues')),
+                inspection_date TEXT NOT NULL, inspector TEXT NOT NULL, result TEXT NOT NULL CHECK(result IN ('normal','issues','incomplete')),
                 notes TEXT NOT NULL DEFAULT '', notice_number TEXT NOT NULL DEFAULT '',
                 point_name TEXT NOT NULL, community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
                 community_name TEXT NOT NULL, community_title TEXT NOT NULL,
                 type_id TEXT NOT NULL REFERENCES point_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
-                address TEXT NOT NULL, contact TEXT NOT NULL, phone TEXT NOT NULL
+                address TEXT NOT NULL, contact TEXT NOT NULL, phone TEXT NOT NULL,
+                inspection_type_id TEXT NOT NULL DEFAULT '', inspection_type_name TEXT NOT NULL DEFAULT '',
+                use_id TEXT NOT NULL DEFAULT '', use_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
+                incomplete_reason TEXT NOT NULL DEFAULT '', checklist TEXT NOT NULL DEFAULT '[]', submission_key TEXT UNIQUE
             );
             CREATE TABLE issues (
                 id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE RESTRICT,
@@ -146,12 +150,12 @@ public sealed partial class Store : IDisposable
             CREATE INDEX ix_campaigns_point_date ON campaigns(point_id,campaign_date);
             CREATE INDEX ix_points_temporary ON points(temporary,disabled);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=3;
+            PRAGMA user_version=4;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),
             ("$template", "经我街道于{日期}对你社区辖区内{点位}开展环保排查，发现以下问题：\n{问题}\n请于{期限}前整改完毕，并将整改情况书面反馈我街道。"), ("$quality", 75))) settings.ExecuteNonQuery();
-        foreach (var name in new[] { "餐饮油烟", "工地扬尘", "河道水体", "垃圾堆放", "小散乱污", "其他" })
+        foreach (var name in new[] { "建筑物", "地块", "独立空间", "院落", "公共区域", "其他" })
         {
             using var type = Command("INSERT INTO point_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
             type.ExecuteNonQuery();

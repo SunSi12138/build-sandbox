@@ -6,7 +6,7 @@ const route = useRoute()
 const id = computed(() => queryText(route.query.edit))
 const detail = ref<CampaignDetailDto | null>(null), loading = ref(false), error = ref('')
 const title = computed(() => id.value ? '编辑整治' : '新增整治')
-useHead({ title: () => `${title.value} · 街道生态环保` })
+useHead({ title: () => `${title.value} · 社区管理` })
 async function load() {
   loading.value = true; error.value = ''
   try { detail.value = id.value ? await $fetch<CampaignDetailDto>(`/api/campaigns/${id.value}`) : null }

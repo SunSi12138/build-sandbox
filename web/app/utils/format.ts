@@ -11,7 +11,7 @@ export function errorMessage(error: unknown): string {
 }
 
 export function statusLabel(status: string): string {
-  return ({ pending: '待整改', feedback: '社区已反馈', closed: '已复查闭环' } as Record<string, string>)[status] ?? status
+  return ({ pending: '待整改', feedback: '待复查', closed: '已完成', incomplete: '未完成检查' } as Record<string, string>)[status] ?? status
 }
 export function statusColor(status: string): 'warning' | 'info' | 'success' | 'neutral' {
   return ({ pending: 'warning', feedback: 'info', closed: 'success' } as const)[status as IssueStatus] ?? 'neutral'
@@ -40,7 +40,8 @@ export function formatBytes(bytes: number): string {
 
 export function rectifyLabel(record: Pick<InspectionDto, 'rectifyStatus' | 'issueCount' | 'closedCount'>, compact = false): string {
   if (record.rectifyStatus === 'none') return compact ? '正常' : '无需整改'
-  if (record.rectifyStatus === 'closed') return '已闭环'
+  if (record.rectifyStatus === 'closed') return '已完成'
+  if ((record.rectifyStatus as string) === 'incomplete') return '未完成检查'
   const label = record.rectifyStatus === 'feedback' ? '待复查' : '待整改'
   return compact ? `${label} ${record.closedCount}/${record.issueCount}` : label
 }

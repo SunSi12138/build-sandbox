@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
@@ -10,13 +11,14 @@ public sealed partial class Store
         n.address,n.contact,n.phone,n.inspection_date,n.inspector,n.result,n.notes,n.notice_number,
         (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id),
         (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
-        CASE WHEN n.result='normal' THEN 'none'
+        CASE WHEN n.result='normal' THEN 'none' WHEN n.result='incomplete' AND NOT EXISTS(SELECT 1 FROM issues ix WHERE ix.inspection_id=n.id) THEN 'incomplete'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END,
         (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status='closed'),
         (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed' AND x.deadline<$today),
         (SELECT MIN(x.deadline) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
-        pt.temporary,pt.longitude,pt.latitude
+        pt.temporary,pt.longitude,pt.latitude,
+        n.inspection_type_id,n.inspection_type_name,n.use_id,n.use_name,n.created_at,n.incomplete_reason,n.checklist
         FROM inspections n JOIN points pt ON pt.id=n.point_id
         """;
     private const string InspectionWhere = """
@@ -29,7 +31,7 @@ public sealed partial class Store
             AND ($overdue=0 OR (x.status<>'closed' AND x.deadline<$today))
             AND ($soon=0 OR (x.status<>'closed' AND x.deadline>=$today AND x.deadline<=$through))
             AND ($awaiting=0 OR x.status='feedback') AND ($open=0 OR x.status<>'closed')))
-        AND ($rectify='' OR $rectify=CASE WHEN n.result='normal' THEN 'none'
+        AND ($rectify='' OR $rectify=CASE WHEN n.result='normal' THEN 'none' WHEN n.result='incomplete' AND NOT EXISTS(SELECT 1 FROM issues ix WHERE ix.inspection_id=n.id) THEN 'incomplete'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END)
         """;
@@ -37,7 +39,8 @@ public sealed partial class Store
     private static InspectionDto ReadInspection(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetString(11), row.GetString(12), row.GetString(13), row.GetString(14), row.GetString(15), row.GetInt32(16), row.GetInt32(17), row.GetString(18), row.GetInt32(19), row.GetInt32(20), NullableString(row, 21),
-        row.GetInt32(22) != 0, row.IsDBNull(23) ? null : row.GetDouble(23), row.IsDBNull(24) ? null : row.GetDouble(24));
+        row.GetInt32(22) != 0, row.IsDBNull(23) ? null : row.GetDouble(23), row.IsDBNull(24) ? null : row.GetDouble(24),
+        row.GetString(25),row.GetString(26),row.GetString(27),row.GetString(28),row.GetString(29),row.GetString(30),JsonSerializer.Deserialize(row.GetString(31), AppJsonContext.Default.CheckItemArray));
 
     private InspectionDto[] ReadInspectionList(string suffix, (string Name, object? Value)[] parameters, string? today = null)
     {
@@ -74,7 +77,7 @@ public sealed partial class Store
         CheckDateRange(from, to);
         var q = Text(query.Q, "搜索内容", 200);
         var rectify = query.Rectify is null or "all" ? "" : query.Rectify;
-        if (rectify is not ("" or "none" or "pending" or "feedback" or "closed")) throw new ApiException(400, "整改状态筛选无效。");
+        if (rectify is not ("" or "none" or "incomplete" or "pending" or "feedback" or "closed")) throw new ApiException(400, "整改状态筛选无效。");
         return [("$point", query.PointId ?? ""), ("$community", query.CommunityId ?? ""),
             ("$from", from ?? ""), ("$to", to ?? ""), ("$q", q), ("$like", "%" + q + "%"),
             ("$type", query.TypeId ?? ""), ("$temporary", query.Temporary ? 1 : 0), ("$overdue", query.Overdue ? 1 : 0),
@@ -134,12 +137,23 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
+            var submissionKey = Text(request.SubmissionKey, "提交编号", 100);
+            if (submissionKey.Length > 0)
+            {
+                using var submitted = Command("SELECT id FROM inspections WHERE submission_key=$key;", null, ("$key", submissionKey));
+                if (submitted.ExecuteScalar() is string existingId) return GetInspectionDetail(existingId);
+            }
             if (string.IsNullOrWhiteSpace(request.PointId) == (request.NewPoint is null))
                 throw new ApiException(400, "请选择常态点位或填写临时点位，不能同时提交。");
             var date = DateText(request.Date, "排查日期", true);
             if (string.CompareOrdinal(date, Today) > 0) throw new ApiException(400, "排查日期不能晚于今天。");
             var inspector = Text(string.IsNullOrWhiteSpace(request.Inspector) ? GetSettings().DefaultInspector : request.Inspector, "排查人", 100, true);
-            if (request.Result is not ("normal" or "issues")) throw new ApiException(400, "排查结果必须是 normal 或 issues。");
+            if (request.Result is not ("normal" or "issues" or "incomplete")) throw new ApiException(400, "请选择检查结果。");
+            var incompleteReason = Text(request.IncompleteReason, "未完成原因", 2000, request.Result == "incomplete");
+            var inspectionType = string.IsNullOrWhiteSpace(request.InspectionTypeId) ? null : ListCommunityRecords("inspection-type").FirstOrDefault(x => x.Id == request.InspectionTypeId) ?? throw new ApiException(400, "检查类型已停用或不存在。");
+            var checklist = request.Checklist ?? [];
+            if (checklist.Length > 100 || checklist.Any(x => x is null || x.Result is not ("normal" or "issues" or "na" or "unchecked") || string.IsNullOrWhiteSpace(x.Name))) throw new ApiException(400, "检查项目填写不正确。");
+            if (request.Shape is not null) ValidateShape(request.Shape);
             var inputIssues = request.Issues ?? [];
             if (request.Result == "normal" && inputIssues.Length > 0) throw new ApiException(400, "正常排查不能同时包含问题。");
             if (request.Result == "issues" && inputIssues.Length == 0) throw new ApiException(400, "发现问题时，请至少登记一条问题。");
@@ -152,6 +166,14 @@ public sealed partial class Store
             {
                 var point = ResolveRecordPoint(request.PointId, request.NewPoint, transaction);
                 var community = RequireCommunity(point.CommunityId, transaction);
+                string useName = "", useId = "";
+                if (!string.IsNullOrWhiteSpace(request.UseId))
+                {
+                    using var useQuery = Command("SELECT id,name,body,archived FROM community_records WHERE kind='use' AND id=$id AND parent_id=$parent;", transaction, ("$id", request.UseId), ("$parent", point.Id));
+                    using var useRow = useQuery.ExecuteReader();
+                    if (!useRow.Read()) throw new ApiException(400, "经营使用记录不属于该场所。");
+                    useId = useRow.GetString(0); useName = useRow.GetString(1);
+                }
                 var validatedIssues = inputIssues.Select(issue => new IssueCreateRequest(Text(issue.Description, "问题描述", 8000, true),
                     Text(issue.Requirement, "整改要求", 8000), DateText(issue.Deadline, "整改期限"),
                     Text(string.IsNullOrWhiteSpace(issue.ResponsibleUnit) ? point.CommunityName : issue.ResponsibleUnit, "责任单位", 200, true), issue.PhotoIds)).ToArray();
@@ -163,6 +185,15 @@ public sealed partial class Store
                     ("$result", request.Result), ("$notes", notes), ("$number", noticeNumber), ("$name", point.Name),
                     ("$community", point.CommunityId), ("$communityName", point.CommunityName), ("$title", community.Title),
                     ("$type", point.TypeId), ("$typeName", point.TypeName), ("$address", point.Address), ("$contact", point.Contact), ("$phone", point.Phone))) insert.ExecuteNonQuery();
+                using (var meta = Command("UPDATE inspections SET inspection_type_id=$typeId,inspection_type_name=$typeName,use_id=$useId,use_name=$useName,created_at=$at,incomplete_reason=$reason,checklist=$checklist,submission_key=$key WHERE id=$id;", transaction,
+                    ("$id", inspectionId), ("$typeId", inspectionType?.Id ?? ""), ("$typeName", inspectionType?.Name ?? ""), ("$useId", useId), ("$useName", useName),
+                    ("$at", DateTimeOffset.Now.ToString("O")), ("$reason", incompleteReason), ("$checklist", JsonSerializer.Serialize(checklist, AppJsonContext.Default.CheckItemArray)), ("$key", submissionKey.Length == 0 ? null : submissionKey))) meta.ExecuteNonQuery();
+                if (request.Shape is not null && point.Temporary)
+                {
+                    using var shapeCommand = Command("INSERT INTO map_shapes(kind,record_id,shape,revision) VALUES('point',$point,$shape,1) ON CONFLICT(kind,record_id) DO NOTHING;", transaction,
+                        ("$point", point.Id), ("$shape", JsonSerializer.Serialize(request.Shape, CommunityJsonContext.Default.GeoShape)));
+                    shapeCommand.ExecuteNonQuery();
+                }
                 AttachPhotos(request.PhotoIds, "site", inspectionId, null, transaction);
                 foreach (var issue in validatedIssues)
                 {

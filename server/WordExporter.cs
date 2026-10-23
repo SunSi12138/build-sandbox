@@ -14,13 +14,25 @@ public sealed record WordCampaignLedger(string From, string To, string Community
 /// <summary>Writes an OPC/WordprocessingML package with BCL APIs only. No image or Office SDK is loaded.</summary>
 public static class WordExporter
 {
+    public static void WriteCommunityReport(Stream destination, ReportDto report, SettingsDto settings)
+    {
+        using var document = new Document(destination, true, report.Title, settings.StreetName);
+        document.Paragraph(report.Title, "Title");
+        document.Paragraph(report.Scope);
+        document.Paragraph($"共 {report.Rows.Length} 条；生成日期：{Store.Today}");
+        document.Table(report.Headers, report.Rows, report.Headers.Select(_ => 1).ToArray(), fontSize: 18);
+    }
     public static void WriteRecord(Stream destination, InspectionDetailDto detail, SettingsDto settings, WordPhoto[] photos)
     {
         using var document = new Document(destination, false, "排查记录单", settings.StreetName);
-        document.Paragraph("生态环保排查记录单", "Title");
+        document.Paragraph("检查记录单", "Title");
         WriteInspectionInfo(document, detail.Inspection);
+        if (detail.Inspection.InspectionTypeName.Length > 0) document.Paragraph("检查类型：" + detail.Inspection.InspectionTypeName);
+        if (detail.Inspection.UseName.Length > 0) document.Paragraph("经营使用：" + detail.Inspection.UseName);
+        foreach (var item in detail.Inspection.Checklist ?? []) document.Paragraph(item.Name + "：" + (item.Result switch { "normal" => "正常", "issues" => "发现问题", "na" => "不适用", _ => "未检查" }) + (item.Notes.Length > 0 ? "；" + item.Notes : ""));
         document.Section("发现问题");
-        if (detail.Issues.Length == 0) document.Paragraph("本次排查未发现问题。");
+        if (detail.Inspection.Result == "incomplete") document.Paragraph("本次未完成检查：" + detail.Inspection.IncompleteReason);
+        if (detail.Issues.Length == 0 && detail.Inspection.Result != "incomplete") document.Paragraph("本次检查未发现问题。");
         else WriteIssues(document, detail.Issues);
         WriteSitePhotos(document, detail, photos, false);
         if (!string.IsNullOrWhiteSpace(detail.Inspection.Notes))
@@ -50,7 +62,7 @@ public static class WordExporter
             var token = template[start..(end + 1)];
             result.Append(token switch
             {
-                "{日期}" => ChineseDate(inspection.Date), "{点位}" => inspection.PointName,
+                "{日期}" => ChineseDate(inspection.Date), "{点位}" or "{场所}" => inspection.PointName,
                 "{期限}" => ChineseDate(deadline), "{街道全称}" => settings.StreetName,
                 "{社区}" => inspection.CommunityName, _ => token
             });
@@ -65,7 +77,7 @@ public static class WordExporter
         using var document = new Document(destination, false, "整改通知单", settings.StreetName);
         var inspection = detail.Inspection;
         if (!string.IsNullOrWhiteSpace(inspection.NoticeNumber)) document.Paragraph("编号：" + inspection.NoticeNumber, align: "right");
-        document.Paragraph("生态环保问题整改通知单", "Title");
+        document.Paragraph("问题整改通知单", "Title");
         document.Paragraph(inspection.CommunityTitle.TrimEnd('：', ':') + "：", indent: false);
 
         // Each issue keeps its own date in the table; the template uses the last deadline.

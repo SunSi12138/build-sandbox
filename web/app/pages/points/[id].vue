@@ -25,7 +25,7 @@ const back = computed(() => {
   const value = queryText(route.query.returnTo)
   return /^\/points\/?(?:\?|$)/.test(value) ? value : '/points'
 })
-useHead({ title: computed(() => `${detail.value?.point.name || '点位详情'} · 街道生态环保`) })
+useHead({ title: computed(() => `${detail.value?.point.name || '场所详情'} · 社区管理`) })
 async function load() {
   if (!id.value) return
   loading.value = true
@@ -80,7 +80,7 @@ const menu = computed(() => [
   ...(detail.value?.point.temporary
     ? [
         {
-          label: '转为常态点位',
+          label: '转为常态场所',
           onSelect: () => {
             promoteOpen.value = true
           },
@@ -88,13 +88,13 @@ const menu = computed(() => [
       ]
     : []),
   {
-    label: detail.value?.point.disabled ? '启用点位' : '停用点位',
+    label: detail.value?.point.disabled ? '启用场所' : '停用场所',
     onSelect: () => {
       void toggleDisabled()
     },
   },
   {
-    label: '删除点位',
+    label: '删除场所',
     color: 'error' as const,
     onSelect: () => {
       deleteError.value = ''
@@ -106,7 +106,7 @@ watch(id, load, { immediate: true })
 </script>
 <template>
   <div class="page-stack">
-    <PageHeader :title="detail?.point.name || '点位详情'" :back="back"
+    <PageHeader :title="detail?.point.name || '场所详情'" :back="back"
       ><template v-if="detail" #badge
         ><StatusBadge v-if="detail.point.temporary" tone="outline">临时</StatusBadge
         ><StatusBadge v-if="detail.point.disabled" tone="neutral">已停用</StatusBadge></template
@@ -119,7 +119,7 @@ watch(id, load, { immediate: true })
           :to="{ path: '/inspections/new', query: { pointId: id } }"
           :disabled="detail.point.disabled"
           class="header-action"
-          ><span class="mobile-only">排查</span><span class="desktop-only">新增排查</span></UButton
+          ><span class="mobile-only">检查</span><span class="desktop-only">新增检查</span></UButton
         ><UButton :to="{ path: '/campaigns/new', query: { pointId: id } }" :disabled="detail.point.disabled" color="neutral" variant="outline" class="header-action" data-testid="point-new-campaign"><span class="mobile-only">整治</span><span class="desktop-only">新增整治</span></UButton><UDropdownMenu :items="menu"
           ><UButton
             icon="i-lucide-ellipsis"
@@ -143,22 +143,22 @@ watch(id, load, { immediate: true })
             <h2 class="section-title">基本信息</h2>
             <UButton
               v-if="detail.point.temporary"
-              label="转为常态点位"
+              label="转为常态场所"
               variant="link"
               @click="promoteOpen = true"
             />
           </div>
           <dl class="detail-grid panel-body">
             <div>
-              <dt>所属社区</dt>
+              <dt>所属网格</dt>
               <dd>{{ detail.point.communityName }}</dd>
             </div>
             <div>
-              <dt>点位类型</dt>
+              <dt>场所类型</dt>
               <dd>{{ detail.point.typeName }}</dd>
             </div>
             <div>
-              <dt>排查频次</dt>
+              <dt>检查频次</dt>
               <dd>{{ frequencyLabel(detail.point.frequency) }}</dd>
             </div>
             <div class="detail-wide">
@@ -198,9 +198,10 @@ watch(id, load, { immediate: true })
             </div>
           </dl>
         </section>
+        <PlaceUses :point-id="id" />
         <section class="panel">
           <div class="panel-head">
-            <h2 class="section-title">未闭环问题</h2>
+            <h2 class="section-title">未完成问题</h2>
             <span class="text-xs text-muted">{{ detail.openIssues.length }} 项</span>
           </div>
           <NuxtLink
@@ -219,11 +220,11 @@ watch(id, load, { immediate: true })
             <StatusBadge :tone="statusColor(issue.status)">{{
               statusLabel(issue.status)
             }}</StatusBadge></NuxtLink
-          ><EmptyState v-if="!detail.openIssues.length" title="暂无未闭环问题" />
+          ><EmptyState v-if="!detail.openIssues.length" title="暂无未完成问题" />
         </section>
         <section class="panel">
           <div class="panel-head">
-            <h2 class="section-title">历史排查</h2>
+            <h2 class="section-title">历史检查</h2>
             <UButton
               :to="`/inspections?pointId=${id}`"
               label="查看全部"
@@ -236,7 +237,7 @@ watch(id, load, { immediate: true })
             :key="record.id"
             :record="record"
             :return-to="route.fullPath"
-          /><EmptyState v-if="!detail.inspections.length" title="暂无排查记录" />
+          /><EmptyState v-if="!detail.inspections.length" title="暂无检查记录" />
         </section>
         <section class="panel" data-testid="point-campaign-history">
           <div class="panel-head"><h2 class="section-title">历史整治</h2><UButton :to="`/campaigns?pointId=${id}`" label="查看全部" color="neutral" variant="link" /></div>
@@ -251,7 +252,7 @@ watch(id, load, { immediate: true })
     />
     <UModal
       v-model:open="deleteOpen"
-      :title="`删除点位「${detail?.point.name || ''}」？`"
+      :title="`删除场所「${detail?.point.name || ''}」？`"
       description="删除后无法恢复"
       :dismissible="!deleting"
       :close="!deleting"

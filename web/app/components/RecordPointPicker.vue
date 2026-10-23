@@ -58,7 +58,7 @@ watch(pointId, async id => {
     selected.value = value.point
     expanded.value = false
     emit('selected', value.point)
-    if (value.point.disabled) error.value = '该点位已停用'
+    if (value.point.disabled) error.value = '该场所已停用'
   } catch (cause) {
     if (version === selectedSequence) { error.value = errorMessage(cause); selected.value = null; expanded.value = true; emit('selected', null) }
   } finally { if (version === selectedSequence) resolving.value = false }
@@ -70,23 +70,23 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
 
 <template>
   <section class="form-section">
-    <h2>点位</h2>
+    <h2>场所</h2>
     <div class="chip-row mb-2">
-      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'regular'" :disabled="disabled" @click="mode = 'regular'">常态点位</UButton>
-      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'temporary'" :disabled="disabled" :data-testid="`${prefix}-temporary-mode`" @click="mode = 'temporary'">临时点位</UButton>
+      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'regular'" :disabled="disabled" @click="mode = 'regular'">常态场所</UButton>
+      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'temporary'" :disabled="disabled" :data-testid="`${prefix}-temporary-mode`" @click="mode = 'temporary'">临时场所</UButton>
     </div>
     <template v-if="mode === 'regular'">
-      <UFormField label="常态点位" name="pointId" required>
+      <UFormField label="常态场所" name="pointId" required>
         <div v-if="selected && !expanded" class="flex min-w-0 items-center gap-2" :data-testid="`${prefix}-selected-point`">
           <span class="min-w-0 flex-1 truncate text-sm">{{ selected.name }} · {{ selected.communityName }} · {{ selected.typeName }}</span>
           <UButton label="更换" color="neutral" variant="link" :disabled="disabled" @click="expanded = true" />
         </div>
         <div v-else>
-          <UInput v-model="search" type="search" icon="i-lucide-search" placeholder="搜索点位" aria-label="搜索常态点位" :data-testid="`${prefix}-point-search`" class="mb-2 w-full" :disabled="disabled" />
+          <UInput v-model="search" type="search" icon="i-lucide-search" placeholder="搜索场所" aria-label="搜索常态场所" :data-testid="`${prefix}-point-search`" class="mb-2 w-full" :disabled="disabled" />
           <UButton v-for="point in points" :key="point.id" type="button" color="neutral" variant="ghost" class="h-14 w-full justify-start border-b border-[var(--divider)] text-left" :aria-pressed="pointId === point.id" :disabled="disabled" :data-testid="`${prefix}-point-option`" @click="choose(point)">
             <span class="min-w-0"><span class="block truncate font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}</span></span>
           </UButton>
-          <p v-if="!searching && !points.length" class="py-3 text-sm text-muted">暂无常态点位</p>
+          <p v-if="!searching && !points.length" class="py-3 text-sm text-muted">暂无常态场所</p>
           <UButton v-if="points.length < total" type="button" label="加载更多" color="neutral" variant="link" :disabled="disabled" :loading="searching" @click="list(false)" />
         </div>
       </UFormField>

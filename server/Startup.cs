@@ -14,8 +14,8 @@ namespace StreetEcoTool;
 
 internal static class Startup
 {
-    private const string MutexName = @"Global\StreetEcoTool";
-    private const string PipeName = "StreetEcoTool.Address";
+    private const string MutexName = @"Global\CommunityGIS";
+    private const string PipeName = "CommunityGIS.Address";
 
     // Keep the mutex owner on this synchronous entry thread throughout the host lifetime.
     // Mutex.ReleaseMutex must execute on the same thread that acquired it.
@@ -259,9 +259,12 @@ internal static class Startup
         });
 
         Api.Map(app, store);
+        CommunityApi.Map(app, store);
         PhotoApi.Map(app, store);
         store.MapBackupApi(app);
         store.MapWordApi(app);
+        store.MapReportApi(app);
+        store.MapIssueOperations(app);
         RequestDelegate systemInfo = context => Api.Write(context, listening.GetInfo(context.Connection.RemoteIpAddress), StartupJsonContext.Default.SystemInfoResponse);
         RequestDelegate changeListen = async context =>
         {

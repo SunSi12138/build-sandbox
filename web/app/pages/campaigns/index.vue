@@ -2,7 +2,7 @@
 import type { TableColumn } from '@nuxt/ui'
 import type { CampaignDto, PageDto } from '~/types/api'
 import { errorMessage } from '~/utils/format'
-useHead({ title: '整治记录 · 街道生态环保' })
+useHead({ title: '整治记录 · 社区管理' })
 const route = useRoute()
 const { bootstrap, load: loadAppData } = useAppData()
 const { field, page, setPage } = useQueryFilters()
@@ -147,7 +147,7 @@ watch(() => route.fullPath, load, { immediate: true })
         </div>
       </div>
     </div>
-    <div v-if="pointId" class="chip-row"><UButton :label="result?.items[0]?.pointName || '所选点位'" trailing-icon="i-lucide-x" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="true" @click="pointId = ''" /></div>
+    <div v-if="pointId" class="chip-row"><UButton :label="result?.items[0]?.pointName || '所选场所'" trailing-icon="i-lucide-x" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="true" @click="pointId = ''" /></div>
     <div v-if="from || to" class="chip-row">
       <UButton
         :label="`${from || '不限'} 至 ${to || '不限'}`"

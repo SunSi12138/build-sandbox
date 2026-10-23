@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { FormError } from '@nuxt/ui'
+import type { GeoShape, MapState } from '~/types/community'
 import type { PointDetailDto, PointDto, PointWriteRequest, PhotoUploadDto, Frequency } from '~/types/api'
 import { coordinatesText, errorMessage, frequencyOptions, parseCoordinates } from '~/utils/format'
 const open = defineModel<boolean>('open', { default: false })
-const props = defineProps<{ point?: PointDto | null }>()
+const props = defineProps<{ point?: PointDto | null; initialCoordinates?: string; initialShape?: GeoShape | null }>()
 const emit = defineEmits<{ saved: [point: PointDto] }>()
 const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
@@ -11,6 +12,7 @@ const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = r
 interface PointState { name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
 const defaults = (): PointState => ({ name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
 const state = reactive<PointState>(defaults())
+const mapShape = ref<GeoShape|null>(null), shapeRevision = ref(0)
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
 watch(open, async value => {
@@ -18,18 +20,21 @@ watch(open, async value => {
   if (!value) return
   error.value = ''; loading.value = true
   const point = props.point
-  Object.assign(state, point ? { ...point, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : defaults())
+  mapShape.value = props.initialShape ?? null; shapeRevision.value = 0
+  Object.assign(state, point ? { ...point, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : { ...defaults(), coordinates: props.initialCoordinates ?? '' })
   try {
     await load()
+    if (!point && communities.value.length === 1) state.communityId = communities.value[0]!.value
+    if (point) { const map = await $fetch<MapState>('/api/map'); const feature = map.features.find(x => x.kind === 'point' && x.id === point.id); mapShape.value = feature?.shape ?? null; shapeRevision.value = feature?.revision ?? 0 }
     if (point) state.photos = (await $fetch<PointDetailDto>(`/api/points/${point.id}`)).photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
   } catch (value) { error.value = errorMessage(value) }
   finally { loading.value = false }
 })
 function validate(value: PointState): FormError[] {
   const errors: FormError[] = []
-  if (!value.name.trim()) errors.push({ name: 'name', message: '请填写点位名称' })
-  if (!value.communityId) errors.push({ name: 'communityId', message: '请选择所属社区' })
-  if (!value.typeId) errors.push({ name: 'typeId', message: '请选择点位类型' })
+  if (!value.name.trim()) errors.push({ name: 'name', message: '请填写场所名称' })
+  if (!value.communityId) errors.push({ name: 'communityId', message: '请选择所属网格' })
+  if (!value.typeId) errors.push({ name: 'typeId', message: '请选择场所类型' })
   if (!value.address.trim()) errors.push({ name: 'address', message: '请填写详细地址' })
   const coordinates = parseCoordinates(value.coordinates)
   if (coordinates.error) errors.push({ name: 'coordinates', message: coordinates.error })
@@ -40,6 +45,7 @@ async function save() {
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
   const body: PointWriteRequest = { name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
+  body.shape = mapShape.value; body.shapeRevision = shapeRevision.value
   try { const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/points', { method: props.point ? 'PUT' : 'POST', body, retry: 0 }); emit('saved', point); open.value = false }
   catch (value) { error.value = errorMessage(value) }
   finally { saving.value = false }
@@ -47,19 +53,19 @@ async function save() {
 onBeforeUnmount(() => { overlayForm.value = false })
 </script>
 <template>
-  <USlideover v-model:open="open" :title="point ? '编辑点位' : '新增点位'" :dismissible="!saving && !photosBusy" :close="!saving && !photosBusy" :ui="{ content: 'w-full max-w-[480px] max-md:max-w-none' }">
+  <USlideover v-model:open="open" :title="point ? '编辑场所' : '新增场所'" :dismissible="!saving && !photosBusy" :close="!saving && !photosBusy" :ui="{ content: 'w-full max-w-[480px] max-md:max-w-none' }">
     <template #body>
       <UAlert v-if="error" :description="error" color="error" variant="subtle" class="mb-3" />
-      <p v-if="!loading && (!communities.length || !types.length)" class="mb-3 text-sm text-warning">请先维护社区和点位类型</p>
+      <p v-if="!loading && (!communities.length || !types.length)" class="mb-3 text-sm text-warning">请先维护社区和场所类型</p>
       <UForm id="point-editor-form" :state="state" :disabled="loading || saving" :validate="validate" class="field-grid" @submit="save">
         <UFormField label="名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="point-name" /></UFormField>
-        <UFormField label="社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /></UFormField>
+        <UFormField label="网格" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
-        <UFormField label="经纬度" name="coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" /></UFormField>
+        <UFormField label="位置" name="coordinates" class="field-full"><LocationPicker v-model="mapShape" :disabled="saving" @picked="shape => {state.coordinates=shape.coordinates[0]!.join(',')}" /><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" @update:model-value="mapShape=null" /></UFormField>
         <UFormField label="联系人" name="contact"><NameTagsInput :disabled="loading || saving" v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
-        <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>
+        <UFormField label="检查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>
         <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="3" maxlength="8000" class="w-full" /></UFormField>
         <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" phase="point" :max="9" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" /></UFormField>
         <UFormField v-if="point" label="状态" name="disabled" class="field-full"><div class="check-row"><UCheckbox v-model="state.disabled" label="停用" /></div></UFormField>

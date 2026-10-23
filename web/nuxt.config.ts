@@ -45,7 +45,7 @@ export default defineNuxtConfig({
   app: {
     head: {
       htmlAttrs: { lang: 'zh-CN', class: 'light' },
-      title: '街道生态环保 · 排查与整改',
+      title: '社区管理 · 检查与整改',
       meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' }],
       link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
       script: [{

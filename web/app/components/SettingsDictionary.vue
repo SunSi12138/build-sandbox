@@ -6,7 +6,7 @@ import { errorMessage } from '~/utils/format'
 const props = defineProps<{ kind: 'communities' | 'point-types' | 'campaign-types'; items: CommunityDto[] | PointTypeDto[] }>()
 const emit = defineEmits<{ changed: [] }>()
 const toast = useToast()
-const label = computed(() => props.kind === 'communities' ? '社区' : props.kind === 'point-types' ? '点位类型' : '整治类型')
+const label = computed(() => props.kind === 'communities' ? '社区' : props.kind === 'point-types' ? '场所类型' : '整治类型')
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 const saving = ref(false)

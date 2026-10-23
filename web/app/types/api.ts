@@ -2,7 +2,7 @@ export type IssueStatus = 'pending' | 'feedback' | 'closed'
 export type Frequency = 'weekly' | 'monthly' | 'quarterly' | 'irregular'
 export type PhotoPhase = 'site' | 'after' | 'review' | 'point' | 'before' | 'process'
 export type RectifyStatus = 'none' | 'pending' | 'feedback' | 'closed'
-export type InspectionResult = 'normal' | 'issues'
+export type InspectionResult = 'normal' | 'issues' | 'incomplete'
 
 export interface ErrorDto { message: string }
 export interface OkDto { ok: boolean }
@@ -15,6 +15,7 @@ export interface PointTypeWriteRequest { name: string }
 export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto[]; pointTypes: PointTypeDto[]; campaignTypes?: CampaignTypeDto[]; today: string }
 
 export interface PointWriteRequest {
+  shape?: import('./community').GeoShape | null; shapeRevision?: number
   name: string; communityId: string; typeId: string; address: string
   contact?: string | null; phone?: string | null; frequency: Frequency; notes?: string | null; disabled: boolean
   longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]
@@ -27,12 +28,14 @@ export interface PointDto {
 }
 export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[]; campaigns?: CampaignDto[] }
 export interface InspectionCreateRequest {
+  inspectionTypeId?: string; useId?: string; checklist?: { name: string; result: string; notes: string }[]; incompleteReason?: string; submissionKey?: string; shape?: import('./community').GeoShape | null
   pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; inspector: string; result: InspectionResult; notes?: string | null
   noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]
 }
 export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[] }
 export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string }
 export interface InspectionDto {
+  inspectionTypeId?: string; inspectionTypeName?: string; useId?: string; useName?: string; createdAt?: string; incompleteReason?: string; checklist?: { name: string; result: string; notes: string }[]
   id: string; pointId: string; pointName: string; communityId: string; communityName: string; communityTitle: string
   typeId: string; typeName: string; address: string; contact: string; phone: string; date: string
   inspector: string; result: InspectionResult; notes: string; noticeNumber: string; issueCount: number; openIssueCount: number
