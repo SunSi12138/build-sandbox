@@ -126,7 +126,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             using var linked = Command("SELECT COUNT(*) FROM record_photos WHERE photo_id=$id;", null, ("$id", id));
-            if (Convert.ToInt32(linked.ExecuteScalar()) > 0) throw new ApiException(409, "这张照片已存入使用记录，请在记录中移除；历史照片会保留。");
+            if (Convert.ToInt32(linked.ExecuteScalar()) > 0) throw new ApiException(409, "这张照片已存入资料，请在相应记录中移除后保存。");
             DeletePhotoCore(id);
         }
     }

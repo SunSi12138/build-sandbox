@@ -1,0 +1,11 @@
+<script setup lang="ts">
+import type { CommunityRecord } from '~/types/community'
+import { errorMessage } from '~/utils/format'
+const rows = ref<CommunityRecord[]>([]), error = ref(''), busy = ref(false), pending = ref<CommunityRecord | null>(null), open = ref(false), hasPrevious = ref(false)
+const key = 'street-eco.inspection-draft.v2'
+async function load() { try { rows.value = await $fetch('/api/records/draft') } catch (e) { error.value = errorMessage(e) } }
+async function discard() { if (!pending.value) return; busy.value = true; error.value = ''; try { await $fetch(`/api/records/draft/${pending.value.id}`, { method: 'PUT', body: { ...pending.value, archived: true }, retry: 0 }); open.value = false; await load() } catch (e) { error.value = errorMessage(e) } finally { busy.value = false } }
+async function previous() { const backup = localStorage.getItem(key + '.previous'); if (!backup) return; const current = localStorage.getItem(key); localStorage.setItem(key, backup); if (current) localStorage.setItem(key + '.previous', current); else localStorage.removeItem(key + '.previous'); await navigateTo('/inspections/new') }
+onMounted(() => { hasPrevious.value = Boolean(localStorage.getItem(key + '.previous')); void load() })
+</script>
+<template><div class="page-stack"><PageHeader title="检查草稿" back="/inspections"><UButton to="/inspections/new" label="登记检查" /></PageHeader><UButton v-if="hasPrevious" label="恢复上次本机草稿" variant="outline" class="self-start" @click="previous" /><UAlert v-if="error" :description="error" color="error" /><section v-for="row in rows" :key="row.id" class="panel panel-body space-y-3"><strong>{{ row.name }}</strong><p class="text-sm text-muted">{{ row.data.inspector || '未填人员' }} · {{ new Date(row.updatedAt).toLocaleString('zh-CN') }}</p><div class="flex gap-2"><UButton :to="`/inspections/new?draftId=${row.id}`" label="继续填写" /><UButton label="移除草稿" color="neutral" variant="ghost" @click="pending = row; open = true" /></div></section><EmptyState v-if="!rows.length && !error" title="暂无已保存草稿" /><UModal v-model:open="open" title="移除这份草稿？" :dismissible="!busy"><template #footer><UButton label="取消" variant="outline" :disabled="busy" @click="open = false" /><UButton label="移除" color="error" :loading="busy" @click="discard" /></template></UModal></div></template>

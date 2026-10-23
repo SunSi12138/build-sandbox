@@ -12,7 +12,8 @@ public sealed partial class Store
         x.review_date,x.review_conclusion,x.closed_date,CASE WHEN x.status<>'closed' AND x.deadline<$today THEN 1 ELSE 0 END,
         (SELECT COUNT(*) FROM community_history h WHERE h.record_id=x.id AND h.kind='issue') + (SELECT COUNT(*) FROM issue_actions a WHERE a.issue_id=x.id),
         COALESCE((SELECT json_extract(h.after_json,'$.follower') FROM community_history h WHERE h.kind='issue' AND h.record_id=x.id AND json_valid(h.after_json) AND COALESCE(json_extract(h.after_json,'$.follower'),'')<>'' ORDER BY h.at DESC,h.rowid DESC LIMIT 1),'')
-        FROM issues x JOIN inspections n ON n.id=x.inspection_id
+         ,CASE WHEN x.voided=1 OR n.voided=1 THEN 1 ELSE 0 END,CASE WHEN n.voided=1 THEN n.void_reason ELSE x.void_reason END
+        FROM active_issues x JOIN active_inspections n ON n.id=x.inspection_id
         """;
     private const string IssueWhere = """
         WHERE ($status='' OR x.status=$status) AND ($community='' OR n.community_id=$community)
@@ -25,11 +26,12 @@ public sealed partial class Store
 
     private static IssueDto ReadIssue(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10), row.GetString(11),
-        NullableString(row, 12), row.GetString(13), NullableString(row, 14), row.GetString(15), NullableString(row, 16), row.GetInt32(17) != 0, row.GetInt32(18), row.GetString(19));
+        NullableString(row, 12), row.GetString(13), NullableString(row, 14), row.GetString(15), NullableString(row, 16), row.GetInt32(17) != 0, row.GetInt32(18), row.GetString(19), row.GetInt32(20) != 0, row.GetString(21));
 
-    private IssueDto[] ReadIssueList(string suffix, string today, (string Name, object? Value)[] parameters)
+    private IssueDto[] ReadIssueList(string suffix, string today, (string Name, object? Value)[] parameters, bool includeVoided = false)
     {
-        using var command = Command(IssueSelect + " " + suffix, null, [.. parameters, ("$today", today)]);
+        var select = includeVoided ? IssueSelect.Replace("FROM active_issues x JOIN active_inspections n", "FROM issues x JOIN inspections n", StringComparison.Ordinal) : IssueSelect;
+        using var command = Command(select + " " + suffix, null, [.. parameters, ("$today", today)]);
         using var rows = command.ExecuteReader();
         var result = new List<IssueDto>();
         while (rows.Read()) result.Add(ReadIssue(rows));
@@ -40,7 +42,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            var rows = ReadIssueList("WHERE x.id=$id;", Today, [("$id", id)]);
+            var rows = ReadIssueList("WHERE x.id=$id;", Today, [("$id", id)], true);
             return rows.Length == 0 ? throw new ApiException(404, "问题不存在。") : rows[0];
         }
     }
@@ -77,7 +79,7 @@ public sealed partial class Store
                 ("$inspection", query.InspectionId ?? ""), ("$overdue", query.Overdue ? 1 : 0), ("$soon", query.DueSoon ? 1 : 0), ("$through", through),
                 ("$from", from ?? ""), ("$to", to ?? ""), ("$q", q), ("$like", "%" + q + "%")];
             int total;
-            using (var count = Command("SELECT COUNT(*) FROM issues x JOIN inspections n ON n.id=x.inspection_id " + IssueWhere, null, [.. parameters, ("$today", today)])) total = Convert.ToInt32(count.ExecuteScalar());
+            using (var count = Command("SELECT COUNT(*) FROM active_issues x JOIN active_inspections n ON n.id=x.inspection_id " + IssueWhere, null, [.. parameters, ("$today", today)])) total = Convert.ToInt32(count.ExecuteScalar());
             var items = ReadIssueList(IssueWhere + " ORDER BY CASE x.status WHEN 'pending' THEN 0 WHEN 'feedback' THEN 1 ELSE 2 END,x.deadline,x.rowid DESC LIMIT $limit OFFSET $offset;", today,
                 [.. parameters, ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]);
             return new(items, total, page, pageSize);
@@ -102,6 +104,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var issue = GetIssue(id);
+            RequireActive(issue.Voided);
             CheckRevision(request.Revision, issue.Revision);
             if (issue.Status != "pending") throw new ApiException(409, "只有待整改问题可以修改；如需继续整改，请先退回待整改。");
             using var transaction = _db.BeginTransaction();
@@ -149,6 +152,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var issue = GetIssue(id);
+            RequireActive(issue.Voided);
             CheckRevision(request.Revision, issue.Revision);
             if (issue.Status == "pending") throw new ApiException(409, "该问题已经是待整改状态。");
             var reason = Text(request.Reason, "退回原因", 8000);

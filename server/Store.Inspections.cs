@@ -9,20 +9,21 @@ public sealed partial class Store
     private const string InspectionSelect = """
         SELECT n.id,n.point_id,n.point_name,n.community_id,n.community_name,n.community_title,n.type_id,n.type_name,
         n.address,n.contact,n.phone,n.inspection_date,n.inspector,n.result,n.notes,n.notice_number,
-        (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id),
-        (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
-        CASE WHEN n.result='normal' THEN 'none' WHEN n.result='incomplete' AND NOT EXISTS(SELECT 1 FROM issues ix WHERE ix.inspection_id=n.id) THEN 'incomplete'
-             WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
-             WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END,
-        (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status='closed'),
-        (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed' AND x.deadline<$today),
-        (SELECT MIN(x.deadline) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
+        (SELECT COUNT(*) FROM active_issues x WHERE x.inspection_id=n.id),
+        (SELECT COUNT(*) FROM active_issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
+        CASE WHEN n.result='normal' THEN 'none' WHEN n.result='issues' AND NOT EXISTS(SELECT 1 FROM active_issues ax WHERE ax.inspection_id=n.id) THEN 'voided' WHEN n.result='incomplete' AND NOT EXISTS(SELECT 1 FROM active_issues ix WHERE ix.inspection_id=n.id) THEN 'incomplete'
+             WHEN EXISTS(SELECT 1 FROM active_issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
+             WHEN EXISTS(SELECT 1 FROM active_issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END,
+        (SELECT COUNT(*) FROM active_issues x WHERE x.inspection_id=n.id AND x.status='closed'),
+        (SELECT COUNT(*) FROM active_issues x WHERE x.inspection_id=n.id AND x.status<>'closed' AND x.deadline<$today),
+        (SELECT MIN(x.deadline) FROM active_issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
         pt.temporary,pt.longitude,pt.latitude,
         n.inspection_type_id,n.inspection_type_name,n.use_id,n.use_name,n.created_at,n.incomplete_reason,n.checklist,
         (SELECT COUNT(*) FROM community_history h WHERE h.record_id=n.id AND h.kind='inspection')
         + (SELECT COUNT(*) FROM community_history h JOIN issues x ON x.id=h.record_id WHERE x.inspection_id=n.id AND h.kind='issue')
         + (SELECT COUNT(*) FROM issue_actions a JOIN issues x ON x.id=a.issue_id WHERE x.inspection_id=n.id)
-        FROM inspections n JOIN points pt ON pt.id=n.point_id
+         ,n.voided,n.void_reason
+        FROM active_inspections n JOIN points pt ON pt.id=n.point_id
         """;
     private const string InspectionWhere = """
         WHERE ($point='' OR n.point_id=$point) AND ($community='' OR n.community_id=$community)
@@ -30,24 +31,25 @@ public sealed partial class Store
         AND ($q='' OR n.point_name LIKE $like OR n.notice_number LIKE $like OR n.inspector LIKE $like)
         AND ($type='' OR n.type_id=$type) AND ($temporary=0 OR pt.temporary=1)
         AND (($overdue=0 AND $soon=0 AND $awaiting=0 AND $open=0) OR EXISTS(
-            SELECT 1 FROM issues x WHERE x.inspection_id=n.id
+            SELECT 1 FROM active_issues x WHERE x.inspection_id=n.id
             AND ($overdue=0 OR (x.status<>'closed' AND x.deadline<$today))
             AND ($soon=0 OR (x.status<>'closed' AND x.deadline>=$today AND x.deadline<=$through))
             AND ($awaiting=0 OR x.status='feedback') AND ($open=0 OR x.status<>'closed')))
-        AND ($rectify='' OR $rectify=CASE WHEN n.result='normal' THEN 'none' WHEN n.result='incomplete' AND NOT EXISTS(SELECT 1 FROM issues ix WHERE ix.inspection_id=n.id) THEN 'incomplete'
-             WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
-             WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END)
+        AND ($rectify='' OR $rectify=CASE WHEN n.result='normal' THEN 'none' WHEN n.result='issues' AND NOT EXISTS(SELECT 1 FROM active_issues ax WHERE ax.inspection_id=n.id) THEN 'voided' WHEN n.result='incomplete' AND NOT EXISTS(SELECT 1 FROM active_issues ix WHERE ix.inspection_id=n.id) THEN 'incomplete'
+             WHEN EXISTS(SELECT 1 FROM active_issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
+             WHEN EXISTS(SELECT 1 FROM active_issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END)
         """;
 
     private static InspectionDto ReadInspection(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetString(11), row.GetString(12), row.GetString(13), row.GetString(14), row.GetString(15), row.GetInt32(16), row.GetInt32(17), row.GetString(18), row.GetInt32(19), row.GetInt32(20), NullableString(row, 21),
         row.GetInt32(22) != 0, row.IsDBNull(23) ? null : row.GetDouble(23), row.IsDBNull(24) ? null : row.GetDouble(24),
-        row.GetString(25),row.GetString(26),row.GetString(27),row.GetString(28),row.GetString(29),row.GetString(30),JsonSerializer.Deserialize(row.GetString(31), AppJsonContext.Default.CheckItemArray), row.GetInt32(32));
+        row.GetString(25),row.GetString(26),row.GetString(27),row.GetString(28),row.GetString(29),row.GetString(30),JsonSerializer.Deserialize(row.GetString(31), AppJsonContext.Default.CheckItemArray), row.GetInt32(32), row.GetInt32(33) != 0, row.GetString(34));
 
-    private InspectionDto[] ReadInspectionList(string suffix, (string Name, object? Value)[] parameters, string? today = null)
+    private InspectionDto[] ReadInspectionList(string suffix, (string Name, object? Value)[] parameters, string? today = null, bool includeVoided = false)
     {
-        using var command = Command(InspectionSelect + " " + suffix, null, [.. parameters, ("$today", today ?? Today)]);
+        var select = includeVoided ? InspectionSelect.Replace("FROM active_inspections n JOIN", "FROM inspections n JOIN", StringComparison.Ordinal) : InspectionSelect;
+        using var command = Command(select + " " + suffix, null, [.. parameters, ("$today", today ?? Today)]);
         using var rows = command.ExecuteReader();
         var result = new List<InspectionDto>();
         while (rows.Read()) result.Add(ReadInspection(rows));
@@ -58,7 +60,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            var rows = ReadInspectionList("WHERE n.id=$id;", [("$id", id)]);
+            var rows = ReadInspectionList("WHERE n.id=$id;", [("$id", id)], includeVoided: true);
             return rows.Length == 0 ? throw new ApiException(404, "排查记录不存在。") : rows[0];
         }
     }
@@ -68,7 +70,7 @@ public sealed partial class Store
         lock (_gate)
         {
             var inspection = GetInspection(id);
-            var issues = ReadIssueList("WHERE x.inspection_id=$id ORDER BY x.rowid;", Today, [("$id", id)]);
+            var issues = ReadIssueList("WHERE x.inspection_id=$id ORDER BY x.rowid;", Today, [("$id", id)], true);
             return new(inspection, issues, ReadPhotos(inspectionId: id, includeIssuePhotos: true), issues.Select(issue => GetIssueDetail(issue.Id)).ToArray());
         }
     }
@@ -80,7 +82,7 @@ public sealed partial class Store
         CheckDateRange(from, to);
         var q = Text(query.Q, "搜索内容", 200);
         var rectify = query.Rectify is null or "all" ? "" : query.Rectify;
-        if (rectify is not ("" or "none" or "incomplete" or "pending" or "feedback" or "closed")) throw new ApiException(400, "整改状态筛选无效。");
+        if (rectify is not ("" or "none" or "incomplete" or "voided" or "pending" or "feedback" or "closed")) throw new ApiException(400, "整改状态筛选无效。");
         return [("$point", query.PointId ?? ""), ("$community", query.CommunityId ?? ""),
             ("$from", from ?? ""), ("$to", to ?? ""), ("$q", q), ("$like", "%" + q + "%"),
             ("$type", query.TypeId ?? ""), ("$temporary", query.Temporary ? 1 : 0), ("$overdue", query.Overdue ? 1 : 0),
@@ -91,7 +93,7 @@ public sealed partial class Store
     private int CountMatchingIssues((string Name, object? Value)[] parameters)
     {
         using var command = Command("""
-            SELECT COUNT(*) FROM inspections n JOIN points pt ON pt.id=n.point_id JOIN issues matched ON matched.inspection_id=n.id
+            SELECT COUNT(*) FROM active_inspections n JOIN points pt ON pt.id=n.point_id JOIN active_issues matched ON matched.inspection_id=n.id
             """ + " " + InspectionWhere + " " + """
              AND ($overdue=0 OR (matched.status<>'closed' AND matched.deadline<$today))
              AND ($soon=0 OR (matched.status<>'closed' AND matched.deadline>=$today AND matched.deadline<=$through))
@@ -107,7 +109,7 @@ public sealed partial class Store
             var parameters = InspectionParameters(query);
             var (page, pageSize) = Paging(query.Page, query.PageSize);
             int total;
-            using (var count = Command("SELECT COUNT(*) FROM inspections n JOIN points pt ON pt.id=n.point_id " + InspectionWhere, null, [.. parameters, ("$today", Today)]))
+            using (var count = Command("SELECT COUNT(*) FROM active_inspections n JOIN points pt ON pt.id=n.point_id " + InspectionWhere, null, [.. parameters, ("$today", Today)]))
                 total = Convert.ToInt32(count.ExecuteScalar());
             var items = ReadInspectionList(InspectionWhere + " ORDER BY n.inspection_date DESC,n.rowid DESC LIMIT $limit OFFSET $offset;",
                 [.. parameters, ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]);
@@ -169,6 +171,7 @@ public sealed partial class Store
             var inspectionId = NewId();
             using (var transaction = _db.BeginTransaction())
             {
+                ConsumeSharedDraft(request, inspectionId, transaction);
                 var point = ResolveRecordPoint(request.PointId, request.NewPoint, transaction);
                 var community = RequireCommunity(point.CommunityId, transaction);
                 string useName = "", useId = "";
@@ -224,6 +227,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var before = GetInspection(id);
+            RequireActive(before.Voided);
             CheckRevision(request.Revision, before.Revision);
             var date = DateText(request.Date, "排查日期");
             if (string.CompareOrdinal(date, Today) > 0) throw new ApiException(400, "排查日期不能晚于今天。");
@@ -241,30 +245,5 @@ public sealed partial class Store
         }
     }
 
-    public void DeleteInspection(string id)
-    {
-        lock (_gate)
-        {
-            PrepareWrite();
-            var inspection = GetInspection(id);
-            var removeTemporary = IsLastTemporaryRecord(inspection.PointId, inspectionId: id);
-            var photos = ReadPhotos(inspectionId: id, includeIssuePhotos: true).Select(photo => photo.Id).ToList();
-            if (removeTemporary) photos.AddRange(ReadPhotos(pointId: inspection.PointId).Select(photo => photo.Id));
-            ExecuteWithPhotoDeletion(photos.ToArray(), transaction =>
-            {
-                using var delete = Command("""
-                    DELETE FROM issue_actions WHERE issue_id IN (SELECT id FROM issues WHERE inspection_id=$id);
-                    DELETE FROM issues WHERE inspection_id=$id;
-                    DELETE FROM inspections WHERE id=$id;
-                    """, transaction, ("$id", id));
-                delete.ExecuteNonQuery();
-                if (removeTemporary)
-                {
-                    using var point = Command("DELETE FROM points WHERE id=$id;", transaction, ("$id", inspection.PointId));
-                    point.ExecuteNonQuery();
-                }
-            });
-        }
-    }
-
+    public void DeleteInspection(string id) => throw new ApiException(409, "检查记录请使用作废功能，照片和历史记录将保留。");
 }

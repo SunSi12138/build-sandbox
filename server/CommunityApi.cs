@@ -7,6 +7,8 @@ public static class CommunityApi
         ImportApi.Map(app, store);
         store.MapManagementApi(app);
         store.MapHandoffApi(app);
+        store.MapArchiveApi(app);
+        store.MapCacheImportApi(app);
         RequestDelegate map = context => Api.Write(context, store.GetMapState(), CommunityJsonContext.Default.MapStateDto);
         app.MapGet("/api/map", map);
         RequestDelegate shape = async context => await Api.Write(context, store.SaveShape((string)context.Request.RouteValues["kind"]!, Api.Id(context), await Api.Read(context, CommunityJsonContext.Default.ShapeWrite)), CommunityJsonContext.Default.MapFeatureDto);
@@ -30,6 +32,8 @@ public static class CommunityApi
         RequestDelegate edit = async context => await Api.Write(context, store.SaveCommunityRecord((string)context.Request.RouteValues["kind"]!, Api.Id(context), await Api.Read(context, CommunityJsonContext.Default.CommunityWrite)), CommunityJsonContext.Default.CommunityRecord);
         RequestDelegate history = context => Api.Write(context, store.CommunityHistory(Api.Id(context)), CommunityJsonContext.Default.HistoryDtoArray);
         app.MapGet("/api/records/{kind}", records);
+        RequestDelegate record = context => Api.Write(context, store.ListCommunityRecords((string)context.Request.RouteValues["kind"]!, includeArchived: true).FirstOrDefault(x => x.Id == Api.Id(context)) ?? throw new ApiException(404, "资料不存在。"), CommunityJsonContext.Default.CommunityRecord);
+        app.MapGet("/api/records/{kind}/{id}", record);
         app.MapPost("/api/records/{kind}", add);
         app.MapPut("/api/records/{kind}/{id}", edit);
         app.MapGet("/api/history/{id}", history);

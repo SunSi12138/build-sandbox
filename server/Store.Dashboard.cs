@@ -20,7 +20,7 @@ public sealed partial class Store
                 while (rows.Read()) points.Add(ReadPoint(rows));
             var missed = points.Where(point => ReminderRules.NeedsInspection(point.Frequency, point.Disabled,
                 point.LastInspectionDate is null ? null : DateOnly.ParseExact(point.LastInspectionDate, "yyyy-MM-dd", CultureInfo.InvariantCulture), date, point.Temporary)).ToArray();
-            var active = ReadInspectionList("WHERE EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed') ORDER BY n.inspection_date DESC,n.rowid DESC;", [], today);
+            var active = ReadInspectionList("WHERE EXISTS(SELECT 1 FROM active_issues x WHERE x.inspection_id=n.id AND x.status<>'closed') ORDER BY n.inspection_date DESC,n.rowid DESC;", [], today);
             var todo = active.OrderBy(item => item.OverdueCount > 0 ? 0 : soon.Any(issue => issue.InspectionId == item.Id) ? 1 : item.RectifyStatus == "feedback" ? 2 : 3)
                 .ThenBy(item => item.NearestDeadline, StringComparer.Ordinal).Take(5).ToArray();
             var recent = ReadInspectionList("ORDER BY n.inspection_date DESC,n.rowid DESC LIMIT 5;", [], today);

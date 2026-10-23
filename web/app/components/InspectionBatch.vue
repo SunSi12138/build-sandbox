@@ -33,7 +33,7 @@ const textLabel = computed(() => props.mode === 'feedback' ? '整改情况' : '�
 watch(open, value => {
   if (!value) return
   error.value = ''; state.date = bootstrap.value?.today ?? todayLocal()
-  state.items = props.detail.issues.map((issue, index) => ({ issue, index })).filter(({ issue }) => issue.status === (props.mode === 'feedback' ? 'pending' : 'feedback')).map(({ issue, index }) => ({ revision: issue.revision, issueId: issue.id, number: index + 1, description: issue.description, selected: !props.selectedIssue || props.selectedIssue === issue.id, text: '', photos: [], busy: false, failed: false }))
+  state.items = props.detail.issues.map((issue, index) => ({ issue, index })).filter(({ issue }) => !issue.voided && issue.status === (props.mode === 'feedback' ? 'pending' : 'feedback')).map(({ issue, index }) => ({ revision: issue.revision, issueId: issue.id, number: index + 1, description: issue.description, selected: !props.selectedIssue || props.selectedIssue === issue.id, text: '', photos: [], busy: false, failed: false }))
   initialState = fingerprint()
 })
 function validate(): FormError[] {

@@ -6,11 +6,19 @@ public sealed record WordDownload(string FilePath, string FileName);
 
 public sealed partial class Store
 {
+    private InspectionDetailDto ActiveExportDetail(string id)
+    {
+        var detail = GetInspectionDetail(id);
+        RequireActive(detail.Inspection.Voided);
+        var issues = detail.Issues.Where(x => !x.Voided).ToArray();
+        var ids = issues.Select(x => x.Id).ToHashSet();
+        return detail with { Issues = issues, IssueDetails = detail.IssueDetails?.Where(x => ids.Contains(x.Issue.Id)).ToArray(), Photos = detail.Photos.Where(x => x.IssueId is null || ids.Contains(x.IssueId)).ToArray() };
+    }
     public WordDownload ExportInspectionWord(string id, bool notice)
     {
         lock (_gate)
         {
-            var detail = GetInspectionDetail(id);
+            var detail = ActiveExportDetail(id);
             var settings = GetSettings();
             if (notice)
             {
@@ -60,7 +68,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            var detail = GetInspectionDetail(id);
+            var detail = ActiveExportDetail(id);
             var open = detail.Issues.Count(issue => issue.Status != "closed");
             if (open > 0) throw new ApiException(400, $"尚有 {open} 项问题未闭环");
             if (detail.Issues.Length == 0) throw new ApiException(400, "本次排查无需整改");

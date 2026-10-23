@@ -76,7 +76,7 @@ watch(
 const allClosed = computed(
   () =>
     !!detail.value?.issues.length &&
-    detail.value.issues.every((issue) => issue.status === 'closed'),
+    detail.value.issues.filter(issue => !issue.voided).length > 0 && detail.value.issues.filter(issue => !issue.voided).every((issue) => issue.status === 'closed'),
 )
 const sitePhotos = computed(
   () =>
@@ -94,7 +94,7 @@ const exportItems = computed(() => [
       void exportRecord('record')
     },
   },
-  ...(detail.value?.issues.length
+  ...(detail.value?.issues.some(issue => !issue.voided)
     ? [
         {
           label: '导出整改通知单',
@@ -122,7 +122,7 @@ async function exportRecord(kind: string) {
     toast.add({ title: errorMessage(value), color: 'error', duration: 0 })
   }
 }
-const moreItems = computed(() => [
+const moreItems = computed(() => detail.value?.inspection.voided ? [] : [
   { label: '编辑检查信息', onSelect: openEdit },
   ...(detail.value?.inspection.pointTemporary
     ? [
@@ -134,14 +134,6 @@ const moreItems = computed(() => [
         },
       ]
     : []),
-  {
-    label: '删除检查',
-    color: 'error' as const,
-    onSelect: () => {
-      deleteError.value = ''
-      deleteOpen.value = true
-    },
-  },
 ])
 useHead({
   title: computed(() => `${detail.value?.inspection.pointName || '检查详情'} · 社区管理`),
@@ -220,24 +212,6 @@ async function saveEdit() {
     editError.value = errorMessage(value)
   } finally {
     editing.value = false
-  }
-}
-async function remove() {
-  deleting.value = true
-  deleteError.value = ''
-  try {
-    await $fetch(`/api/inspections/${id.value}`, {
-      method: 'DELETE',
-      query: { confirm: true },
-      retry: 0,
-    })
-    deleteOpen.value = false
-    toast.add({ title: '已删除', duration: 2000 })
-    await navigateTo('/inspections')
-  } catch (value) {
-    deleteError.value = errorMessage(value)
-  } finally {
-    deleting.value = false
   }
 }
 function openIssueEdit(issue: IssueDto) {
@@ -322,6 +296,7 @@ watch(() => route.query.issue, revealIssue)
 </script>
 <template>
   <div class="page-stack">
+    <div v-if="detail" class="flex gap-2 items-center flex-wrap"><ArchiveAction kind="inspection" :record-id="id" :revision="detail.inspection.revision" :voided="detail.inspection.voided" @saved="load" /><UAlert v-if="detail.inspection.voided" title="此检查已作废" :description="detail.inspection.voidReason" color="warning" /></div>
     <PageHeader :title="detail?.inspection.pointName || '检查详情'" :back="back"
       ><template #badge
         ><StatusBadge v-if="detail?.inspection.pointTemporary" tone="outline"
@@ -471,14 +446,14 @@ watch(() => route.query.issue, revealIssue)
                 label="记录反馈"
                 color="neutral"
                 variant="outline"
-                :disabled="!detail.issues.some((issue) => issue.status === 'pending')"
+                :disabled="!detail.issues.some((issue) => !issue.voided && issue.status === 'pending')"
                 data-testid="batch-feedback"
                 @click="openBatch('feedback')"
               /><UButton
                 label="已完成"
                 color="neutral"
                 variant="outline"
-                :disabled="!detail.issues.some((issue) => issue.status === 'feedback')"
+                :disabled="!detail.issues.some((issue) => !issue.voided && issue.status === 'feedback')"
                 data-testid="batch-review"
                 @click="openBatch('review')"
               />
@@ -529,6 +504,8 @@ watch(() => route.query.issue, revealIssue)
                 </div>
               </dl>
               <IssuePhotoGroups :photos="issueDetails.get(issue.id)?.photos ?? []" />
+              <UAlert v-if="issue.voided" title="已作废" :description="issue.voidReason" color="warning" />
+              <ArchiveAction v-if="!detail.inspection.voided" kind="issue" :record-id="issue.id" :revision="issue.revision" :voided="issue.voided" @saved="load" />
               <IssueProgress :issue="issue" @saved="load" />
               <UCollapsible v-model:open="historyOpen[issue.id]"
                 ><UButton
@@ -561,25 +538,25 @@ watch(() => route.query.issue, revealIssue)
               >
               <div class="flex flex-wrap gap-2">
                 <UButton
-                  v-if="issue.status === 'pending'"
+                  v-if="!issue.voided && issue.status === 'pending'"
                   label="记录反馈"
                   color="neutral"
                   variant="outline"
                   @click="openBatch('feedback', issue.id)"
                 /><UButton
-                  v-if="issue.status === 'feedback'"
+                  v-if="!issue.voided && issue.status === 'feedback'"
                   label="已完成"
                   color="neutral"
                   variant="outline"
                   @click="openBatch('review', issue.id)"
                 /><UButton
-                  v-if="issue.status !== 'pending'"
+                  v-if="!issue.voided && issue.status !== 'pending'"
                   label="退回待整改"
                   color="neutral"
                   variant="outline"
                   @click="openReturn(issue)"
                 /><UButton
-                  v-if="issue.status === 'pending'"
+                  v-if="!issue.voided && issue.status === 'pending'"
                   label="编辑"
                   color="neutral"
                   variant="link"
@@ -761,33 +738,6 @@ watch(() => route.query.issue, revealIssue)
           :loading="returning"
           @click="returnIssue" /></template
     ></UModal>
-    <UModal
-      v-model:open="deleteOpen"
-      title="删除检查？"
-      :description="
-        detail?.inspection.pointTemporary
-          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时场所最后一条检查或整治，该临时场所及其场所照片也将删除。'
-          : '删除后，问题、办理记录和照片无法恢复'
-      "
-      :dismissible="!deleting"
-      :close="!deleting"
-      ><template #body
-        ><UAlert
-          v-if="deleteError"
-          :description="deleteError"
-          color="error"
-          variant="subtle" /></template
-      ><template #footer
-        ><UButton
-          label="取消"
-          color="neutral"
-          variant="outline"
-          :disabled="deleting"
-          @click="deleteOpen = false" /><UButton
-          label="删除"
-          color="error"
-          :loading="deleting"
-          @click="remove" /></template
-    ></UModal>
+
   </div>
 </template>

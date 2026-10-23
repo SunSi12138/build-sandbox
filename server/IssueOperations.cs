@@ -14,6 +14,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var issue=GetIssue(id);
+            RequireActive(issue.Voided);
             CheckRevision(request.Revision, issue.Revision);
             if(issue.Status=="closed")throw new ApiException(409,"该问题已经完成，如需继续办理请先退回。");
             if(request.Kind is not("progress" or "transfer" or "extend" or "assign"))throw new ApiException(400,"请选择办理方式。");

@@ -85,7 +85,7 @@ public sealed partial class Store
                     {
                         var point = GetPointInternal(id);
                         if (query.CommunityId.Length > 0 && point.CommunityId != query.CommunityId) continue;
-                        using var checkedQuery = Command("SELECT MAX(inspection_date) FROM inspections WHERE point_id=$point AND result<>'incomplete' AND inspection_date>=$from AND inspection_date<=$to AND ($type='' OR inspection_type_id=$type);", null, ("$point", id), ("$from", start), ("$to", end), ("$type", type));
+                        using var checkedQuery = Command("SELECT MAX(inspection_date) FROM active_inspections WHERE point_id=$point AND result<>'incomplete' AND inspection_date>=$from AND inspection_date<=$to AND ($type='' OR inspection_type_id=$type);", null, ("$point", id), ("$from", start), ("$to", end), ("$type", type));
                         var date = checkedQuery.ExecuteScalar() as string ?? "";
                         var status = plan.Archived ? "archived" : date.Length > 0 ? "completed" : string.CompareOrdinal(Today, end) > 0 ? "overdue" : "pending";
                         if (query.Status.Length > 0 && query.Status != status) continue;

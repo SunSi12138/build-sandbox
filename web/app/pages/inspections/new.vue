@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { GeoShape, InspectionScopeValue } from '~/types/community'
+import type { CommunityRecord, GeoShape, InspectionScopeValue } from '~/types/community'
 import type { InspectionCreateRequest, InspectionDetailDto, InspectionResult, PageDto, PhotoUploadDto, PointDetailDto, PointDto } from '~/types/api'
 import { errorMessage, queryText, todayLocal, parseCoordinates } from '~/utils/format'
 
@@ -13,6 +13,8 @@ interface IssueDraft {
 }
 interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
 interface InspectionDraft {
+  sharedId: string
+  sharedRevision: number
   tempShape: GeoShape | null
   scope: InspectionScopeValue
   submissionKey: string
@@ -46,12 +48,13 @@ let leaveDecision: ((leave: boolean) => void) | undefined
 
 function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
 function emptyDraft(pointId = ''): InspectionDraft {
-  return { tempShape: null, scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '' }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
+  return { sharedId: '', sharedRevision: 0, tempShape: null, scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '' }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
 }
 const draft = reactive<InspectionDraft>(emptyDraft())
 const initializing = ref(true)
 const loadError = ref('')
 const saving = ref(false)
+const pendingShared = ref<CommunityRecord<InspectionDraft> | null>(null), sharedConflictOpen = ref(false)
 const saveError = ref('')
 const restored = ref(false)
 const storageError = ref('')
@@ -125,6 +128,7 @@ function loadLocalDraft() {
     const text = (key: string) => typeof value[key] === 'string' ? value[key] as string : ''
     const issues = Array.isArray(value.issues) ? value.issues : []
     Object.assign(draft, {
+      sharedId: text('sharedId'), sharedRevision: typeof value.sharedRevision === 'number' ? value.sharedRevision : 0,
       tempShape: value.tempShape && typeof value.tempShape === 'object' && 'coordinates' in value.tempShape ? value.tempShape : null,
       pointMode: value.pointMode === 'temporary' ? 'temporary' : 'regular',
       newPoint: Object.fromEntries(Object.keys(emptyNewPoint()).map(key => [key, value.newPoint && typeof value.newPoint === 'object' && typeof (value.newPoint as Record<string, unknown>)[key] === 'string' ? (value.newPoint as Record<string, unknown>)[key] : ''])),
@@ -219,6 +223,14 @@ async function initialize() {
   if (!draftLoaded) loadLocalDraft()
   try {
     const data = await load()
+    const shared = queryText(route.query.draftId)
+    if (!draftLoaded && shared) {
+      const record = await $fetch<CommunityRecord<InspectionDraft>>(`/api/records/draft/${shared}`)
+      if (record.archived) throw new Error('这份草稿已提交或移除，请返回草稿箱。')
+      if (restored.value && (draft.submissionKey !== record.data.submissionKey || draft.sharedRevision !== record.revision)) { pendingShared.value = record; sharedConflictOpen.value = true; return }
+      Object.assign(draft, emptyDraft(), structuredClone(record.data), { sharedId: record.id, sharedRevision: record.revision })
+      nextIssueKey = Math.max(0, ...draft.issues.map(x => x.key)) + 1; restored.value = true
+    }
     if (!restored.value && queryText(route.query.typeId)) draft.scope.inspectionTypeId = queryText(route.query.typeId)
     if (queryText(route.query.useId)) draft.scope.useId = queryText(route.query.useId)
     if (!draftLoaded && !restored.value) { draft.date = data.today; draft.inspector = queryText(route.query.inspector) || data.settings.defaultInspector }
@@ -232,6 +244,29 @@ async function initialize() {
     persistDraft()
   } catch (error) { loadError.value = errorMessage(error) }
   finally { initializing.value = false }
+}
+
+async function acceptShared() {
+  if (!pendingShared.value) return
+  try { const old = localStorage.getItem(DRAFT_KEY); if (old) localStorage.setItem(DRAFT_KEY + '.previous', old) }
+  catch { saveError.value = '无法保留本机草稿，请先保存当前草稿再打开其他草稿'; return }
+  const record = pendingShared.value
+  draftLoaded = false
+  Object.assign(draft, emptyDraft(), structuredClone(record.data), { sharedId: record.id, sharedRevision: record.revision })
+  nextIssueKey = Math.max(0, ...draft.issues.map(x => x.key)) + 1
+  draftLoaded = true; sharedConflictOpen.value = false; pendingShared.value = null; persistDraft()
+  await Promise.all([fetchPointOptions(), draft.pointMode === 'regular' ? fetchSelectedPoint(draft.pointId) : Promise.resolve()])
+}
+async function keepLocal() { sharedConflictOpen.value = false; pendingShared.value = null; draftLoaded = true; await router.replace({ query: {} }); await initialize() }
+async function saveShared() {
+  if (saving.value || uploadsBusy.value || photosFailed.value) return
+  saving.value = true; saveError.value = ''
+  try {
+    const name = `${draft.pointMode === 'temporary' ? draft.newPoint.name : selectedPoint.value?.name || '未选场所'} · ${draft.date || '检查草稿'}`
+    const record = await $fetch<CommunityRecord<InspectionDraft>>(draft.sharedId ? `/api/records/draft/${draft.sharedId}` : '/api/records/draft', { method: draft.sharedId ? 'PUT' : 'POST', body: { name, parentId: '', revision: draft.sharedRevision, data: draft }, retry: 0 })
+    draft.sharedId = record.id; draft.sharedRevision = record.revision; persistDraft()
+    toast.add({ title: '已存入草稿箱', color: 'success' })
+  } catch (e) { saveError.value = errorMessage(e) } finally { saving.value = false }
 }
 
 function dateIsValid(value: string) {
@@ -339,7 +374,7 @@ async function saveInspection() {
   saving.value = true
   persistDraft()
   const body: InspectionCreateRequest = {
-    ...draft.scope, submissionKey: draft.submissionKey,
+    ...draft.scope, submissionKey: draft.submissionKey, draftId: draft.sharedId || undefined, draftRevision: draft.sharedRevision,
     pointId: draft.pointMode === 'regular' ? draft.pointId : null,
     newPoint: draft.pointMode === 'temporary' ? { shape: draft.tempShape, name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
     notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: draft.photos.map(photo => photo.id),
@@ -399,7 +434,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-stack">
-    <PageHeader title="新增检查" back="/inspections"><template #actions><UButton type="button" color="neutral" variant="link" :disabled="saving || uploadsBusy || (!hasDraft && !unreadableDraft)" @click="destructiveAction = 'clear'; destructiveOpen = true">清空</UButton></template></PageHeader>
+    <UModal v-model:open="sharedConflictOpen" title="本机有另一份暂存内容" :dismissible="false" :close="false"><template #body><p>打开所选草稿时，本机暂存内容会留存，可从草稿箱恢复。</p><UAlert v-if="saveError" :description="saveError" color="error" /></template><template #footer><UButton label="继续本机内容" variant="outline" @click="keepLocal" /><UButton label="打开所选草稿" @click="acceptShared" /></template></UModal>
+    <PageHeader title="登记检查" back="/inspections"><template #actions><UButton label="存草稿" variant="outline" :disabled="formDisabled || uploadsBusy || photosFailed" @click="saveShared" /><UButton to="/drafts" label="草稿箱" variant="ghost" :disabled="saving || uploadsBusy" /><UButton type="button" color="neutral" variant="link" :disabled="saving || uploadsBusy || (!hasDraft && !unreadableDraft)" @click="destructiveAction = 'clear'; destructiveOpen = true">清空</UButton></template></PageHeader>
     <PageState :loading="initializing" :error="loadError" @retry="initialize">
       <UAlert v-if="storageError" :description="storageError" color="warning" variant="subtle" />
       <UForm id="inspection-form" :state="draft" :validate="validate" class="space-y-3" @submit="saveInspection" @error="validationFailed">
@@ -421,9 +457,9 @@ onBeforeUnmount(() => {
           <section class="form-section"><h2>检查信息</h2><div class="field-grid"><UFormField name="date" label="检查日期" required><UInput v-model="draft.date" type="date" :max="today" class="w-full" :disabled="formDisabled" data-testid="inspection-date" /></UFormField><UFormField name="inspector" label="检查人" required><NameTagsInput v-model="draft.inspector" :maxlength="100" class="w-full" :disabled="formDisabled" data-testid="inspection-inspector" /></UFormField><UFormField name="noticeNumber" label="通知单编号" class="field-full"><UInput v-model="draft.noticeNumber" :maxlength="100" class="w-full" :disabled="formDisabled" /></UFormField></div></section>
           <section class="form-section"><h2>检查结果</h2><UFormField name="result"><div class="chip-row"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'normal'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-normal" @click="chooseResult('normal')">未发现问题</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'issues'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-issues" @click="chooseResult('issues')">发现问题</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'incomplete'" :disabled="formDisabled || uploadsBusy" @click="chooseResult('incomplete')">未完成检查</UButton></div></UFormField>
             <UFormField v-if="draft.result === 'incomplete'" label="未完成原因" required class="mt-3"><UInput v-model="draft.scope.incompleteReason" placeholder="例如：关门、无法进入" class="w-full" /></UFormField>
-            <template v-if="draft.result !== 'normal'"><div v-for="(issue, index) in draft.issues" :key="issue.key" class="problem-form"><div class="mb-2 flex items-center justify-between"><h3 class="text-sm font-semibold">问题 {{ index + 1 }}</h3><UButton type="button" label="移除" color="error" variant="link" :disabled="formDisabled || uploadsBusy" @click="issueToRemove = issue.key; destructiveAction = 'issue'; destructiveOpen = true" /></div><div class="field-grid"><UFormField :name="`issues.${index}.description`" label="问题描述" required class="field-full"><UTextarea v-model="issue.description" data-testid="inspection-issue-description" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.requirement`" label="整改要求" class="field-full"><UTextarea v-model="issue.requirement" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.deadline`" label="整改期限" class="field-full"><template #label><span class="deadline-label">整改期限<span class="text-error">*</span><span class="text-xs font-normal text-muted">默认检查日后7天</span></span></template><UInput v-model="issue.deadline" type="date" data-testid="inspection-issue-deadline" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.responsibleUnit`" label="责任单位"><NameTagsInput v-model="issue.responsibleUnit" :maxlength="200" class="w-full" :disabled="formDisabled" /></UFormField><UFormField label="问题照片" class="field-full"><PhotoUploader v-model="issue.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="issuePhotosBusy[issue.key] = $event" @failed="issuePhotosFailed[issue.key] = $event" /></UFormField></div></div><UButton type="button" label="添加问题" icon="i-lucide-plus" variant="outline" class="mt-3" :disabled="formDisabled || draft.issues.length >= 50" @click="addIssue" /></template>
+            <template v-if="draft.result !== 'normal'"><div v-for="(issue, index) in draft.issues" :key="issue.key" class="problem-form"><div class="mb-2 flex items-center justify-between"><h3 class="text-sm font-semibold">问题 {{ index + 1 }}</h3><UButton type="button" label="移除" color="error" variant="link" :disabled="formDisabled || uploadsBusy" @click="issueToRemove = issue.key; destructiveAction = 'issue'; destructiveOpen = true" /></div><div class="field-grid"><UFormField :name="`issues.${index}.description`" label="问题描述" required class="field-full"><UTextarea v-model="issue.description" data-testid="inspection-issue-description" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.requirement`" label="整改要求" class="field-full"><UTextarea v-model="issue.requirement" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.deadline`" label="整改期限" class="field-full"><template #label><span class="deadline-label">整改期限<span class="text-error">*</span><span class="text-xs font-normal text-muted">默认检查日后7天</span></span></template><UInput v-model="issue.deadline" type="date" data-testid="inspection-issue-deadline" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.responsibleUnit`" label="责任单位"><NameTagsInput v-model="issue.responsibleUnit" :maxlength="200" class="w-full" :disabled="formDisabled" /></UFormField><UFormField label="问题照片" class="field-full"><PhotoUploader deferred-removal v-model="issue.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="issuePhotosBusy[issue.key] = $event" @failed="issuePhotosFailed[issue.key] = $event" /></UFormField></div></div><UButton type="button" label="添加问题" icon="i-lucide-plus" variant="outline" class="mt-3" :disabled="formDisabled || draft.issues.length >= 50" @click="addIssue" /></template>
           </section>
-          <section class="form-section"><h2>现场照片</h2><PhotoUploader v-model="draft.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="overallPhotosBusy = $event" @failed="overallPhotosFailed = $event" /></section>
+          <section class="form-section"><h2>现场照片</h2><PhotoUploader deferred-removal v-model="draft.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="overallPhotosBusy = $event" @failed="overallPhotosFailed = $event" /></section>
           <section class="form-section"><UFormField name="notes" label="备注"><UTextarea v-model="draft.notes" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField></section>
         </div>
         <UAlert v-if="saveError" :description="saveError" color="error" variant="subtle" />

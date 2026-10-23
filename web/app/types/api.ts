@@ -1,7 +1,7 @@
 export type IssueStatus = 'pending' | 'feedback' | 'closed'
 export type Frequency = 'weekly' | 'monthly' | 'quarterly' | 'irregular'
 export type PhotoPhase = 'site' | 'after' | 'review' | 'point' | 'before' | 'process'
-export type RectifyStatus = 'none' | 'pending' | 'feedback' | 'closed'
+export type RectifyStatus = 'none' | 'pending' | 'feedback' | 'closed' | 'incomplete' | 'voided'
 export type InspectionResult = 'normal' | 'issues' | 'incomplete'
 
 export interface ErrorDto { message: string }
@@ -30,6 +30,7 @@ export interface PointDto {
 }
 export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[]; campaigns?: CampaignDto[]; mergedInto?: string | null }
 export interface InspectionCreateRequest {
+  draftId?: string; draftRevision?: number
   inspectionTypeId?: string; useId?: string; checklist?: { name: string; result: string; notes: string }[]; incompleteReason?: string; submissionKey?: string; shape?: import('./community').GeoShape | null
   pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; inspector: string; result: InspectionResult; notes?: string | null
   noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]
@@ -37,6 +38,7 @@ export interface InspectionCreateRequest {
 export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[] }
 export interface IssueUpdateRequest { revision?: number; description: string; requirement: string; deadline: string; responsibleUnit: string }
 export interface InspectionDto {
+  voided: boolean; voidReason: string
   revision: number
   inspectionTypeId?: string; inspectionTypeName?: string; useId?: string; useName?: string; createdAt?: string; incompleteReason?: string; checklist?: { name: string; result: string; notes: string }[]
   id: string; pointId: string; pointName: string; communityId: string; communityName: string; communityTitle: string
@@ -47,6 +49,7 @@ export interface InspectionDto {
 }
 export interface InspectionDetailDto { inspection: InspectionDto; issues: IssueDto[]; photos: PhotoDto[]; issueDetails?: IssueDetailDto[] }
 export interface IssueDto {
+  voided: boolean; voidReason: string
   follower?: string
   revision: number
   id: string; inspectionId: string; pointId: string; pointName: string; communityId: string; communityName: string

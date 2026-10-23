@@ -7,8 +7,8 @@ public sealed partial class Store
 {
     private const string PointSelect = """
         SELECT p.id,p.name,p.community_id,c.name,p.type_id,t.name,p.address,p.contact,p.phone,p.frequency,p.notes,p.disabled,
-        (SELECT MAX(n.inspection_date) FROM inspections n WHERE n.point_id=p.id AND n.result<>'incomplete' AND n.inspection_date<=$today),
-        (SELECT COUNT(*) FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id AND x.status<>'closed'),
+        (SELECT MAX(n.inspection_date) FROM active_inspections n WHERE n.point_id=p.id AND n.result<>'incomplete' AND n.inspection_date<=$today),
+        (SELECT COUNT(*) FROM active_issues x JOIN active_inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id AND x.status<>'closed'),
         p.longitude,p.latitude,p.temporary,
         (SELECT ph.id FROM photos ph WHERE ph.point_id=p.id ORDER BY ph.uploaded_at,ph.rowid LIMIT 1),
         (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id),
@@ -20,7 +20,7 @@ public sealed partial class Store
         AND ($community='' OR p.community_id=$community) AND ($type='' OR p.type_id=$type)
         AND ($disabled='all' OR p.disabled=$inactive) AND ($temporary='all' OR p.temporary=$isTemporary)
         AND ($missed=0 OR (p.disabled=0 AND p.temporary=0 AND p.frequency<>'irregular' AND NOT EXISTS (
-            SELECT 1 FROM inspections n WHERE n.point_id=p.id AND n.result<>'incomplete' AND n.inspection_date<=$today
+            SELECT 1 FROM active_inspections n WHERE n.point_id=p.id AND n.result<>'incomplete' AND n.inspection_date<=$today
             AND n.inspection_date >= CASE p.frequency WHEN 'weekly' THEN $week WHEN 'monthly' THEN $month WHEN 'quarterly' THEN $quarter END)))
         """;
 

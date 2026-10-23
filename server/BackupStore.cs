@@ -240,7 +240,7 @@ public sealed partial class Store
         }
         var application = Number(connection, "PRAGMA application_id;");
         var version = Number(connection, "PRAGMA user_version;");
-        if (application != DatabaseApplicationId || version is not (4 or SchemaVersion))
+        if (application != DatabaseApplicationId || version is not (4 or 5 or SchemaVersion))
             throw new InvalidDataException("这不是本工具支持的备份，或数据库来自更新版本。");
         using (var integrity = connection.CreateCommand())
         {
@@ -253,7 +253,7 @@ public sealed partial class Store
             using var reader = foreignKeys.ExecuteReader();
             if (reader.Read()) throw new InvalidDataException("数据库记录之间的关联不完整。");
         }
-        if (Number(connection, "SELECT count(*) FROM sqlite_master WHERE type IN ('trigger','view');") != 0)
+        if (Number(connection, "SELECT count(*) FROM sqlite_master WHERE type='trigger' OR (type='view' AND name NOT IN ('active_inspections','active_issues'));") != 0)
             throw new InvalidDataException("备份包含非预期的数据库对象。");
         if (Number(connection, "SELECT count(*) FROM settings WHERE id=1 AND jpeg_quality BETWEEN 1 AND 100;") != 1)
             throw new InvalidDataException("备份的设置记录不完整。");
@@ -317,12 +317,16 @@ public sealed partial class Store
             checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM campaigns;")));
     }
 
-    private static IEnumerable<string> SchemaQueriesFor(long version) => version == 4
-        ? RequiredSchemaQueries.Where(sql => !sql.Contains("FROM record_photos", StringComparison.Ordinal) && !sql.Contains("FROM imported_rows", StringComparison.Ordinal))
-        : RequiredSchemaQueries;
+    private static IEnumerable<string> SchemaQueriesFor(long version) => RequiredSchemaQueries.Where(sql =>
+        (version != 4 || (!sql.Contains("FROM record_photos", StringComparison.Ordinal) && !sql.Contains("FROM imported_rows", StringComparison.Ordinal))) &&
+        (version >= 6 || (!sql.Contains("voided", StringComparison.Ordinal) && !sql.Contains("active_", StringComparison.Ordinal))));
 
     private static readonly string[] RequiredSchemaQueries =
     [
+        "SELECT voided,void_reason FROM inspections LIMIT 0;",
+        "SELECT voided,void_reason FROM issues LIMIT 0;",
+        "SELECT id FROM active_inspections LIMIT 0;",
+        "SELECT id FROM active_issues LIMIT 0;",
         "SELECT id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality FROM settings LIMIT 0;",
         "SELECT id,name,title FROM communities LIMIT 0;",
         "SELECT id,name FROM point_types LIMIT 0;",

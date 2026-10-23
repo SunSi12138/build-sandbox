@@ -41,7 +41,7 @@ public sealed partial class Store
                 var remaining = new List<string>();
                 foreach (var id in plan.Data.GetProperty("pointIds").EnumerateArray().Select(x => x.GetString()!).Distinct())
                 {
-                    using var query = Command("SELECT COUNT(*) FROM inspections WHERE point_id=$point AND inspection_date>=$from AND inspection_date<=$to AND result<>'incomplete' AND inspection_type_id=$type;", null,
+                    using var query = Command("SELECT COUNT(*) FROM active_inspections WHERE point_id=$point AND inspection_date>=$from AND inspection_date<=$to AND result<>'incomplete' AND inspection_type_id=$type;", null,
                         ("$point", id), ("$from", JsonText(plan.Data, "from")), ("$to", JsonText(plan.Data, "to")), ("$type", JsonText(plan.Data, "typeId")));
                     if (Convert.ToInt32(query.ExecuteScalar()) == 0) remaining.Add(id);
                 }

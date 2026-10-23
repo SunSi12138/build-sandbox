@@ -11,12 +11,21 @@ public sealed partial class Store
     private void InitializeCommunityTables()
     {
         using var transaction = _db.BeginTransaction();
+        foreach (var table in new[] { "inspections", "issues" })
+        {
+            var columns = new HashSet<string>();
+            using (var info = Command($"PRAGMA table_info({table});", transaction))
+            using (var rows = info.ExecuteReader()) while (rows.Read()) columns.Add(rows.GetString(1));
+            if (!columns.Contains("voided")) { using var add = Command($"ALTER TABLE {table} ADD COLUMN voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1));", transaction); add.ExecuteNonQuery(); }
+            if (!columns.Contains("void_reason")) { using var add = Command($"ALTER TABLE {table} ADD COLUMN void_reason TEXT NOT NULL DEFAULT '';", transaction); add.ExecuteNonQuery(); }
+        }
         using (var command = Command("""
             CREATE TABLE IF NOT EXISTS community_records (
               id TEXT PRIMARY KEY, kind TEXT NOT NULL, parent_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
               body TEXT NOT NULL CHECK(json_valid(body)), revision INTEGER NOT NULL DEFAULT 1,
               updated_at TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN(0,1)));
             CREATE INDEX IF NOT EXISTS ix_community_records_parent ON community_records(kind,parent_id,archived);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_draft_submission ON community_records(json_extract(body,'$.submissionKey')) WHERE kind='draft';
             CREATE TABLE IF NOT EXISTS record_photos (
               record_id TEXT NOT NULL REFERENCES community_records(id),
               photo_id TEXT NOT NULL UNIQUE REFERENCES photos(id), active INTEGER NOT NULL DEFAULT 1,
@@ -37,7 +46,11 @@ public sealed partial class Store
             INSERT OR IGNORE INTO map_layers VALUES('jlyh','吉林一号','jlyh','tms',1,1,1,12,18,0);
             INSERT OR IGNORE INTO map_layers VALUES('tdt-vec','天地图街道','tdt-vec','xyz',0,0,1,0,18,1);
             INSERT OR IGNORE INTO map_layers VALUES('tdt-cva','地名标注','tdt-cva','xyz',0,0,1,0,18,2);
-            PRAGMA user_version=5;
+            DROP VIEW IF EXISTS active_inspections;
+            DROP VIEW IF EXISTS active_issues;
+            CREATE VIEW active_inspections AS SELECT rowid AS rowid,* FROM inspections WHERE voided=0;
+            CREATE VIEW active_issues AS SELECT x.rowid AS rowid,x.* FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE x.voided=0 AND n.voided=0;
+            PRAGMA user_version=6;
             """, transaction)) command.ExecuteNonQuery();
         using (var count = Command("SELECT COUNT(*) FROM community_records WHERE kind='inspection-type';", transaction))
             if (Convert.ToInt32(count.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
@@ -86,6 +99,11 @@ public sealed partial class Store
         {
             PrepareWrite();
             if (kind == "staff" && ListCommunityRecords("staff", includeArchived: true).Any(x => x.Id != id && x.Name == name)) throw new ApiException(409, "已有同名人员；同名时请在姓名后加岗位区分。");
+            if (kind == "draft")
+            {
+                var key = Text(JsonText(request.Data, "submissionKey"), "草稿编号", 100, true);
+                if (id is null && ListCommunityRecords("draft", includeArchived: true).Any(x => JsonText(x.Data, "submissionKey") == key)) throw new ApiException(409, "这份草稿已经保存，请从草稿箱继续填写。");
+            }
             if (kind is "unit" or "use") { _ = GetPointInternal(parent); RequireUnmergedPoint(parent); }
             if (kind == "unit") ValidateUnit(id, parent, request);
             if (kind == "plan")
@@ -123,6 +141,7 @@ public sealed partial class Store
                 using var row = existing.ExecuteReader();
                 if (!row.Read()) throw new ApiException(404, "资料不存在。");
                 using var previousBody = JsonDocument.Parse(row.GetString(0));
+                if (kind == "draft" && (JsonText(previousBody.RootElement, "submittedInspectionId").Length > 0 || JsonText(previousBody.RootElement, "submissionKey") != JsonText(request.Data, "submissionKey"))) throw new ApiException(409, "这份草稿已提交或编号有变化，请从草稿箱重新打开。");
                 if (kind == "plan" && !request.Archived && JsonText(previousBody.RootElement, "handedOffTo").Length > 0) throw new ApiException(409, "这项安排已交接，请在接收人员的新安排中办理。");
                 before = JsonSerializer.Serialize(new CommunityWrite(row.GetString(2), row.GetString(3), previousBody.RootElement.Clone(), row.GetInt32(1), row.GetInt32(4) != 0), CommunityJsonContext.Default.CommunityWrite);
                 revision = row.GetInt32(1) + 1;
@@ -138,6 +157,7 @@ public sealed partial class Store
                 """, transaction, ("$id", actualId), ("$kind", kind), ("$parent", parent), ("$name", name), ("$body", body),
                 ("$revision", revision), ("$at", now), ("$archived", request.Archived ? 1 : 0))) command.ExecuteNonQuery();
             if (kind is "use" or "unit") SaveRecordPhotos(actualId, request.Data, transaction);
+            if (kind == "draft") SaveDraftPhotos(actualId, request.Data, request.Archived, transaction);
             AddCommunityHistory(kind, actualId, before, JsonSerializer.Serialize(request, CommunityJsonContext.Default.CommunityWrite), id is null ? "新增" : request.Archived ? "停用" : "修改", transaction);
             transaction.Commit();
             return new(actualId, kind, parent, name, request.Data.Clone(), revision, now, request.Archived);

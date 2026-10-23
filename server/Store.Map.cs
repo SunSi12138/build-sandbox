@@ -26,7 +26,12 @@ public sealed partial class Store
         {
             PrepareWrite();
             using var transaction = _db.BeginTransaction();
-            if (value.IsDefault) { using var reset = Command("UPDATE map_layers SET is_default=0;", transaction); reset.ExecuteNonQuery(); }
+            if (value.IsDefault)
+            {
+                using var current = Command("SELECT id FROM map_layers WHERE is_default=1 LIMIT 1;", transaction);
+                var changed = (current.ExecuteScalar() as string) != value.Id;
+                using var reset = Command(changed ? "UPDATE map_layers SET is_default=0,enabled=0;" : "UPDATE map_layers SET is_default=0;", transaction); reset.ExecuteNonQuery();
+            }
             using (var command = Command("""
                 INSERT INTO map_layers VALUES($id,$name,$folder,$scheme,$enabled,$default,$opacity,$min,$max,$order)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,folder=excluded.folder,scheme=excluded.scheme,enabled=excluded.enabled,
@@ -44,7 +49,7 @@ public sealed partial class Store
             var features = new List<MapFeatureDto>();
             using (var command = Command("""
                 SELECT p.id,p.name,p.community_id,p.longitude,p.latitude,p.disabled,s.shape,COALESCE(s.revision,0),
-                  (SELECT COUNT(*) FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id AND x.status<>'closed')
+                  (SELECT COUNT(*) FROM active_issues x JOIN active_inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id AND x.status<>'closed')
                 FROM points p LEFT JOIN map_shapes s ON s.kind='point' AND s.record_id=p.id;
                 """))
             using (var rows = command.ExecuteReader())

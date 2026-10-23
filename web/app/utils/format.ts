@@ -39,6 +39,7 @@ export function formatBytes(bytes: number): string {
 }
 
 export function rectifyLabel(record: Pick<InspectionDto, 'rectifyStatus' | 'issueCount' | 'closedCount'>, compact = false): string {
+  if (record.rectifyStatus === 'voided') return '问题已作废'
   if (record.rectifyStatus === 'none') return compact ? '正常' : '无需整改'
   if (record.rectifyStatus === 'closed') return '已完成'
   if ((record.rectifyStatus as string) === 'incomplete') return '未完成检查'
@@ -46,7 +47,7 @@ export function rectifyLabel(record: Pick<InspectionDto, 'rectifyStatus' | 'issu
   return compact ? `${label} ${record.closedCount}/${record.issueCount}` : label
 }
 export function rectifyTone(status: string): 'warning' | 'info' | 'success' {
-  return status === 'pending' || status === 'incomplete' ? 'warning' : status === 'feedback' ? 'info' : 'success'
+  return status === 'pending' || status === 'incomplete' || status === 'voided' ? 'warning' : status === 'feedback' ? 'info' : 'success'
 }
 export function overdueDays(deadline: string | null | undefined, today = todayLocal()): number {
   if (!deadline || deadline >= today) return 0
