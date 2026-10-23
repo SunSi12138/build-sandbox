@@ -199,7 +199,7 @@ class ApiSmoke:
         return self.json("POST", "/api/inspections", self.inspection_body(point_id, **kwargs), expected=201)
 
     def issue_body(self, description: str, deadline: dt.date, photo_ids=None, responsible=None) -> dict:
-        return {"description": description, "requirement": "清理并拍照反馈", "deadline": day(deadline), "photoIds": photo_ids or [], "responsibleUnit": responsible}
+        return {"description": description, "requirement": "清理并拍照反馈", "deadline": day(deadline), "photoIds": photo_ids or [], "responsibleUnit": responsible, "issueTypeId": self.bootstrap["issueTypes"][0]["id"]}
 
     def upload(self, phase="site") -> dict:
         photo = self.json("PUT", "/api/photos?" + urllib.parse.urlencode({"phase": phase}), raw=JPEG, content_type="image/jpeg", expected=(200, 201))
@@ -231,7 +231,7 @@ class ApiSmoke:
         require((self.data / "app.db").is_file(), "Database was not created next to the copied executable")
         require(not (self.cwd / "data").exists(), "Database incorrectly depends on the current working directory")
         require(self.sql_rows("PRAGMA journal_mode")[0][0].lower() == "wal", "WAL mode is not enabled")
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 3, "Current schema was not initialized")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 1, "Current schema was not initialized")
         require(self.sql_rows("PRAGMA application_id")[0][0] == 1397048143, "Database application identifier is missing")
         require({"餐饮油烟", "工地扬尘", "河道水体", "垃圾堆放", "小散乱污", "其他"}.issubset({row["name"] for row in self.bootstrap["pointTypes"]}), "Default point types are incomplete")
         self.settings = {"streetName": "测试街道 O'Brien", "issuingUnit": "生态环境办公室", "defaultInspector": "默认排查员",
@@ -810,7 +810,7 @@ class ApiSmoke:
             require(hashes() == before, "Refused data or photos were modified")
             text = (result.stdout + result.stderr).decode("utf-8", errors="replace")
             require("不支持" in text or "不受支持" in text, "Unsupported data needs an explicit explanation")
-        for version in (1, 2, 4):
+        for version in (2, 3, 4):
             with contextlib.closing(sqlite3.connect(database)) as connection:
                 connection.execute(f"PRAGMA user_version={version}")
                 connection.commit()
@@ -825,8 +825,44 @@ class ApiSmoke:
         journal.write_text('{"backupName":"before-restore-legacy","committed":false}')
         rejected(); journal.unlink()
         self.start()
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 3, "Current schema failed to reopen")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 1, "Current schema failed to reopen")
         self.stop()
+
+    def test_activities_and_types(self) -> None:
+        issue_types = self.json("GET", "/api/issue-types")
+        require(bool(issue_types) and issue_types[0]["id"] == self.bootstrap["issueTypes"][0]["id"], "Missing problem dictionary")
+        new_type = self.json("POST", "/api/issue-types", {"name": "特殊环保问题"}, expected=201)
+        require(self.json("PUT", "/api/issue-types/" + new_type["id"], {"name": "特殊污染问题"})["name"] == "特殊污染问题", "Problem type rename failed")
+        self.json("DELETE", "/api/issue-types/" + new_type["id"] + "?confirm=true", expected=204)
+        types = self.json("GET", "/api/activity-types")
+        require(len(types) >= 6, "Default activity types are incomplete")
+        custom = self.json("POST", "/api/activity-types", {"name": "专题部署"}, expected=201)
+        photo = self.upload("activity")
+        body = {"name": "环保工作部署会议", "typeId": custom["id"], "communityId": self.community["id"],
+                "date": day(self.today), "location": "街道会议室", "organizer": "生态环境办公室",
+                "participants": "各社区环保负责人", "participantCount": 12,
+                "content": "部署近期环境卫生整治工作和宣传任务。", "outcome": "明确工作分工。", "notes": "会议记录",
+                "photoIds": [photo["id"]]}
+        created = self.json("POST", "/api/activities", body, expected=201)
+        activity_id = created["activity"]["id"]
+        require(created["activity"]["typeName"] == "专题部署" and len(created["photos"]) == 1, "Activity or photo was not saved")
+        self.json("DELETE", "/api/activity-types/" + custom["id"] + "?confirm=true", expected=409)
+        self.json("PUT", "/api/activity-types/" + custom["id"], {"name": "环保会议"})
+        detail = self.json("GET", "/api/activities/" + activity_id)
+        require(detail["activity"]["typeName"] == "专题部署", "Historical activity category was rewritten")
+        listing = self.json("GET", "/api/activities?typeId=" + custom["id"])
+        require(activity_id in ids(listing["items"]), "Activity type filter lost record")
+        require(self.json("GET", "/api/activities?typeId=missing")["total"] == 0, "Invalid activity type matched unexpected records")
+        edited = self.json("PUT", "/api/activities/" + activity_id, {**body, "name": "环保专题学习", "participantCount": 20, "photoIds": []})
+        require(edited["activity"]["name"] == "环保专题学习" and edited["activity"]["participantCount"] == 20 and not edited["photos"], "Activity edit/photo removal failed")
+        for path in ("/api/activities/" + activity_id + "/export/record",
+                     "/api/exports/activity-ledger?from=" + day(self.today) + "&to=" + day(self.today) + "&photos=false"):
+            headers, payload = self.request("GET", path)
+            require(payload.startswith(b"PK") and len(payload) > 1000, "Activity Word document is not a DOCX package")
+        self.json("DELETE", "/api/activities/" + activity_id + "?confirm=true", expected=204)
+        require(self.json("GET", "/api/activities")["total"] == 0, "Activity deletion did not remove the record")
+        self.json("DELETE", "/api/activity-types/" + custom["id"] + "?confirm=true", expected=204)
+        require(not self.sql_rows("PRAGMA foreign_key_check"), "Activity workflow violated foreign keys")
 
     def run(self) -> None:
         self.start(seed=True)
@@ -836,7 +872,8 @@ class ApiSmoke:
             ("normal/multi-issue inspections, JPEG upload and transactional photo association", self.test_inspections_and_photos),
             ("feedback, optional-photo review, closure and return audit trail", self.test_state_transitions),
             ("calendar periods, deadline boundaries and dashboard/list agreement", self.test_dashboard),
-            ("v2 temporary points, thumbnails, batch rollback, editing, campaigns and seven Word exports", self.test_version2_workflows),
+            ("temporary points, thumbnails, batch rollback and campaigns", self.test_version2_workflows),
+            ("issue categories, activity CRUD, photos and activity exports", self.test_activities_and_types),
             ("loopback-only listening, IPv6, live rebinding, remote 403, command override and missing-adapter fallback", self.test_listening),
             ("consistent backup, restore confirmation, invalid ZIP and failed-preservation safety", self.test_backups),
             ("orphan cleanup, future-record reminders, graceful restart and idempotent demo seed", self.test_cleanup_and_restart),

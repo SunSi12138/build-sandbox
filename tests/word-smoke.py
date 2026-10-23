@@ -200,6 +200,28 @@ class WordSmoke(api_smoke.ApiSmoke):
         require(photos == 0, "Campaign no-photo ledger contains images")
         self.request("GET", "/api/exports/campaign-ledger?" + query + "&typeId=missing", expected=400)
 
+    def activity_exports(self):
+        types = self.json("GET", "/api/activity-types")
+        photo = self.upload("activity")
+        result = self.json("POST", "/api/activities", {
+            "name": "环保宣传学习活动", "typeId": types[1]["id"], "communityId": self.community["id"],
+            "date": self.today.isoformat(), "location": "社区活动室", "participants": "社区工作人员",
+            "organizer": "街道生态办", "participantCount": 16,
+            "content": "开展环境保护政策宣传和集中学习。", "outcome": "完成宣传任务。",
+            "photoIds": [photo["id"]]
+        }, expected=201)
+        record = result["activity"]
+        text, photos, document = self.download(f"/api/activities/{record['id']}/export/record", "activity-record.docx")
+        require(photos == 1 and "环保宣传学习活动" in text and "开展情况" in text, "Activity record export lost key fields/photos")
+        query = "from=" + self.today.isoformat() + "&to=" + self.today.isoformat()
+        text, photos, document = self.download("/api/exports/activity-ledger?" + query + "&photos=true", "activity-ledger.docx")
+        require("共 1 次活动" in text and "16 人" in text and photos == 1, "Activity ledger totals or photos incorrect")
+        main = [table for table in document.iter(W + "tbl") if len(table.find(W + "tblGrid")) == 10][0]
+        require(len(main.findall(W + "tr")[-1].findall(W + "tc")) == 1, "Activity ledger summary not merged")
+        self.request("GET", "/api/exports/activity-ledger?" + query + "&typeId=missing", expected=400)
+        source_text, _, _ = self.download("/api/inspections/" + self.inspection_id + "/export/record", "record-types.docx")
+        require("问题类型" in source_text, "Inspection record omitted issue category")
+
     def run(self):
         self.start()
         self.case("Word fixtures, closed issue and historical point snapshot", self.fixtures)
@@ -207,6 +229,7 @@ class WordSmoke(api_smoke.ApiSmoke):
         self.case("landscape ledger, comparison photos, exact summary and invalid filters", self.ledger)
         self.case("long text is retained and downloaded temporary files are removed", self.long_text)
         self.case("rectification record, inspection ledger, campaign record and campaign ledger", self.new_exports)
+        self.case("activity record and activity ledger, classified issue Word fields", self.activity_exports)
 
 
 def main():
