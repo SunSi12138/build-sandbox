@@ -231,10 +231,10 @@ public sealed class WordExporterTests
         Assert.Equal("landscape", (string?)page.Attribute(W + "orient"));
         Assert.InRange(Number(page, W + "w"), 16820, 16855);
         Assert.InRange(Number(page, W + "h"), 11890, 11920);
-        var table = Assert.Single(document.Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 9);
-        Assert.Equal(9, table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
+        var table = Assert.Single(document.Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 10);
+        Assert.Equal(10, table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
         var header = table.Elements(W + "tr").First();
-        Assert.Equal(new[] { "序号", "排查日期", "点位名称", "所属社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论" }, header.Elements(W + "tc").Select(Text).ToArray());
+        Assert.Equal(new[] { "序号", "排查日期", "点位名称", "所属社区", "问题类型", "问题描述", "整改期限", "状态", "反馈情况", "复查结论" }, header.Elements(W + "tc").Select(Text).ToArray());
         Assert.NotNull(header.Element(W + "trPr")?.Element(W + "tblHeader"));
         Assert.All(table.Descendants(W + "sz"), size => Assert.Contains((string?)size.Attribute(W + "val"), new[] { "21", "24" }));
         var text = Regex.Replace(Text(document), @"\s", "");
@@ -268,19 +268,19 @@ public sealed class WordExporterTests
         using var package = new Package(Render(stream => WordExporter.WriteLedger(stream,
             new("2026-10-01", "2026-10-31", "东苑社区", [issue, Issue("short", "普通问题保持一行", "清理", "2026-10-12")], [], false), Settings())));
         ValidatePackage(package);
-        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 9);
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 10);
         var rows = table.Elements(W + "tr").ToArray();
-        var continued = rows.Where(row => row.Elements(W + "tc").Count() == 9 && Text(row.Elements(W + "tc").First()) == "1").ToArray();
+        var continued = rows.Where(row => row.Elements(W + "tc").Count() == 10 && Text(row.Elements(W + "tc").First()) == "1").ToArray();
         Assert.True(continued.Length > 1);
-        Assert.Equal(description.Replace("\r\n", "\n", StringComparison.Ordinal), string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(4)))));
-        Assert.Equal("2026-10-11\n" + feedback, string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(7)))));
+        Assert.Equal(description.Replace("\r\n", "\n", StringComparison.Ordinal), string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(5)))));
+        Assert.Equal("2026-10-11\n" + feedback, string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(8)))));
         Assert.All(continued, row =>
         {
             Assert.Equal("1", Text(row.Elements(W + "tc").First()));
             Assert.NotNull(row.Element(W + "trPr")?.Element(W + "cantSplit"));
-            Assert.True(CellLines(row.Elements(W + "tc").ElementAt(4)).EnumerateRunes().Count() < 600);
+            Assert.True(CellLines(row.Elements(W + "tc").ElementAt(5)).EnumerateRunes().Count() < 600);
         });
-        Assert.Single(rows, row => row.Elements(W + "tc").Count() == 9 && Text(row.Elements(W + "tc").First()) == "2");
+        Assert.Single(rows, row => row.Elements(W + "tc").Count() == 10 && Text(row.Elements(W + "tc").First()) == "2");
         Assert.NotNull(rows[0].Element(W + "trPr")?.Element(W + "tblHeader"));
         Assert.Single(rows[^1].Elements(W + "tc"));
         Assert.Equal("共 2 条，已闭环 0，待复查 1，待整改 1，其中逾期 0", Text(rows[^1]));
@@ -295,11 +295,11 @@ public sealed class WordExporterTests
         detail = detail with { Issues = [detail.Issues[0] with { Description = description, Requirement = requirement }] };
         using var package = new Package(Render(stream => WordExporter.WriteRecord(stream, detail, Settings(), [])));
         ValidatePackage(package);
-        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 5);
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 6);
         var rows = table.Elements(W + "tr").Skip(1).ToArray();
         Assert.True(rows.Length > 1);
-        Assert.Equal(description, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(1)))));
-        Assert.Equal(requirement, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(2)))));
+        Assert.Equal(description, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(2)))));
+        Assert.Equal(requirement, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(3)))));
         Assert.All(rows, row => Assert.Equal("1", Text(row.Elements(W + "tc").First())));
     }
 
@@ -598,7 +598,7 @@ public sealed class WordExporterTests
         var issue = Issue("long-context", new string('核', 3000), "整改要求", "2026-10-12");
         using var package = new Package(Render(stream => WordExporter.WriteLedger(stream,
             new("2026-10-01", "2026-10-31", "东苑社区", [issue], [], false), Settings())));
-        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), t => t.Element(W + "tblGrid")?.Elements().Count() == 9);
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), t => t.Element(W + "tblGrid")?.Elements().Count() == 10);
         var rows = table.Elements(W + "tr").Skip(1).SkipLast(1).ToArray();
         Assert.True(rows.Length > 2);
         Assert.All(rows, row =>
@@ -609,7 +609,7 @@ public sealed class WordExporterTests
             Assert.Contains(issue.PointName, Text(cells[2]));
         });
         Assert.All(rows.Skip(1), row => Assert.Contains("（续）", Text(row)));
-        Assert.Equal(issue.Description, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(4)))));
+        Assert.Equal(issue.Description, string.Concat(rows.Select(row => CellLines(row.Elements(W + "tc").ElementAt(5)))));
         Assert.Contains("共 1 条", Text(table.Elements(W + "tr").Last()));
     }
 
@@ -665,7 +665,7 @@ public sealed class WordExporterTests
     }
 
     private static IssueDto Issue(string id, string description, string requirement, string deadline, string status = "pending", bool overdue = false) =>
-        new(id, "inspection-1", "point-1", "河岸 <一号> & 餐饮点", "community-1", "东苑社区", "2026-10-10", description, requirement, deadline, "东苑社区居民委员会", status, null, "", null, "", null, overdue);
+        new(id, "inspection-1", "point-1", "河岸 <一号> & 餐饮点", "community-1", "东苑社区", "2026-10-10", description, requirement, deadline, "东苑社区居民委员会", status, null, "", null, "", null, overdue, "issue-type-1", "环境卫生");
 
     private static IssueDto[] LedgerIssues() =>
     [

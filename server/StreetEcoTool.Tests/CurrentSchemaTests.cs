@@ -34,7 +34,7 @@ public sealed class CurrentSchemaTests
     }
 
     [Theory]
-    [InlineData(1)]
+    [InlineData(5)]
     [InlineData(2)]
     [InlineData(4)]
     [InlineData(0)]
