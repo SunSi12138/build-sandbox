@@ -118,6 +118,36 @@ public sealed partial class Store
         }
     }
 
+    public WordDownload ExportActivityWord(string id)
+    {
+        lock (_gate)
+        {
+            var detail = GetActivityDetail(id);
+            var photos = ResolveWordPhotos(detail.Photos);
+            var settings = GetSettings();
+            return WriteWordTemporary(WordExporter.FileName("活动开展情况记录单", detail.Activity.Name, detail.Activity.Date),
+                destination => WordExporter.WriteActivityRecord(destination, detail, settings, photos));
+        }
+    }
+
+    public WordDownload ExportActivityLedgerWord(string from, string to, string? communityId = null, string? typeId = null, bool includePhotos = false)
+    {
+        lock (_gate)
+        {
+            from = DateText(from, "开始日期");
+            to = DateText(to, "结束日期");
+            CheckDateRange(from, to);
+            var community = string.IsNullOrWhiteSpace(communityId) ? null : RequireCommunity(communityId);
+            if (!string.IsNullOrWhiteSpace(typeId)) _ = RequireActivityType(typeId);
+            var activities = GetLedgerActivities(from, to, community?.Id, typeId);
+            var photos = includePhotos ? ResolveWordPhotos(activities.SelectMany(activity => ReadPhotos(activityId: activity.Id))) : [];
+            var name = community?.Name ?? "全部社区";
+            var ledger = new WordActivityLedger(from, to, name, activities, photos, includePhotos, Today);
+            return WriteWordTemporary(WordExporter.FileName("活动台账", name, to),
+                destination => WordExporter.WriteActivityLedger(destination, ledger, GetSettings()));
+        }
+    }
+
     private WordIssueHistory[] ReadWordIssueHistory(IssueDto[] issues)
     {
         var history = new List<WordIssueHistory>(issues.Length);
@@ -168,6 +198,10 @@ public sealed partial class Store
         RequestDelegate notice = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), true));
         RequestDelegate rectification = async context => await SendWordAsync(context, ExportRectificationWord(Api.Id(context)));
         RequestDelegate campaign = async context => await SendWordAsync(context, ExportCampaignWord(Api.Id(context)));
+        RequestDelegate activity = async context => await SendWordAsync(context, ExportActivityWord(Api.Id(context)));
+        RequestDelegate activityLedger = async context => await SendWordAsync(context, ExportActivityLedgerWord(
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(),
+            context.Request.Query["communityId"].ToString(), context.Request.Query["typeId"].ToString(), WordPhotoOption(context)));
         RequestDelegate ledger = async context => await SendWordAsync(context, ExportLedgerWord(
             context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), WordPhotoOption(context), ExportPointIds(context)));
         RequestDelegate inspectionLedger = async context => await SendWordAsync(context, ExportInspectionLedgerWord(
@@ -178,6 +212,8 @@ public sealed partial class Store
         app.MapGet("/api/inspections/{id}/export/notice", notice);
         app.MapGet("/api/inspections/{id}/export/rectification", rectification);
         app.MapGet("/api/campaigns/{id}/export/record", campaign);
+        app.MapGet("/api/activities/{id}/export/record", activity);
+        app.MapGet("/api/exports/activity-ledger", activityLedger);
         app.MapGet("/api/exports/rectification-ledger", ledger);
         app.MapGet("/api/exports/inspection-ledger", inspectionLedger);
         app.MapGet("/api/exports/campaign-ledger", campaignLedger);
