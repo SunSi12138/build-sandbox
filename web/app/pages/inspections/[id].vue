@@ -186,6 +186,7 @@ function batchSaved(value: InspectionDetailDto) {
 function openEdit() {
   if (!detail.value) return
   Object.assign(editState, {
+    revision: detail.value.inspection.revision,
     date: detail.value.inspection.date,
     inspector: detail.value.inspection.inspector,
     noticeNumber: detail.value.inspection.noticeNumber,
@@ -242,6 +243,7 @@ async function remove() {
 function openIssueEdit(issue: IssueDto) {
   issueToEdit.value = issue
   Object.assign(issueState, {
+    revision: issue.revision,
     description: issue.description,
     requirement: issue.requirement,
     deadline: issue.deadline,
@@ -289,7 +291,7 @@ async function returnIssue() {
   try {
     await $fetch(`/api/issues/${issueToReturn.value.id}/return`, {
       method: 'POST',
-      body: { reason: returnReason.value },
+      body: { reason: returnReason.value, revision: issueToReturn.value.revision },
       retry: 0,
     })
     returnOpen.value = false

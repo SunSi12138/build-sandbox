@@ -49,7 +49,7 @@ async function toggleDisabled() {
   try {
     await $fetch(`/api/points/${id.value}/status`, {
       method: 'PUT',
-      body: { disabled: !detail.value.point.disabled },
+      body: { disabled: !detail.value.point.disabled, revision: detail.value.point.revision },
       retry: 0,
     })
     await saved()
@@ -109,6 +109,7 @@ watch(id, load, { immediate: true })
 <template>
   <div class="page-stack">
     <RecordHistory v-model:open="historyOpen" :record-id="id" />
+    <UAlert v-if="detail?.mergedInto" title="此处资料已合并" color="info"><template #description><NuxtLink :to="`/points/${detail.mergedInto}`" class="underline">打开保留的场所</NuxtLink></template></UAlert>
     <PageHeader :title="detail?.point.name || '场所详情'" :back="back"
       ><template v-if="detail" #badge
         ><StatusBadge v-if="detail.point.temporary" tone="outline">临时</StatusBadge

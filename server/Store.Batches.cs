@@ -15,6 +15,7 @@ public sealed partial class Store
             var validated = items.Select(item =>
             {
                 var issue = GetIssue(item.IssueId);
+                CheckRevision(item.Revision, issue.Revision);
                 if (issue.InspectionId != inspectionId) throw new ApiException(400, "所选问题不属于本次排查。");
                 if (issue.Status != "pending") throw new ApiException(409, "所选问题当前不是待整改状态，请刷新后重试。");
                 return (Issue: issue, Date: ActionDate(request.Date, issue.InspectionDate, "反馈日期"),
@@ -48,6 +49,7 @@ public sealed partial class Store
             var validated = items.Select(item =>
             {
                 var issue = GetIssue(item.IssueId);
+                CheckRevision(item.Revision, issue.Revision);
                 if (issue.InspectionId != inspectionId) throw new ApiException(400, "所选问题不属于本次排查。");
                 if (issue.Status != "feedback") throw new ApiException(409, "所选问题尚未反馈，请刷新后重试。");
                 return (Issue: issue, Date: ActionDate(request.Date, issue.FeedbackDate ?? issue.InspectionDate, "复查日期"),

@@ -212,6 +212,12 @@ public sealed partial class Store
             if (kind != (phase == "after" ? "feedback" : "review")) throw new ApiException(400, "照片阶段与反馈或复查记录不一致。");
         }
         if (photoIds is null || photoIds.Length == 0) return;
+        var existingPointPhotos = 0;
+        if (pointId is not null)
+        {
+            using var initial = Command("SELECT COUNT(*) FROM photos WHERE point_id=$id;", tx, ("$id", pointId));
+            existingPointPhotos = Convert.ToInt32(initial.ExecuteScalar());
+        }
         if (photoIds.Length > 100) throw new ApiException(400, "每次最多关联 100 张照片。");
         var uniqueIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var id in photoIds)
@@ -247,7 +253,7 @@ public sealed partial class Store
         {
             using var count = Command("SELECT COUNT(*) FROM photos WHERE phase=$phase AND (($point IS NOT NULL AND point_id=$point) OR ($campaign IS NOT NULL AND campaign_id=$campaign));", tx,
                 ("$phase", phase), ("$point", pointId), ("$campaign", campaignId));
-            var maximum = pointId is not null ? 9 : 20;
+            var maximum = pointId is not null ? Math.Max(9, existingPointPhotos) : 20;
             if (Convert.ToInt32(count.ExecuteScalar()) > maximum) throw new ApiException(400, $"该阶段照片最多 {maximum} 张。");
         }
     }

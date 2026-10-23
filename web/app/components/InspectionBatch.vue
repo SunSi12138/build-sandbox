@@ -7,7 +7,7 @@ const props = defineProps<{ detail: InspectionDetailDto; mode: 'feedback' | 'rev
 const emit = defineEmits<{ saved: [detail: InspectionDetailDto]; busy: [value: boolean] }>()
 const { bootstrap } = useAppData()
 const focus = useDialogFocus('[data-testid="batch-feedback"]:not(:disabled), [data-testid="batch-review"]:not(:disabled)')
-interface Entry { issueId: string; number: number; description: string; selected: boolean; text: string; photos: PhotoUploadDto[]; busy: boolean; failed: boolean }
+interface Entry { revision: number; issueId: string; number: number; description: string; selected: boolean; text: string; photos: PhotoUploadDto[]; busy: boolean; failed: boolean }
 const state = reactive<{ date: string; items: Entry[] }>({ date: todayLocal(), items: [] })
 const saving = ref(false), error = ref(''), discardOpen = ref(false)
 let initialState = ''
@@ -33,7 +33,7 @@ const textLabel = computed(() => props.mode === 'feedback' ? '整改情况' : '�
 watch(open, value => {
   if (!value) return
   error.value = ''; state.date = bootstrap.value?.today ?? todayLocal()
-  state.items = props.detail.issues.map((issue, index) => ({ issue, index })).filter(({ issue }) => issue.status === (props.mode === 'feedback' ? 'pending' : 'feedback')).map(({ issue, index }) => ({ issueId: issue.id, number: index + 1, description: issue.description, selected: !props.selectedIssue || props.selectedIssue === issue.id, text: '', photos: [], busy: false, failed: false }))
+  state.items = props.detail.issues.map((issue, index) => ({ issue, index })).filter(({ issue }) => issue.status === (props.mode === 'feedback' ? 'pending' : 'feedback')).map(({ issue, index }) => ({ revision: issue.revision, issueId: issue.id, number: index + 1, description: issue.description, selected: !props.selectedIssue || props.selectedIssue === issue.id, text: '', photos: [], busy: false, failed: false }))
   initialState = fingerprint()
 })
 function validate(): FormError[] {
@@ -46,7 +46,7 @@ function validate(): FormError[] {
 async function save() {
   if (busy.value || validate().length) return
   saving.value = true; error.value = ''
-  const items = state.items.filter(item => item.selected).map(item => ({ issueId: item.issueId, ...(props.mode === 'feedback' ? { notes: item.text.trim() } : { conclusion: item.text.trim() }), photoIds: item.photos.map(photo => photo.id) }))
+  const items = state.items.filter(item => item.selected).map(item => ({ revision: item.revision, issueId: item.issueId, ...(props.mode === 'feedback' ? { notes: item.text.trim() } : { conclusion: item.text.trim() }), photoIds: item.photos.map(photo => photo.id) }))
   try { const result = await $fetch<InspectionDetailDto>(`/api/inspections/${props.detail.inspection.id}/${props.mode}`, { method: 'POST', body: { date: state.date, items }, retry: 0 }); open.value = false; emit('saved', result) }
   catch (value) { error.value = errorMessage(value) }
   finally { saving.value = false }

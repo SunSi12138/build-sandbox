@@ -12,7 +12,7 @@ const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = r
 interface PointState { name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
 const defaults = (): PointState => ({ name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
 const state = reactive<PointState>(defaults())
-const mapShape = ref<GeoShape|null>(null), shapeRevision = ref(0)
+const mapShape = ref<GeoShape|null>(null), shapeRevision = ref(0), revision = ref<number | undefined>()
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
 watch(open, async value => {
@@ -20,6 +20,7 @@ watch(open, async value => {
   if (!value) return
   error.value = ''; loading.value = true
   const point = props.point
+  revision.value = point?.revision
   mapShape.value = props.initialShape ?? null; shapeRevision.value = 0
   Object.assign(state, point ? { ...point, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : { ...defaults(), coordinates: props.initialCoordinates ?? '' })
   try {
@@ -45,7 +46,7 @@ async function save() {
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
   const body: PointWriteRequest = { name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
-  body.shape = mapShape.value; body.shapeRevision = shapeRevision.value
+  body.shape = mapShape.value; body.shapeRevision = shapeRevision.value; body.revision = revision.value
   try { const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/points', { method: props.point ? 'PUT' : 'POST', body, retry: 0 }); emit('saved', point); open.value = false }
   catch (value) { error.value = errorMessage(value) }
   finally { saving.value = false }

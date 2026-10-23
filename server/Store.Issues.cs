@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
@@ -8,7 +9,9 @@ public sealed partial class Store
     private const string IssueSelect = """
         SELECT x.id,x.inspection_id,n.point_id,n.point_name,n.community_id,n.community_name,n.inspection_date,
         x.description,x.requirement,x.deadline,x.responsible_unit,x.status,x.feedback_date,x.feedback_notes,
-        x.review_date,x.review_conclusion,x.closed_date,CASE WHEN x.status<>'closed' AND x.deadline<$today THEN 1 ELSE 0 END
+        x.review_date,x.review_conclusion,x.closed_date,CASE WHEN x.status<>'closed' AND x.deadline<$today THEN 1 ELSE 0 END,
+        (SELECT COUNT(*) FROM community_history h WHERE h.record_id=x.id AND h.kind='issue') + (SELECT COUNT(*) FROM issue_actions a WHERE a.issue_id=x.id),
+        COALESCE((SELECT json_extract(h.after_json,'$.follower') FROM community_history h WHERE h.kind='issue' AND h.record_id=x.id AND json_valid(h.after_json) AND COALESCE(json_extract(h.after_json,'$.follower'),'')<>'' ORDER BY h.at DESC,h.rowid DESC LIMIT 1),'')
         FROM issues x JOIN inspections n ON n.id=x.inspection_id
         """;
     private const string IssueWhere = """
@@ -22,7 +25,7 @@ public sealed partial class Store
 
     private static IssueDto ReadIssue(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10), row.GetString(11),
-        NullableString(row, 12), row.GetString(13), NullableString(row, 14), row.GetString(15), NullableString(row, 16), row.GetInt32(17) != 0);
+        NullableString(row, 12), row.GetString(13), NullableString(row, 14), row.GetString(15), NullableString(row, 16), row.GetInt32(17) != 0, row.GetInt32(18), row.GetString(19));
 
     private IssueDto[] ReadIssueList(string suffix, string today, (string Name, object? Value)[] parameters)
     {
@@ -99,11 +102,15 @@ public sealed partial class Store
         {
             PrepareWrite();
             var issue = GetIssue(id);
+            CheckRevision(request.Revision, issue.Revision);
             if (issue.Status != "pending") throw new ApiException(409, "只有待整改问题可以修改；如需继续整改，请先退回待整改。");
-            using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit WHERE id=$id;", null,
+            using var transaction = _db.BeginTransaction();
+            using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit WHERE id=$id;", transaction,
                 ("$id", id), ("$description", Text(request.Description, "问题描述", 8000, true)), ("$requirement", Text(request.Requirement, "整改要求", 8000)),
                 ("$deadline", DateText(request.Deadline, "整改期限")), ("$unit", Text(request.ResponsibleUnit, "责任单位", 200, true)));
             command.ExecuteNonQuery();
+            AddCommunityHistory("issue", id, JsonSerializer.Serialize(issue, AppJsonContext.Default.IssueDto), JsonSerializer.Serialize(request, AppJsonContext.Default.IssueUpdateRequest), "修改问题", transaction);
+            transaction.Commit();
             return GetIssueDetail(id);
         }
     }
@@ -121,7 +128,7 @@ public sealed partial class Store
         lock (_gate)
         {
             var issue = GetIssue(id);
-            RecordInspectionFeedback(issue.InspectionId, new(request.Date, [new(id, request.Notes, request.PhotoIds)]));
+            RecordInspectionFeedback(issue.InspectionId, new(request.Date, [new(id, request.Notes, request.PhotoIds, request.Revision)]));
             return GetIssueDetail(id);
         }
     }
@@ -131,7 +138,7 @@ public sealed partial class Store
         lock (_gate)
         {
             var issue = GetIssue(id);
-            ReviewInspection(issue.InspectionId, new(request.Date, [new(id, request.Conclusion, request.PhotoIds)]));
+            ReviewInspection(issue.InspectionId, new(request.Date, [new(id, request.Conclusion, request.PhotoIds, request.Revision)]));
             return GetIssueDetail(id);
         }
     }
@@ -142,6 +149,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var issue = GetIssue(id);
+            CheckRevision(request.Revision, issue.Revision);
             if (issue.Status == "pending") throw new ApiException(409, "该问题已经是待整改状态。");
             var reason = Text(request.Reason, "退回原因", 8000);
             if (reason.Length == 0) reason = "退回继续整改。";

@@ -69,7 +69,7 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            if (kind == "point") _ = GetPointInternal(id); else _ = RequireCommunity(id);
+            if (kind == "point") { _ = GetPointInternal(id); RequireUnmergedPoint(id); } else _ = RequireCommunity(id);
             var oldRevision = 0; var before = "";
             using (var query = Command("SELECT shape,revision FROM map_shapes WHERE kind=$kind AND record_id=$id;", null, ("$kind", kind), ("$id", id)))
             using (var row = query.ExecuteReader()) if (row.Read()) { before = row.GetString(0); oldRevision = row.GetInt32(1); }

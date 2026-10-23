@@ -18,7 +18,10 @@ public sealed partial class Store
         (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed' AND x.deadline<$today),
         (SELECT MIN(x.deadline) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
         pt.temporary,pt.longitude,pt.latitude,
-        n.inspection_type_id,n.inspection_type_name,n.use_id,n.use_name,n.created_at,n.incomplete_reason,n.checklist
+        n.inspection_type_id,n.inspection_type_name,n.use_id,n.use_name,n.created_at,n.incomplete_reason,n.checklist,
+        (SELECT COUNT(*) FROM community_history h WHERE h.record_id=n.id AND h.kind='inspection')
+        + (SELECT COUNT(*) FROM community_history h JOIN issues x ON x.id=h.record_id WHERE x.inspection_id=n.id AND h.kind='issue')
+        + (SELECT COUNT(*) FROM issue_actions a JOIN issues x ON x.id=a.issue_id WHERE x.inspection_id=n.id)
         FROM inspections n JOIN points pt ON pt.id=n.point_id
         """;
     private const string InspectionWhere = """
@@ -40,7 +43,7 @@ public sealed partial class Store
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetString(11), row.GetString(12), row.GetString(13), row.GetString(14), row.GetString(15), row.GetInt32(16), row.GetInt32(17), row.GetString(18), row.GetInt32(19), row.GetInt32(20), NullableString(row, 21),
         row.GetInt32(22) != 0, row.IsDBNull(23) ? null : row.GetDouble(23), row.IsDBNull(24) ? null : row.GetDouble(24),
-        row.GetString(25),row.GetString(26),row.GetString(27),row.GetString(28),row.GetString(29),row.GetString(30),JsonSerializer.Deserialize(row.GetString(31), AppJsonContext.Default.CheckItemArray));
+        row.GetString(25),row.GetString(26),row.GetString(27),row.GetString(28),row.GetString(29),row.GetString(30),JsonSerializer.Deserialize(row.GetString(31), AppJsonContext.Default.CheckItemArray), row.GetInt32(32));
 
     private InspectionDto[] ReadInspectionList(string suffix, (string Name, object? Value)[] parameters, string? today = null)
     {
@@ -220,16 +223,20 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            _ = GetInspection(id);
+            var before = GetInspection(id);
+            CheckRevision(request.Revision, before.Revision);
             var date = DateText(request.Date, "排查日期");
             if (string.CompareOrdinal(date, Today) > 0) throw new ApiException(400, "排查日期不能晚于今天。");
             using (var earliest = Command("SELECT MIN(a.action_date) FROM issue_actions a JOIN issues x ON x.id=a.issue_id WHERE x.inspection_id=$id;", null, ("$id", id)))
                 if (earliest.ExecuteScalar() is string minimum && string.CompareOrdinal(date, minimum) > 0)
                     throw new ApiException(400, "排查日期不能晚于已有办理日期。");
-            using var update = Command("UPDATE inspections SET inspection_date=$date,inspector=$inspector,notice_number=$number,notes=$notes WHERE id=$id;", null,
+            using var transaction = _db.BeginTransaction();
+            using var update = Command("UPDATE inspections SET inspection_date=$date,inspector=$inspector,notice_number=$number,notes=$notes WHERE id=$id;", transaction,
                 ("$id", id), ("$date", date), ("$inspector", Text(request.Inspector, "排查人", 100, true)),
                 ("$number", Text(request.NoticeNumber, "通知单编号", 100)), ("$notes", Text(request.Notes, "备注", 8000)));
             update.ExecuteNonQuery();
+            AddCommunityHistory("inspection", id, JsonSerializer.Serialize(before, AppJsonContext.Default.InspectionDto), JsonSerializer.Serialize(request, AppJsonContext.Default.InspectionUpdateRequest), "修改检查", transaction);
+            transaction.Commit();
             return GetInspectionDetail(id);
         }
     }

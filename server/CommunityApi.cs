@@ -5,6 +5,8 @@ public static class CommunityApi
     public static void Map(WebApplication app, Store store)
     {
         ImportApi.Map(app, store);
+        store.MapManagementApi(app);
+        store.MapHandoffApi(app);
         RequestDelegate map = context => Api.Write(context, store.GetMapState(), CommunityJsonContext.Default.MapStateDto);
         app.MapGet("/api/map", map);
         RequestDelegate shape = async context => await Api.Write(context, store.SaveShape((string)context.Request.RouteValues["kind"]!, Api.Id(context), await Api.Read(context, CommunityJsonContext.Default.ShapeWrite)), CommunityJsonContext.Default.MapFeatureDto);

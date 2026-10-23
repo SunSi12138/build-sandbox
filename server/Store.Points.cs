@@ -11,7 +11,8 @@ public sealed partial class Store
         (SELECT COUNT(*) FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id AND x.status<>'closed'),
         p.longitude,p.latitude,p.temporary,
         (SELECT ph.id FROM photos ph WHERE ph.point_id=p.id ORDER BY ph.uploaded_at,ph.rowid LIMIT 1),
-        (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id)
+        (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id),
+        (SELECT COUNT(*) FROM community_history h WHERE h.kind='point' AND h.record_id=p.id)
         FROM points p JOIN communities c ON c.id=p.community_id JOIN point_types t ON t.id=p.type_id
         """;
     private const string PointWhere = """
@@ -26,7 +27,7 @@ public sealed partial class Store
     private static PointDto ReadPoint(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetInt32(11) != 0, NullableString(row, 12), row.GetInt32(13), row.IsDBNull(14) ? null : row.GetDouble(14),
-        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18));
+        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), row.GetInt32(19));
 
     public PointDto GetPoint(string id)
     {
@@ -76,7 +77,7 @@ public sealed partial class Store
             var inspections = ReadInspectionList(" WHERE n.point_id=$point ORDER BY n.inspection_date DESC,n.rowid DESC;", [("$point", id)]);
             var issues = ReadIssueList(" WHERE n.point_id=$point AND x.status<>'closed' ORDER BY x.deadline,x.rowid;", Today, [("$point", id)]);
             var campaigns = ReadCampaigns("WHERE c.point_id=$point ORDER BY c.campaign_date DESC,c.rowid DESC;", [("$point", id)]);
-            return new(point, inspections, issues, ReadPhotos(pointId: id), campaigns);
+            return new(point, inspections, issues, ReadPhotos(pointId: id), campaigns, MergedTarget(id));
         }
     }
 
@@ -103,6 +104,7 @@ public sealed partial class Store
         var pointId = newPoint is null ? Text(id, "点位", 100, true)
             : SavePointCore(null, newPoint with { Frequency = "irregular", Disabled = false }, transaction, createTemporary: true);
         var point = GetPointInternal(pointId, transaction);
+        RequireUnmergedPoint(pointId, transaction);
         if (point.Disabled) throw new ApiException(409, "该点位已停用，请先启用。");
         return point;
     }
@@ -122,6 +124,8 @@ public sealed partial class Store
     private string SavePointCore(string? id, PointWriteRequest request, SqliteTransaction transaction, bool createTemporary = false)
     {
         var existing = id is null ? null : GetPointInternal(id, transaction);
+        if (id is not null) RequireUnmergedPoint(id, transaction);
+        if (existing is not null) CheckRevision(request.Revision, existing.Revision);
         var temporary = createTemporary || existing?.Temporary == true;
         var name = Text(request.Name, "点位名称", 200, true);
         var community = RequireCommunity(Text(request.CommunityId, "所属社区", 100, true), transaction);
@@ -184,6 +188,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             _ = GetPointInternal(id);
+            RequireUnmergedPoint(id);
             if (request.PhotoIds is null) throw new ApiException(400, "请提供照片编号列表。");
             using (var transaction = _db.BeginTransaction())
             {
@@ -200,6 +205,8 @@ public sealed partial class Store
         {
             PrepareWrite();
             var before = GetPointInternal(id);
+            RequireUnmergedPoint(id);
+            CheckRevision(request.Revision, before.Revision);
             if (request.Disabled is null) throw new ApiException(400, "请提供停用状态。");
             using var transaction = _db.BeginTransaction();
             using var command = Command("UPDATE points SET disabled=$disabled WHERE id=$id;", transaction,
@@ -233,10 +240,15 @@ public sealed partial class Store
         {
             PrepareWrite();
             var point = GetPoint(id);
+            RequireUnmergedPoint(id);
+            if (!point.Temporary) throw new ApiException(409, "该场所已经是常态场所，请刷新。");
             ValidateFrequency(request.Frequency);
-            using var command = Command("UPDATE points SET temporary=0,frequency=$frequency WHERE id=$id;", null,
+            using var transaction = _db.BeginTransaction();
+            using var command = Command("UPDATE points SET temporary=0,frequency=$frequency WHERE id=$id;", transaction,
                 ("$id", id), ("$frequency", request.Frequency));
             command.ExecuteNonQuery();
+            AddCommunityHistory("point", id, "", "{}", "转为常态场所", transaction);
+            transaction.Commit();
             return GetPoint(id);
         }
     }
@@ -261,6 +273,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             _ = GetPoint(id);
+            RequireUnmergedPoint(id);
             using (var used = Command("SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id) + (SELECT COUNT(*) FROM campaigns WHERE point_id=$id) + (SELECT COUNT(*) FROM community_records WHERE parent_id=$id AND kind IN('unit','use')) + (SELECT COUNT(*) FROM community_records r,json_each(r.body,'$.pointIds') j WHERE r.kind='plan' AND j.value=$id);", null, ("$id", id)))
                 if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该场所已有使用、检查或工作安排记录，请改为停用以保留资料。");
             ExecuteWithPhotoDeletion(ReadPhotos(pointId: id).Select(photo => photo.Id).ToArray(), transaction =>

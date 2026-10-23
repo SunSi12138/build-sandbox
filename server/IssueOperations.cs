@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace StreetEcoTool;
-public sealed record IssueOperation(string Kind, string Date, string Notes, string? Deadline = null, string? ResponsibleUnit = null, string? Follower = null, string[]? PhotoIds = null);
+public sealed record IssueOperation(string Kind, string Date, string Notes, string? Deadline = null, string? ResponsibleUnit = null, string? Follower = null, string[]? PhotoIds = null, int? Revision = null);
 [JsonSourceGenerationOptions(PropertyNamingPolicy=JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(IssueOperation))]
 public partial class IssueOperationJsonContext : JsonSerializerContext;
@@ -14,6 +14,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var issue=GetIssue(id);
+            CheckRevision(request.Revision, issue.Revision);
             if(issue.Status=="closed")throw new ApiException(409,"该问题已经完成，如需继续办理请先退回。");
             if(request.Kind is not("progress" or "transfer" or "extend" or "assign"))throw new ApiException(400,"请选择办理方式。");
             var date=ActionDate(request.Date,issue.InspectionDate,"办理日期");
@@ -23,6 +24,7 @@ public sealed partial class Store
             var responsible=request.Kind=="transfer"?Text(request.ResponsibleUnit,"接收单位",200,true):issue.ResponsibleUnit;
             var action=request.Kind switch{"progress"=>"跟进记录","transfer"=>"转交单位","extend"=>"调整期限",_=>"安排跟进人员"};
             var operation=request with {Date=date,Notes=notes,Deadline=deadline,ResponsibleUnit=responsible,Follower=Text(request.Follower,"跟进人员",200)};
+            if (request.Kind == "assign" && string.IsNullOrWhiteSpace(operation.Follower)) throw new ApiException(400, "请填写跟进人员。");
             using var transaction=_db.BeginTransaction();
             using(var update=Command("UPDATE issues SET deadline=$deadline,responsible_unit=$unit WHERE id=$id;",transaction,("$deadline",deadline),("$unit",responsible),("$id",id)))update.ExecuteNonQuery();
             AddCommunityHistory("issue",id,JsonSerializer.Serialize(issue,AppJsonContext.Default.IssueDto),JsonSerializer.Serialize(operation,IssueOperationJsonContext.Default.IssueOperation),action,transaction);

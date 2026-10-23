@@ -85,7 +85,8 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            if (kind is "unit" or "use") _ = GetPointInternal(parent);
+            if (kind == "staff" && ListCommunityRecords("staff", includeArchived: true).Any(x => x.Id != id && x.Name == name)) throw new ApiException(409, "已有同名人员；同名时请在姓名后加岗位区分。");
+            if (kind is "unit" or "use") { _ = GetPointInternal(parent); RequireUnmergedPoint(parent); }
             if (kind == "unit") ValidateUnit(id, parent, request);
             if (kind == "plan")
             {
@@ -122,6 +123,7 @@ public sealed partial class Store
                 using var row = existing.ExecuteReader();
                 if (!row.Read()) throw new ApiException(404, "资料不存在。");
                 using var previousBody = JsonDocument.Parse(row.GetString(0));
+                if (kind == "plan" && !request.Archived && JsonText(previousBody.RootElement, "handedOffTo").Length > 0) throw new ApiException(409, "这项安排已交接，请在接收人员的新安排中办理。");
                 before = JsonSerializer.Serialize(new CommunityWrite(row.GetString(2), row.GetString(3), previousBody.RootElement.Clone(), row.GetInt32(1), row.GetInt32(4) != 0), CommunityJsonContext.Default.CommunityWrite);
                 revision = row.GetInt32(1) + 1;
                 if (request.Revision != revision - 1) throw new ApiException(409, "这条资料已在其他页面修改，请刷新后再保存。");

@@ -58,11 +58,11 @@ public sealed partial class Store
             var problem = CreateInspection(new(construction.Id, Day(-7), inspector, "issues", "现场排查发现两项问题。", "示例-2026-001",
                 [new("裸露土方覆盖不到位，周边有明显扬尘。", "及时覆盖裸土，落实洒水降尘措施。", Day(-2)),
                  new("出入口车辆冲洗设施需维护。", "检修冲洗设施并保持路面整洁。", Day(2))]));
-            RecordFeedback(problem.Issues[1].Id, new(Day(-1), "社区反馈已安排维修，待现场复查。"));
+            RecordFeedback(problem.Issues[1].Id, new(Day(-1), "社区反馈已安排维修，待现场复查。", Revision: problem.Issues[1].Revision));
             var water = CreateInspection(new(river.Id, Day(-12), inspector, "issues", "河岸局部发现杂物。", "",
                 [new("河岸有零散生活垃圾。", "清理河岸垃圾并加强日常巡查。", Day(-5))]));
-            RecordFeedback(water.Issues[0].Id, new(Day(-8), "已完成河岸清理。"));
-            ReviewAndClose(water.Issues[0].Id, new(Day(-7), "现场复查清理到位，予以闭环。"));
+            RecordFeedback(water.Issues[0].Id, new(Day(-8), "已完成河岸清理。", Revision: water.Issues[0].Revision));
+            ReviewAndClose(water.Issues[0].Id, new(Day(-7), "现场复查清理到位，予以闭环。", Revision: GetIssue(water.Issues[0].Id).Revision));
             CreateInspection(new(rubbish.Id, Day(-6), inspector, "issues", "", "",
                 [new("垃圾收集点周边散落杂物，部分垃圾桶盖未关闭。", "清扫周边环境并规范垃圾桶使用。", Today)]));
             CreateInspection(new(null, Today, inspector, "issues", Issues: [new("巷口有散落垃圾。", "清理散落垃圾。", Day(5))],
