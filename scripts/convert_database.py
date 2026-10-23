@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import pathlib
 import re
 import shutil
@@ -61,9 +62,9 @@ def convert(db: sqlite3.Connection) -> dict[str, int]:
     db.execute("PRAGMA foreign_keys=OFF")
     db.execute("BEGIN IMMEDIATE")
     try:
-        add_column(db, "points", "longitude", "REAL")
-        add_column(db, "points", "latitude", "REAL")
-        add_column(db, "points", "temporary", "INTEGER NOT NULL DEFAULT 0")
+        add_column(db, "points", "longitude", "REAL CHECK(longitude IS NULL OR longitude BETWEEN -180 AND 180)")
+        add_column(db, "points", "latitude", "REAL CHECK(latitude IS NULL OR latitude BETWEEN -90 AND 90)")
+        add_column(db, "points", "temporary", "INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1))")
         create_dict(db, "issue_types", ISSUE_NAMES)
         create_dict(db, "activity_types", ACTIVITY_NAMES)
         create_dict(db, "campaign_types", CAMPAIGN_NAMES)
@@ -79,6 +80,7 @@ def convert(db: sqlite3.Connection) -> dict[str, int]:
                 CHECK(end_date IS NULL OR end_date>=activity_date)
             )
         """)
+        db.execute("CREATE INDEX ix_activities_date ON activities(activity_date,community_id,type_id)")
         other_id = db.execute("SELECT id FROM issue_types WHERE name='其他'").fetchone()[0]
         db.execute("""
             CREATE TABLE issues_new (
@@ -119,7 +121,6 @@ def convert(db: sqlite3.Connection) -> dict[str, int]:
             )
         """)
         if counts["campaigns"]:
-            source_columns = columns(db, "campaigns")
             point_types = db.execute("SELECT id FROM point_types ORDER BY rowid LIMIT 1").fetchone()
             if point_types is None:
                 new_type = uuid.uuid4().hex
@@ -232,7 +233,7 @@ def copy_photos(db: sqlite3.Connection, origin: pathlib.Path, target: pathlib.Pa
                 continue
             filename = relative[:-4] + suffix + ".jpg"
             src = origin / filename
-            if not src.is_file() or src.is_symlink():
+            if not src.is_file() or src.is_symlink() or any(part.is_symlink() for part in (origin, src.parent)):
                 raise FileNotFoundError("照片缺失或使用了符号链接：" + str(src))
             dst = target / filename
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -261,18 +262,30 @@ def main() -> int:
         (staging / "backup").mkdir()
         (staging / "photos").mkdir()
         (staging / "temp").mkdir()
-        # SQLite backup API 包括已提交的 WAL 内容，旧库本身完全不写入。
-        with sqlite3.connect("file:" + old_db.as_posix() + "?mode=ro", uri=True) as src:
-            with sqlite3.connect(staging / "data" / "app.db") as dst:
+        # Work only on a private copy: opening even a read-only WAL database can
+        # create SHM sidecars. The old program must be stopped before copying.
+        probe = staging / "source.db"
+        for suffix in ("", "-wal", "-journal"):
+            original = pathlib.Path(str(old_db) + suffix)
+            if original.exists():
+                shutil.copy2(original, pathlib.Path(str(probe) + suffix))
+        with closing(sqlite3.connect(probe)) as src:
+            with closing(sqlite3.connect(staging / "data" / "app.db")) as dst:
                 src.backup(dst)
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            candidate = pathlib.Path(str(probe) + suffix)
+            if candidate.exists():
+                candidate.unlink()
         shutil.copy2(staging / "data" / "app.db", staging / "backup" / "before-convert.db")
-        with sqlite3.connect(staging / "data" / "app.db") as dst:
+        with closing(sqlite3.connect(staging / "data" / "app.db")) as dst:
             numbers = convert(dst)
             old_photos = find_source_photos(root, old_db)
             if numbers["photos"] and old_photos is None:
                 raise FileNotFoundError("旧库有照片，但找不到 photos 目录")
             photo_count = copy_photos(dst, old_photos, staging / "photos") if old_photos else 0
             require_good(dst)
+        if (root / "appsettings.json").is_file():
+            shutil.copy2(root / "appsettings.json", staging / "appsettings.json")
         staging.rename(output)
     except Exception:
         if staging.exists():

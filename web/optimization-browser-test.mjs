@@ -19,11 +19,11 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
   const goto = async route => page.goto(origin + '/#' + route, { waitUntil: 'networkidle' })
   const responseFor = (path, method) => page.waitForResponse(response => new URL(response.url()).pathname === '/api' + path && response.request().method() === method)
   const serverPhotoStatus = async id => (await fetch(directOrigin + '/photos/' + id)).status
-  const draft = async () => page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v2')))
+  const draft = async () => page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v3')))
   const choose = async (locator, name) => { await locator.click(); await page.getByRole('option', { name, exact: true }).click() }
   async function beginInspection() {
     await goto('/points')
-    await page.evaluate(() => localStorage.removeItem('street-eco.inspection-draft.v2'))
+    await page.evaluate(() => localStorage.removeItem('street-eco.inspection-draft.v3'))
     await goto('/inspections/new')
     await page.getByTestId('inspection-point-search').fill(point.name)
     await page.getByTestId('inspection-point-option').filter({ hasText: point.name }).click()
@@ -133,7 +133,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
     })
 
     await test('F04 all dirty batch close paths preserve edits unless explicitly discarded', async () => {
-      const record = await api('/inspections', { method: 'POST', body: { pointId: point.id, date: bootstrap.today, inspector: '关闭回归', result: 'issues', issues: [{ description: '问题甲', deadline: bootstrap.today }, { description: '问题乙', deadline: bootstrap.today }] } })
+      const record = await api('/inspections', { method: 'POST', body: { pointId: point.id, date: bootstrap.today, inspector: '关闭回归', result: 'issues', issues: [{ issueTypeId: bootstrap.issueTypes[0].id, description: '问题甲', deadline: bootstrap.today }, { issueTypeId: bootstrap.issueTypes[1].id, description: '问题乙', deadline: bootstrap.today }] } })
       await goto('/inspections/' + record.inspection.id)
       const feedback = () => page.getByRole('dialog', { name: '记录反馈', exact: true })
       await page.getByTestId('batch-feedback').click()
@@ -215,7 +215,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
         pictures.push(await response.json())
       }
       const envelope = await draft()
-      assert.equal(envelope.version, 2)
+      assert.equal(envelope.version, 3)
       assert.equal(envelope.draft.result, 'issues')
       // Leave the live editor before seeding a large persisted fixture. Its
       // beforeunload/pagehide handlers correctly flush its one in-memory issue;
@@ -224,8 +224,8 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
       await page.getByRole('link', { name: '返回', exact: true }).first().click()
       await expect(page.getByTestId('inspection-save')).toHaveCount(0)
       await page.evaluate(({ envelope, pictures, today }) => {
-        envelope.draft.issues = Array.from({ length: 50 }, (_, i) => ({ key: i + 1, description: '性能观察问题' + i + '现场检查。'.repeat(100), requirement: '保留最后输入。', deadline: today, responsibleUnit: '测试社区', photos: i < 2 ? [pictures[i]] : [] }))
-        localStorage.setItem('street-eco.inspection-draft.v2', JSON.stringify(envelope))
+        envelope.draft.issues = Array.from({ length: 50 }, (_, i) => ({ key: i + 1, issueTypeId: envelope.draft.issues[0].issueTypeId, description: '性能观察问题' + i + '现场检查。'.repeat(100), requirement: '保留最后输入。', deadline: today, responsibleUnit: '测试社区', photos: i < 2 ? [pictures[i]] : [] }))
+        localStorage.setItem('street-eco.inspection-draft.v3', JSON.stringify(envelope))
       }, { envelope, pictures, today: bootstrap.today })
       await goto('/inspections/new')
       await expect(page.getByTestId('inspection-issue-description')).toHaveCount(50)
@@ -238,7 +238,7 @@ export async function verifyOptimization({ browser, origin, directOrigin, api, t
         Storage.prototype.setItem = function (key, value) {
           const start = performance.now()
           const result = original.call(this, key, value)
-          if (key === 'street-eco.inspection-draft.v2') writes.push({ milliseconds: performance.now() - start, characters: value.length })
+          if (key === 'street-eco.inspection-draft.v3') writes.push({ milliseconds: performance.now() - start, characters: value.length })
           return result
         }
         const input = document.querySelectorAll('[data-testid="inspection-issue-description"]')[49]

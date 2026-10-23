@@ -33,6 +33,12 @@ class Samples(word.WordSmoke):
                 body['communityId'], body['location'] = point['communityId'], point['address']
         return super().json(method, path, body, **kwargs)
 
+    def issue_body(self, description, deadline, photo_ids=None, responsible=None):
+        if not self.baseline_contract:
+            return super().issue_body(description, deadline, photo_ids, responsible)
+        return {"description": description, "requirement": "清理并拍照反馈",
+                "deadline": deadline.isoformat(), "photoIds": photo_ids or [], "responsibleUnit": responsible}
+
     def picture(self, phase, width=960, height=640):
         self.sequence += 1
         # Textured, numbered synthetic scene: not a user photo or a flat swatch.

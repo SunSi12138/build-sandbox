@@ -4,8 +4,8 @@ import path from 'node:path'
 
 // Downloads originate from the visible v2 controls against the packaged process.
 // The supplied inspection is fully closed; all images were added through the production uploader.
-export async function verifyWordDownloads({ page, origin, evidence, inspectionId, campaignId, communityId, today, report, screenshot }) {
-  assert(inspectionId && campaignId, 'Seven Word exports require a closed inspection and a campaign')
+export async function verifyWordDownloads({ page, origin, evidence, inspectionId, campaignId, activityId, communityId, today, report, screenshot }) {
+  assert(inspectionId && campaignId && activityId, 'Nine Word exports require a closed inspection, campaign and activity')
   const output = path.join(evidence, 'word-samples')
   await mkdir(output, { recursive: true })
   async function download(testId, kind, destination) {
@@ -54,7 +54,17 @@ export async function verifyWordDownloads({ page, origin, evidence, inspectionId
   await page.getByTestId('export-campaign-record').waitFor()
   await download('export-campaign-record', '整治记录单', 'campaign-record.docx')
   await ledger('campaign', true, 'campaign-ledger.docx')
+  await page.goto(origin + '/#/activities/' + activityId, { waitUntil: 'networkidle' })
+  await download('export-activity-record', '活动开展情况记录单', 'activity-record.docx')
+  await page.goto(origin + '/#/activities', { waitUntil: 'networkidle' })
+  await page.getByRole('button', { name: '导出台账', exact: true }).click()
+  const activityDialog = page.getByRole('dialog', { name: '导出活动台账', exact: true })
+  await activityDialog.getByLabel('开始日期', { exact: true }).fill(today)
+  await activityDialog.getByLabel('结束日期', { exact: true }).fill(today)
+  await activityDialog.getByRole('checkbox', { name: '附活动照片', exact: true }).check()
+  await download('activity-ledger-export', '活动台账', 'activity-ledger.docx')
+  await activityDialog.waitFor({ state: 'hidden' })
   const kinds = report.wordDownloads.map(item => item.kind)
-  for (const required of ['排查记录单', '整改通知单', '整改记录单', '排查台账', '整改台账', '整治记录单', '整治台账']) assert(kinds.includes(required), 'Missing visible Word export: ' + required)
+  for (const required of ['排查记录单', '整改通知单', '整改记录单', '排查台账', '整改台账', '整治记录单', '整治台账', '活动开展情况记录单', '活动台账']) assert(kinds.includes(required), 'Missing visible Word export: ' + required)
   await page.setViewportSize({ width: 375, height: 812 })
 }

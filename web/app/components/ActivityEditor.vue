@@ -13,7 +13,7 @@ interface State {
   organizer: string; participants: string; participantCount: string; content: string; outcome: string; notes: string
   photos: PhotoUploadDto[]
 }
-function empty(): State { return { name: '', typeId: '', communityId: '', location: '', date: todayLocal(), endDate: '',
+function empty(): State { return { name: '', typeId: '', communityId: 'all', location: '', date: todayLocal(), endDate: '',
   organizer: '', participants: '', participantCount: '', content: '', outcome: '', notes: '', photos: [] } }
 const state = reactive<State>(empty())
 const initializing = ref(true)
@@ -23,7 +23,7 @@ const uploadFailed = ref(false)
 const error = ref('')
 const saved = ref(false)
 const ready = ref(false)
-const communities = computed(() => [{ label: '全部社区或跨社区', value: '' },
+const communities = computed(() => [{ label: '全部社区或跨社区', value: 'all' },
   ...(bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id }))])
 const types = computed(() => (bootstrap.value?.activityTypes ?? []).map(item => ({ label: item.name, value: item.id })))
 const disabled = computed(() => initializing.value || saving.value)
@@ -56,7 +56,7 @@ watch(() => props.initial, initial => {
   if (!initial) return
   const record = initial.activity
   Object.assign(state, {
-    name: record.name, typeId: record.typeId, communityId: record.communityId ?? '', location: record.location,
+    name: record.name, typeId: record.typeId, communityId: record.communityId ?? 'all', location: record.location,
     date: record.date, endDate: record.endDate ?? '', organizer: record.organizer, participants: record.participants,
     participantCount: record.participantCount === null ? '' : String(record.participantCount),
     content: record.content, outcome: record.outcome, notes: record.notes,
@@ -70,6 +70,7 @@ async function initialize() {
     if (!props.initial) {
       state.organizer = bootstrap.value?.settings.issuingUnit ?? ''
       restoreDraft()
+      if (!state.communityId) state.communityId = 'all'
     }
     ready.value = true
   } catch (cause) { error.value = errorMessage(cause) }
@@ -95,7 +96,7 @@ async function save() {
   error.value = ''
   const body: ActivityWriteRequest = {
     name: state.name.trim(), typeId: state.typeId, date: state.date, endDate: state.endDate || null,
-    communityId: state.communityId || null, location: state.location, organizer: state.organizer,
+    communityId: state.communityId === 'all' ? null : state.communityId, location: state.location, organizer: state.organizer,
     participants: state.participants, participantCount: state.participantCount ? Number(state.participantCount) : null,
     content: state.content.trim(), outcome: state.outcome, notes: state.notes, photoIds: state.photos.map(photo => photo.id)
   }

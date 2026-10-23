@@ -355,7 +355,7 @@ try {
   })
 
   let inspectionId, issueId, closedInspectionId, campaignId, fixtureJpeg
-  await test('Regular mobile inspection: worker JPEG, thumbnail, WASM fallback and version-2 draft', async () => {
+  await test('Regular mobile inspection: worker JPEG, thumbnail, WASM fallback and version-3 draft', async () => {
     await page.goto(origin + '/#/inspections/new', { waitUntil: 'networkidle' })
     await page.getByTestId('inspection-point-search').fill(point.name)
     await page.getByTestId('inspection-point-option').filter({ hasText: point.name }).click()
@@ -390,8 +390,8 @@ try {
     assert.equal(await page.locator('[data-compression-engine="canvas-fallback"]').count(), 1)
     report.compression.canvasFallbackBytes = fallback.response.request().postDataBuffer().length
     await context.unroute('**/*.wasm'); expectedWasmFailure = false
-    const draft = await page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v2')))
-    assert.equal(draft.version, 2)
+    const draft = await page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v3')))
+    assert.equal(draft.version, 3)
     assert.deepEqual(draft.draft.issues[0].photos.map(photo => photo.id), [first.photo.id, fallback.photo.id])
     await page.reload({ waitUntil: 'networkidle' })
     assert.equal(await page.getByTestId('inspection-issue-description').first().inputValue(), description)
@@ -401,7 +401,7 @@ try {
     await page.getByTestId('inspection-save').click()
     const record = await (await saved).json(); inspectionId = record.inspection.id; issueId = record.issues[0].id
     await page.waitForURL('**/#/inspections/' + inspectionId)
-    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.inspection-draft.v2')), null)
+    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.inspection-draft.v3')), null)
     assert.equal((await api('/issues/' + issueId)).photos.length, 2)
     await assertMobileActionLayout('已保存')
   })
@@ -570,13 +570,14 @@ try {
     activityId = result.activity.id
     await page.waitForURL('**/#/activities/' + activityId)
     assert.equal(result.photos.length, 1)
+    assert.equal(result.activity.communityId, null)
     const download = page.waitForEvent('download')
     await page.getByTestId('export-activity-record').click()
     assert((await download).suggestedFilename().endsWith('.docx'))
   })
 
   await test('Nine Word exports download through the current UI', async () => {
-    await verifyWordDownloads({ page, origin, evidence, inspectionId: closedInspectionId, campaignId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
+    await verifyWordDownloads({ page, origin, evidence, inspectionId: closedInspectionId, campaignId, activityId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
   })
 
   await test('Local listen popover: mutually exclusive all-interfaces selection and live rebind', async () => {
@@ -635,7 +636,7 @@ try {
     }
     await page.setViewportSize({ width: 360, height: 800 })
     for (const [name, route, title] of pages) { await page.goto(origin + '/#' + route, { waitUntil: 'networkidle' }); if (name === 'settings') await page.reload({ waitUntil: 'networkidle' }); await waitForVisualPage(name, title); await visualAssertions(name, 360) }
-    assert.equal(report.screenshots.length, 27)
+    assert.equal(report.screenshots.length, pages.length * 3)
   })
 
   await test('Fully offline UI keeps its local fonts, colors and icons', async () => {

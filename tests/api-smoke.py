@@ -60,14 +60,21 @@ def day(value: dt.date) -> str:
 
 
 def database_rows(path: Path) -> dict:
-    with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database:
-        tables = [row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
-        # Names come from this test application's schema; quote identifiers rather
-        # than treating them as SQL fragments. Values elsewhere are parameterized.
-        return {
-            table: database.execute('SELECT * FROM "' + table.replace('"', '""') + '" ORDER BY 1').fetchall()
-            for table in tables
-        }
+    # Inspect a private copy, including WAL commits. A just-restored WAL-mode
+    # database can lack sidecars; read-only opening it fails on some SQLite
+    # builds. Never create inspection sidecars beside the live database.
+    with tempfile.TemporaryDirectory(prefix="hbtool-test-snapshot-") as temporary:
+        snapshot = Path(temporary) / "app.db"
+        for suffix in ("", "-wal", "-journal"):
+            source = Path(str(path) + suffix)
+            if source.exists():
+                shutil.copy2(source, Path(str(snapshot) + suffix))
+        with contextlib.closing(sqlite3.connect(snapshot)) as database:
+            tables = [row[0] for row in database.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+            return {
+                table: database.execute('SELECT * FROM "' + table.replace('"', '""') + '" ORDER BY 1').fetchall()
+                for table in tables
+            }
 
 
 class ApiSmoke:
@@ -833,6 +840,18 @@ class ApiSmoke:
         require(bool(issue_types) and issue_types[0]["id"] == self.bootstrap["issueTypes"][0]["id"], "Missing problem dictionary")
         new_type = self.json("POST", "/api/issue-types", {"name": "特殊环保问题"}, expected=201)
         require(self.json("PUT", "/api/issue-types/" + new_type["id"], {"name": "特殊污染问题"})["name"] == "特殊污染问题", "Problem type rename failed")
+        issue = {**self.issue_body("分类回归问题", self.today), "issueTypeId": new_type["id"]}
+        invalid = self.inspection_body(self.point["id"], issues=[{**issue, "issueTypeId": ""}])
+        self.json("POST", "/api/inspections", invalid, expected=400)
+        classified = self.create_inspection(self.point["id"], issues=[issue])
+        require(classified["issues"][0]["issueTypeName"] == "特殊污染问题", "Issue classification was not saved")
+        self.json("DELETE", "/api/issue-types/" + new_type["id"] + "?confirm=true", expected=409)
+        self.json("PUT", "/api/issue-types/" + new_type["id"], {"name": "分类改名"})
+        detail = self.json("GET", "/api/inspections/" + classified["inspection"]["id"])
+        require(detail["issues"][0]["issueTypeName"] == "特殊污染问题", "Issue history changed after dictionary rename")
+        filtered = self.json("GET", "/api/inspections?issueTypeId=" + new_type["id"])
+        require(ids(filtered["items"]) == {classified["inspection"]["id"]}, "Issue type filter matched wrong inspections")
+        self.json("DELETE", "/api/inspections/" + classified["inspection"]["id"] + "?confirm=true", expected=204)
         self.json("DELETE", "/api/issue-types/" + new_type["id"] + "?confirm=true", expected=204)
         types = self.json("GET", "/api/activity-types")
         require(len(types) >= 6, "Default activity types are incomplete")
@@ -853,6 +872,20 @@ class ApiSmoke:
         listing = self.json("GET", "/api/activities?typeId=" + custom["id"])
         require(activity_id in ids(listing["items"]), "Activity type filter lost record")
         require(self.json("GET", "/api/activities?typeId=missing")["total"] == 0, "Invalid activity type matched unexpected records")
+        for route in ("/api/activities/" + activity_id + "/export/record",
+                      "/api/exports/activity-ledger?from=" + day(self.today) + "&to=" + day(self.today) + "&photos=true"):
+            _, document = self.request("GET", route)
+            with zipfile.ZipFile(io.BytesIO(document)) as archive:
+                images = [name for name in archive.namelist() if name.startswith("word/media/")]
+                require(len(images) == 1 and archive.read(images[0]) == JPEG, "Activity export lost the original photo")
+                require("专题部署" in archive.read("word/document.xml").decode("utf-8"), "Activity export lost historical type name")
+        _, backup = self.request("GET", "/api/backups/download")
+        preview = self.json("PUT", "/api/backups/restore/prepare", raw=backup, content_type="application/zip")
+        require(preview["activityCount"] == 1, "Restore preview lost activity count")
+        self.json("DELETE", "/api/activities/" + activity_id + "?confirm=true", expected=204)
+        self.json("POST", "/api/backups/restore", {"token": preview["token"], "confirm": True})
+        restored = self.json("GET", "/api/activities/" + activity_id)
+        require(restored == detail, "Backup restore changed activity data or photos")
         edited = self.json("PUT", "/api/activities/" + activity_id, {**body, "name": "环保专题学习", "participantCount": 20, "photoIds": []})
         require(edited["activity"]["name"] == "环保专题学习" and edited["activity"]["participantCount"] == 20 and not edited["photos"], "Activity edit/photo removal failed")
         for path in ("/api/activities/" + activity_id + "/export/record",

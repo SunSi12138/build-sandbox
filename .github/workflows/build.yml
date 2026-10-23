@@ -80,6 +80,9 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x86
+      - name: Legacy database conversion regression
+        if: matrix.rid == 'linux-x64'
+        run: python3 -m unittest discover -s tests -p 'test_convert_database.py' -v
       - name: Unit tests
         if: matrix.rid == 'linux-x64'
         run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror

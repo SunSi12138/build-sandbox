@@ -41,6 +41,9 @@ def main() -> None:
             raise ValueError(f"Frontend cannot include symbolic links: {file}")
         if file.is_file():
             files.append((file, "hbtool/wwwroot/" + file.relative_to(args.web_static).as_posix(), 0o644))
+    root = Path(__file__).resolve().parent.parent
+    files.extend([(root / "scripts/convert_database.py", "hbtool/tools/convert_database.py", 0o644),
+                  (root / "docs/database-conversion.md", "hbtool/tools/database-conversion.md", 0o644)])
     args.output.mkdir(parents=True, exist_ok=True)
     target = args.output / "hbtool.zip"
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:

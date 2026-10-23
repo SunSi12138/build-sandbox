@@ -110,7 +110,7 @@ export async function verifyRound3({ browser, origin, directOrigin, api, test, r
     await test('R3 point management downloads three ledgers with the selected owners only', async () => {
       await api('/campaigns', { method: 'POST', body: { name: '乙点位整治不应出现', pointId: excluded.id, typeId: bootstrap.campaignTypes[0].id, date: bootstrap.today, content: '乙点位内容' } })
       for (const current of [point, excluded]) {
-        await api('/inspections', { method: 'POST', body: { pointId: current.id, date: bootstrap.today, inspector: '张三 李四', result: 'issues', issues: [{ description: current.name + '问题', requirement: '清理', deadline: bootstrap.today }] } })
+        await api('/inspections', { method: 'POST', body: { pointId: current.id, date: bootstrap.today, inspector: '张三 李四', result: 'issues', issues: [{ issueTypeId: bootstrap.issueTypes[0].id, description: current.name + '问题', requirement: '清理', deadline: bootstrap.today }] } })
       }
       await go('/points')
       await page.getByTestId('point-ledger-mobile').click()
