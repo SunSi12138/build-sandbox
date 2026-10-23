@@ -36,14 +36,14 @@ await page.goto(base+`/#/points/${place.id}`);await page.getByText('经营和使
 await page.setViewportSize({width:390,height:844});await page.goto(base+'/#/inspections/new?pointId='+place.id);await page.getByRole('heading',{name:'检查内容',exact:true}).waitFor();await page.screenshot({path:path.join(output,'inspection-mobile.png'),fullPage:true})
 await page.getByTestId('photo-file-input').first().setInputFiles(path.join(output,'map-desktop.png'))
 await page.getByTestId('photo-uploaded').first().waitFor({timeout:30000})
-await page.getByRole('button',{name:'存草稿',exact:true}).click()
+await page.getByRole('button',{name:'存入草稿箱',exact:true}).click()
 await page.waitForFunction(async()=>{const data=await(await fetch('/api/records/draft')).json();return data.length===1})
 const draft=await api('/api/records/draft');if(draft[0].data.photos.length!==1)throw Error('Shared draft photo not saved')
 await page.goto(base+'/#/statistics');await page.getByRole('heading',{name:'工作统计',exact:true}).waitFor();await page.getByText('按网格',{exact:true}).waitFor()
 await page.screenshot({path:path.join(output,'statistics-mobile.png'),fullPage:true})
 if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1))throw Error('Mobile horizontal overflow')
 await page.goto(base+'/#/reports');await page.getByRole('heading',{name:'统计导出',exact:true}).waitFor();await page.getByLabel('选择第 1 条').check()
-const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'导出 Excel',exact:true}).click();const download=await downloadPromise;await download.saveAs(path.join(output,'勾选导出.xlsx'))
+const downloadPromise=page.waitForEvent('download');await page.getByRole('button',{name:'导出所选 1 条 Excel',exact:true}).click();const download=await downloadPromise;await download.saveAs(path.join(output,'勾选导出.xlsx'))
 await browser.close()
 const result={api:'passed',word:true,excel:true,compressedPhoto:true,sharedDraft:true,statistics:true,selectedExport:true,lanAddress:lan,externalRequests:external,pageErrors:errors,placeId:place.id,inspectionId:inspection.inspection.id}
 await fs.writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));if(errors.length||external.length)process.exitCode=1

@@ -3,12 +3,14 @@ import type { DashboardDto } from '~/types/api'
 import { errorMessage, frequencyLabel } from '~/utils/format'
 useHead({ title: '工作首页 · 社区管理' })
 const dashboard = ref<DashboardDto | null>(null), loading = ref(true), error = ref('')
-async function load() { loading.value = true; error.value = ''; try { dashboard.value = await $fetch<DashboardDto>('/api/dashboard') } catch (value) { error.value = errorMessage(value) } finally { loading.value = false } }
+const {bootstrap,load:loadApp}=useAppData()
+const pointEditor=ref(false)
+async function load() { loading.value = true; error.value = ''; try { await loadApp();dashboard.value = await $fetch<DashboardDto>('/api/dashboard') } catch (value) { error.value = errorMessage(value) } finally { loading.value = false } }
 const cards = computed(() => dashboard.value ? [
   { label: '逾期未完成', count: dashboard.value.overdue.count, to: '/inspections?overdue=true', tone: 'danger' },
   { label: '3 天内到期', count: dashboard.value.dueSoon.count, to: '/inspections?dueSoon=true', tone: 'warning' },
   { label: '待复查', count: dashboard.value.awaitingReview.count, to: '/inspections?awaitingReview=true', tone: 'info' },
-  { label: '超周期未检查', count: dashboard.value.missedInspections.count, to: '/points?missed=true', tone: 'neutral' }
+  { label: '场所到期未查', count: dashboard.value.missedInspections.count, to: '/points?missed=true', tone: 'neutral' }
 ] : [])
 onMounted(load)
 </script>
@@ -16,13 +18,15 @@ onMounted(load)
   <div class="page-stack">
     <PageHeader title="首页"><template #actions><SystemListen /></template></PageHeader>
     <PageState :loading="loading" :error="error" @retry="load"><template v-if="dashboard">
+      <section v-if="bootstrap" v-show="!bootstrap.communities.length" class="panel panel-body space-y-2"><h2 class="section-title">先添加一个网格</h2><p class="text-sm text-muted">添加后，就能在地图上登记场所和检查。</p><div class="flex gap-2 flex-wrap"><QuickGridCreate @created="pointEditor=true" /><UButton to="/imports" label="从 Excel 导入" variant="outline" color="neutral" /></div></section>
       <section class="stats-grid" aria-label="工作提醒"><NuxtLink v-for="card in cards" :key="card.label" :to="card.to" class="stat-block" :data-tone="card.count ? card.tone : 'neutral'"><span class="stat-label">{{ card.label }}</span><strong class="stat-number">{{ card.count }}</strong></NuxtLink></section>
-      <div class="quick-actions"><UButton to="/reminders" label="本期应检查" color="neutral" variant="outline" /><UButton to="/statistics" label="工作统计" color="neutral" variant="outline" /><UButton to="/drafts" label="检查草稿" color="neutral" variant="outline" /><UButton to="/inspections/new" icon="i-lucide-plus" label="登记检查" data-testid="home-new-inspection" /><UButton to="/plans" icon="i-lucide-list-checks" label="检查安排" color="neutral" variant="outline" /><UButton to="/map" icon="i-lucide-map" label="查看地图" color="neutral" variant="outline" /></div>
+      <div class="quick-actions"><UButton to="/inspections/new" icon="i-lucide-plus" label="登记检查" data-testid="home-new-inspection" /><UButton label="新增场所" variant="outline" @click="pointEditor=true" /><UButton to="/drafts" label="继续填草稿" color="neutral" variant="outline" /><UButton to="/plans" icon="i-lucide-list-checks" label="检查安排" color="neutral" variant="outline" /><UButton to="/reminders" label="按检查类型查漏" color="neutral" variant="outline" /></div>
       <div class="dashboard-columns"><section><div class="section-heading"><h2 class="section-title">待办</h2><UButton to="/inspections?openOnly=true" label="查看全部" color="neutral" variant="link" data-testid="home-all-todos" /></div><div class="group-list" data-testid="home-todos"><InspectionRow v-for="record in dashboard.todos?.slice(0, 5) ?? []" :key="record.id" :record="record" /><EmptyState v-if="!dashboard.todos?.length" title="暂无待办" icon="i-lucide-circle-check" /></div></section>
-        <div class="dashboard-right"><section><div class="section-heading"><h2 class="section-title">超周期未检查</h2><UButton to="/points?missed=true" label="查看全部" color="neutral" variant="link" /></div><div class="group-list"><div v-for="point in dashboard.missedInspections.items.slice(0, 5)" :key="point.id" class="list-row"><NuxtLink :to="`/points/${point.id}`" class="row-body"><p class="row-title"><span>{{ point.name }}</span></p><p class="row-secondary">{{ point.communityName }} · {{ frequencyLabel(point.frequency) }}</p></NuxtLink><UButton :to="{ path: '/inspections/new', query: { pointId: point.id } }" label="检查" color="neutral" variant="outline" /></div><EmptyState v-if="!dashboard.missedInspections.items.length" title="暂无超周期场所" icon="i-lucide-map-pin" /></div></section>
+        <div class="dashboard-right"><section><div class="section-heading"><h2 class="section-title">场所到期未查</h2><UButton to="/points?missed=true" label="查看全部" color="neutral" variant="link" /></div><div class="group-list"><div v-for="point in dashboard.missedInspections.items.slice(0, 5)" :key="point.id" class="list-row"><NuxtLink :to="`/points/${point.id}`" class="row-body"><p class="row-title"><span>{{ point.name }}</span></p><p class="row-secondary">{{ point.communityName }} · {{ frequencyLabel(point.frequency) }}</p></NuxtLink><UButton :to="{ path: '/inspections/new', query: { pointId: point.id } }" label="检查" color="neutral" variant="outline" /></div><EmptyState v-if="!dashboard.missedInspections.items.length" title="暂无超周期场所" icon="i-lucide-map-pin" /></div></section>
           <section><div class="section-heading"><h2 class="section-title">最近检查</h2><UButton to="/inspections" label="查看全部" color="neutral" variant="link" /></div><div class="group-list"><InspectionRow v-for="record in dashboard.recentInspections?.slice(0, 5) ?? []" :key="record.id" :record="record" /><EmptyState v-if="!dashboard.recentInspections?.length" title="暂无检查记录" /></div></section>
         </div>
       </div>
     </template></PageState>
+    <PointEditor v-model:open="pointEditor" @saved="point=>navigateTo(`/points/${point.id}`)" />
   </div>
 </template>

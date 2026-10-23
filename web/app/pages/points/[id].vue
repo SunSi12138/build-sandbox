@@ -119,7 +119,7 @@ watch(id, load, { immediate: true })
         ><StatusBadge v-if="detail.point.disabled" tone="neutral">已停用</StatusBadge></template
       ><template v-if="detail" #actions
         ><UButton
-          label="编辑"
+          label="编辑场所"
           color="neutral"
           variant="outline"
           @click="editorOpen = true" /><UButton
@@ -129,14 +129,14 @@ watch(id, load, { immediate: true })
           ><span class="mobile-only">检查</span><span class="desktop-only">新增检查</span></UButton
         ><UButton :to="{ path: '/campaigns/new', query: { pointId: id } }" :disabled="detail.point.disabled" color="neutral" variant="outline" class="header-action" data-testid="point-new-campaign"><span class="mobile-only">整治</span><span class="desktop-only">新增整治</span></UButton><UDropdownMenu :items="menu"
           ><UButton
-            icon="i-lucide-ellipsis"
+            label="更多" icon="i-lucide-ellipsis"
             color="neutral"
             variant="ghost"
             aria-label="更多" /></UDropdownMenu></template
     ></PageHeader>
     <PageState :loading="loading" :error="error" @retry="load"
       ><template v-if="detail">
-        <section class="panel">
+        <section v-if="photos.length" class="panel">
           <div class="panel-head">
             <h2 class="section-title">现场图片</h2>
             <span class="text-xs text-muted">{{ photos.length }}/9</span>

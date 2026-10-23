@@ -72,21 +72,21 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
   <section class="form-section">
     <h2>场所</h2>
     <div class="chip-row mb-2">
-      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'regular'" :disabled="disabled" @click="mode = 'regular'">常态场所</UButton>
+      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'regular'" :disabled="disabled" @click="mode = 'regular'">选择已有场所</UButton>
       <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'temporary'" :disabled="disabled" :data-testid="`${prefix}-temporary-mode`" @click="mode = 'temporary'">临时场所</UButton>
     </div>
     <template v-if="mode === 'regular'">
-      <UFormField label="常态场所" name="pointId" required>
+      <UFormField label="已建档场所" name="pointId" required>
         <div v-if="selected && !expanded" class="flex min-w-0 items-center gap-2" :data-testid="`${prefix}-selected-point`">
           <span class="min-w-0 flex-1 truncate text-sm">{{ selected.name }} · {{ selected.communityName }} · {{ selected.typeName }}</span>
           <UButton label="更换" color="neutral" variant="link" :disabled="disabled" @click="expanded = true" />
         </div>
         <div v-else>
-          <UInput v-model="search" type="search" icon="i-lucide-search" placeholder="搜索场所" aria-label="搜索常态场所" :data-testid="`${prefix}-point-search`" class="mb-2 w-full" :disabled="disabled" />
+          <UInput v-model="search" type="search" icon="i-lucide-search" placeholder="搜索场所" aria-label="搜索已建档场所" :data-testid="`${prefix}-point-search`" class="mb-2 w-full" :disabled="disabled" />
           <UButton v-for="point in points" :key="point.id" type="button" color="neutral" variant="ghost" class="h-14 w-full justify-start border-b border-[var(--divider)] text-left" :aria-pressed="pointId === point.id" :disabled="disabled" :data-testid="`${prefix}-point-option`" @click="choose(point)">
             <span class="min-w-0"><span class="block truncate font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}</span></span>
           </UButton>
-          <p v-if="!searching && !points.length" class="py-3 text-sm text-muted">暂无常态场所</p>
+          <p v-if="!searching && !points.length" class="py-3 text-sm text-muted">暂无已建档场所</p>
           <UButton v-if="points.length < total" type="button" label="加载更多" color="neutral" variant="link" :disabled="disabled" :loading="searching" @click="list(false)" />
         </div>
       </UFormField>
@@ -94,7 +94,7 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
     </template>
     <div v-else class="field-grid">
       <UFormField label="名称" name="newPoint.name" required class="field-full"><UInput v-model="newPoint.name" :maxlength="200" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-name`" /></UFormField>
-      <UFormField label="社区" name="newPoint.communityId" required><USelect v-model="newPoint.communityId" :items="communities" placeholder="请选择" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-community`" /></UFormField>
+      <UFormField label="网格" name="newPoint.communityId" required><USelect v-model="newPoint.communityId" :items="communities" placeholder="请选择" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-community`" /></UFormField>
       <UFormField label="类型" name="newPoint.typeId" required><USelect v-model="newPoint.typeId" :items="types" placeholder="请选择" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-type`" /></UFormField>
       <UFormField label="详细地址" name="newPoint.address" required class="field-full"><UInput v-model="newPoint.address" :maxlength="1000" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-address`" /></UFormField>
       <UFormField label="联系人" name="newPoint.contact"><NameTagsInput v-model="newPoint.contact" :maxlength="100" :disabled="disabled" :data-testid="`${prefix}-temporary-contact`" /></UFormField>

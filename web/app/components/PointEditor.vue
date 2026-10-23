@@ -57,16 +57,16 @@ onBeforeUnmount(() => { overlayForm.value = false })
   <USlideover v-model:open="open" :title="point ? '编辑场所' : '新增场所'" :dismissible="!saving && !photosBusy" :close="!saving && !photosBusy" :ui="{ content: 'w-full max-w-[480px] max-md:max-w-none' }">
     <template #body>
       <UAlert v-if="error" :description="error" color="error" variant="subtle" class="mb-3" />
-      <p v-if="!loading && (!communities.length || !types.length)" class="mb-3 text-sm text-warning">请先维护社区和场所类型</p>
+      <p v-if="!loading && (!communities.length || !types.length)" class="mb-3 text-sm text-warning">请先添加网格，再登记场所</p>
       <UForm id="point-editor-form" :state="state" :disabled="loading || saving" :validate="validate" class="field-grid" @submit="save">
         <UFormField label="名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="point-name" /></UFormField>
-        <UFormField label="网格" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /></UFormField>
-        <UFormField label="类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
+        <UFormField label="网格" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /><QuickGridCreate :disabled="saving || loading" @created="grid=>{state.communityId=grid.id}" /></UFormField>
+        <UFormField label="场所形态" name="typeId" help="商店、出租等用途在建档后添加" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
-        <UFormField label="位置" name="coordinates" class="field-full"><LocationPicker v-model="mapShape" :disabled="saving" @picked="shape => {state.coordinates=shape.coordinates[0]!.join(',')}" /><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" @update:model-value="mapShape=null" /><CoordinateConverter v-model="state.coordinates" :disabled="saving" @converted="shape=>{mapShape=shape}" /></UFormField>
+        <UFormField label="位置" name="coordinates" class="field-full"><LocationPicker v-model="mapShape" :disabled="saving" @picked="shape => {state.coordinates=shape.coordinates[0]!.join(',')}" /><details class="mt-2"><summary class="cursor-pointer text-sm text-muted">填写或导入经纬度</summary><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" @update:model-value="mapShape=null" /><CoordinateConverter v-model="state.coordinates" :disabled="saving" @converted="shape=>{mapShape=shape}" /></details></UFormField>
         <UFormField label="联系人" name="contact"><NameTagsInput :disabled="loading || saving" v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
-        <UFormField label="检查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>
+        <details class="field-full" :open="state.frequency!=='irregular'"><summary class="cursor-pointer text-sm text-muted">场所整体巡查周期（可选）</summary><UFormField label="不区分检查类型的巡查周期" name="frequency" class="mt-3"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField><p class="text-xs text-muted mt-2">安全、卫生等分别定期检查，可在“检查类型”中设置周期。</p></details>
         <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="3" maxlength="8000" class="w-full" /></UFormField>
         <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" phase="point" :max="9" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" /></UFormField>
         <UFormField v-if="point" label="状态" name="disabled" class="field-full"><div class="check-row"><UCheckbox v-model="state.disabled" label="停用" /></div></UFormField>

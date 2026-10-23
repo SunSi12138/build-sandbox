@@ -59,7 +59,7 @@ watch(() => props.pointId, load, { immediate: true })
 </script>
 <template>
   <section class="panel">
-    <div class="panel-head"><h2 class="section-title">经营和使用情况</h2><UButton label="添加用途" icon="i-lucide-plus" variant="outline" @click="edit()" /></div>
+    <div class="panel-head"><h2 class="section-title">经营和使用情况</h2><UButton label="添加使用情况" icon="i-lucide-plus" variant="outline" @click="edit()" /></div>
     <UAlert v-if="error && !open && !unitOpen" :description="error" color="error" />
     <div class="panel-body flex flex-wrap items-center gap-3"><UCheckbox v-model="showEnded" label="包括已结束" /><UButton label="管理楼层、房间" color="neutral" variant="link" @click="editUnit(); unitOpen = true" /></div>
     <div v-for="item in shown" :key="item.id" class="use-row">
@@ -70,12 +70,12 @@ watch(() => props.pointId, load, { immediate: true })
       <div v-if="item.data.photoIds?.length" class="flex gap-2 mt-2 overflow-x-auto"><a v-for="photo in item.data.photoIds" :key="photo" :href="`/photos/${photo}`" target="_blank" aria-label="查看照片"><img :src="`/photos/${photo}?size=thumb`" class="size-16 rounded object-cover" loading="lazy" alt="使用情况照片" /></a></div>
       <div class="flex gap-2 flex-wrap mt-3"><UButton label="修改" color="neutral" variant="outline" @click="edit(item)" /><UButton v-if="item.data.state !== '已结束'" label="登记检查" :to="`/inspections/new?pointId=${pointId}&useId=${item.id}`" variant="outline" /><UButton v-if="item.data.state !== '已结束'" label="停业 / 退租" color="neutral" variant="ghost" @click="edit(item, true)" /><UButton label="变更记录" color="neutral" variant="ghost" @click="history(item.id)" /></div>
     </div>
-    <EmptyState v-if="!shown.length" title="暂无使用记录" />
+    <EmptyState v-if="!shown.length" title="还没有登记商户、住户或其他使用情况" />
     <USlideover v-model:open="open" :title="current ? '修改使用情况' : '添加使用情况'" :dismissible="!locked" :close="!locked" :ui="{ content: 'w-full max-w-[560px]' }">
       <template #body><div class="space-y-4"><UAlert v-if="error" :description="error" color="error" />
         <UFormField label="店名 / 单位 / 使用名称" required><UInput v-model="name" class="w-full" :disabled="locked" /></UFormField>
         <UFormField label="所在楼层、房间"><USelect v-model="form.unitId" :items="unitOptions" class="w-full" :disabled="locked" /></UFormField>
-        <UFormField label="用途" required><div class="grid grid-cols-3 gap-3"><UCheckbox v-for="p in purposes" :key="p" :label="p" :disabled="locked" :model-value="form.purposes.includes(p)" @update:model-value="value => { form.purposes = value ? [...form.purposes, p] : form.purposes.filter(x => x !== p) }" /></div></UFormField>
+        <UFormField label="用途（可多选）" required><div class="grid grid-cols-3 gap-3"><UCheckbox v-for="p in purposes" :key="p" :label="p" :disabled="locked" :model-value="form.purposes.includes(p)" @update:model-value="value => { form.purposes = value ? [...form.purposes, p] : form.purposes.filter(x => x !== p) }" /></div></UFormField>
         <div class="field-grid"><UFormField label="联系人"><UInput v-model="form.contact" class="w-full" :disabled="locked" /></UFormField><UFormField label="联系电话"><UInput v-model="form.phone" type="tel" class="w-full" :disabled="locked" /></UFormField><UFormField label="开始日期"><UInput v-model="form.startDate" type="date" class="w-full" :disabled="locked" /></UFormField><UFormField label="面积（㎡）"><UInput v-model="form.area" type="number" min="0" class="w-full" :disabled="locked" /></UFormField></div>
         <UFormField v-if="form.purposes.includes('商店') || form.purposes.includes('生产加工')" label="经营内容"><UInput v-model="form.business" class="w-full" :disabled="locked" /></UFormField>
         <UFormField v-if="form.purposes.includes('仓库')" label="存放物品"><UInput v-model="form.storedGoods" class="w-full" :disabled="locked" /></UFormField>
@@ -89,12 +89,12 @@ watch(() => props.pointId, load, { immediate: true })
     <USlideover v-model:open="unitOpen" title="楼层、房间和分区" :dismissible="!busy" :ui="{ content: 'w-full max-w-[560px]' }"><template #body><div class="space-y-4">
       <UAlert v-if="error" :description="error" color="error" />
       <div v-for="unit in units" :key="unit.id" class="border-b border-default pb-3"><div class="flex justify-between gap-2"><strong>{{ unitLabel(unit.id) }}</strong><UBadge v-if="unit.archived" label="已停用" color="neutral" /></div><p class="text-sm text-muted">{{ unit.data.floor }} {{ unit.data.area ? `${unit.data.area}㎡` : '' }}</p><div class="flex gap-2 mt-2"><UButton label="修改" size="sm" variant="outline" color="neutral" :disabled="busy" @click="editUnit(unit)" /><UButton :label="unit.archived ? '恢复使用' : '停用'" size="sm" variant="ghost" color="neutral" :disabled="busy" @click="toggleUnit(unit)" /><UButton label="变更记录" size="sm" variant="ghost" color="neutral" @click="history(unit.id)" /></div></div>
-      <div class="flex justify-between items-center"><h3>{{ currentUnit ? '修改单元' : '添加单元' }}</h3><UButton v-if="currentUnit" label="改为新增" variant="link" @click="editUnit()" /></div>
+      <div class="flex justify-between items-center"><h3>{{ currentUnit ? '修改楼层 / 房间' : '添加楼层 / 房间' }}</h3><UButton v-if="currentUnit" label="改为新增" variant="link" @click="editUnit()" /></div>
       <UFormField label="名称" required><UInput v-model="unitName" placeholder="例如：一楼东侧" class="w-full" :disabled="busy" /></UFormField>
-      <UFormField label="位于哪个单元里面"><USelect v-model="unitForm.parentUnitId" :items="parentOptions" class="w-full" :disabled="busy" /></UFormField>
+      <UFormField label="上级楼层或房间"><USelect v-model="unitForm.parentUnitId" :items="parentOptions" class="w-full" :disabled="busy" /></UFormField>
       <div class="field-grid"><UFormField label="楼层"><UInput v-model="unitForm.floor" class="w-full" :disabled="busy" /></UFormField><UFormField label="面积（㎡）"><UInput v-model="unitForm.area" type="number" min="0" class="w-full" :disabled="busy" /></UFormField></div>
       <UFormField label="备注"><UTextarea v-model="unitForm.notes" class="w-full" :disabled="busy" /></UFormField>
-      <UButton :label="currentUnit ? '保存修改' : '添加单元'" :loading="busy" @click="saveUnit" />
+      <UButton :label="currentUnit ? '保存修改' : '添加楼层 / 房间'" :loading="busy" @click="saveUnit" />
     </div></template></USlideover>
     <RecordHistory v-model:open="historyOpen" :record-id="historyId" />
   </section>

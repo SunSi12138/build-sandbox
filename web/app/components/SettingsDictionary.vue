@@ -6,7 +6,7 @@ import { errorMessage } from '~/utils/format'
 const props = defineProps<{ kind: 'communities' | 'point-types' | 'campaign-types'; items: CommunityDto[] | PointTypeDto[] }>()
 const emit = defineEmits<{ changed: [] }>()
 const toast = useToast()
-const label = computed(() => props.kind === 'communities' ? '社区' : props.kind === 'point-types' ? '场所类型' : '整治类型')
+const label = computed(() => props.kind === 'communities' ? '网格' : props.kind === 'point-types' ? '场所形态' : '整治类型')
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 const saving = ref(false)
@@ -32,7 +32,6 @@ function beginDelete(item: CommunityDto | PointTypeDto) {
 function validate(state: typeof form): FormError[] {
   const errors: FormError[] = []
   if (!state.name.trim()) errors.push({ name: 'name', message: `请填写${label.value}名称。` })
-  if (props.kind === 'communities' && !state.title.trim()) errors.push({ name: 'title', message: '请填写通知单抬头全称。' })
   return errors
 }
 
@@ -41,7 +40,7 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    const body = props.kind === 'communities' ? { name: form.name.trim(), title: form.title.trim() } : { name: form.name.trim() }
+    const body = props.kind === 'communities' ? { name: form.name.trim(), title: form.title.trim() || form.name.trim() } : { name: form.name.trim() }
     await $fetch(`/api/${props.kind}${editingId.value ? `/${editingId.value}` : ''}`, { method: editingId.value ? 'PUT' : 'POST', body })
     editOpen.value = false
     emit('changed')
@@ -80,7 +79,7 @@ async function remove() {
     <template #body><UForm :id="`dictionary-${kind}-form`" :state="form" :validate="validate" class="space-y-3" @submit="save">
       <UAlert v-if="error" :description="error" color="error" variant="subtle" />
       <UFormField :label="`${label}名称`" name="name" required><UInput v-model="form.name" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
-      <UFormField v-if="kind === 'communities'" label="通知单抬头全称" name="title" required><UInput v-model="form.title" :maxlength="150" class="w-full" :disabled="saving" /></UFormField>
+      <details v-if="kind === 'communities'"><summary class="cursor-pointer text-sm text-muted">通知单抬头（可选）</summary><UFormField label="通知单抬头" name="title" class="mt-3"><UInput v-model="form.title" placeholder="留空使用网格名称" :maxlength="150" class="w-full" :disabled="saving" /></UFormField></details>
     </UForm></template>
     <template #footer><UButton color="neutral" variant="outline" :disabled="saving" @click="editOpen = false">取消</UButton><UButton :form="`dictionary-${kind}-form`" type="submit" :loading="saving">保存</UButton></template>
   </UModal>

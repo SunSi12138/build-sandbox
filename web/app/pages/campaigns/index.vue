@@ -130,7 +130,7 @@ watch(() => route.fullPath, load, { immediate: true })
       </div>
       <div class="filter-field">
         <label>社区</label
-        ><USelect v-model="communityId" :items="communities" aria-label="社区筛选" class="w-full" />
+        ><USelect v-model="communityId" :items="communities" aria-label="网格筛选" class="w-full" />
       </div>
       <div class="filter-field">
         <label>类型</label
