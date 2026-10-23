@@ -85,14 +85,14 @@ onMounted(fetchBackups)
     <UAlert v-if="restoreError && !confirmOpen" :color="cacheRefreshFailed ? 'warning' : 'error'" variant="subtle" :description="restoreError"><template v-if="cacheRefreshFailed" #actions><UButton color="neutral" variant="outline" @click="reloadPage">刷新</UButton></template></UAlert>
     <div v-if="restoredResult" class="text-xs text-muted break-all">保留位置：{{ restoredResult.preservedBackup }}</div>
     <section>
-      <div class="section-heading"><h2 class="section-title">每日数据库快照</h2><UButton color="neutral" variant="ghost" :loading="loading" @click="fetchBackups">刷新</UButton></div>
-      <p class="mb-3 text-[13px] leading-5 text-muted">每天 00:00 保存前一天的数据库快照，保留最近 14 份，不含照片。</p>
+      <div class="section-heading"><h2 class="section-title">自动备份（不含照片）</h2><UButton color="neutral" variant="ghost" :loading="loading" @click="fetchBackups">刷新</UButton></div>
+      <p class="mb-3 text-[13px] leading-5 text-muted">每天自动备份，保留最近 14 份。</p>
       <UAlert v-if="error" :description="error" color="error" variant="subtle"><template #actions><UButton color="neutral" variant="outline" @click="fetchBackups">重试</UButton></template></UAlert>
       <div v-else-if="loading && !overview" class="space-y-2"><USkeleton class="h-12 w-full" /><USkeleton class="h-12 w-full" /></div>
       <ul v-else-if="overview?.items.length" class="group-list">
         <li v-for="item in overview.items" :key="item.name" class="list-row !min-h-11 justify-between text-sm"><time>{{ item.date }}</time><span class="text-xs text-muted">{{ formatBytes(item.bytes) }}</span></li>
       </ul>
-      <EmptyState v-else title="暂无数据库快照" icon="i-lucide-database" />
+      <EmptyState v-else title="暂无自动备份" icon="i-lucide-database" />
     </section>
   </div>
   <UModal v-model:open="confirmOpen" title="恢复备份？" description="将覆盖当前数据库和照片，覆盖前保留旧数据。" :dismissible="!restoring" :close="!restoring">

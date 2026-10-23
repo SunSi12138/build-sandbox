@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { errorMessage, todayLocal } from '~/utils/format'
 import type { PageDto, PointDto } from '~/types/api'
+import { currentLedgerFilters, ledgerDates, ledgerFilterSummary, ledgerRanges } from '~/utils/ledger'
 import { downloadWord } from '~/utils/wordDownload'
 
 const open = defineModel<boolean>('open', { default: false })
-const props = defineProps<{ kind: 'inspection' | 'campaign' | 'point'; communityId?: string; typeId?: string }>()
+const props = defineProps<{ kind: 'inspection' | 'campaign' | 'point'; communityId?: string; typeId?: string; currentQuery?: Record<string, unknown> }>()
 const { bootstrap, load } = useAppData()
 const kind = ref<'inspection' | 'rectification' | 'campaign'>('inspection')
 const ledgerKind = computed(() => props.kind === 'campaign' ? 'campaign' : kind.value)
@@ -32,25 +33,54 @@ const error = ref('')
 const disabled = computed(() => busy.value || loading.value)
 const communities = computed(() => [{ label: '全部', value: 'all' }, ...(bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id }))])
 const campaignTypes = computed(() => [{ label: '全部', value: 'all' }, ...(bootstrap.value?.campaignTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
-const ranges = [{ label: '本月', value: 'month' }, { label: '本季', value: 'quarter' }, { label: '本年', value: 'year' }, { label: '自定义', value: 'custom' }]
+const ranges = ledgerRanges
+const scope = ref<'current' | 'custom'>('custom')
 const canIncludePhotos = computed(() => ledgerKind.value !== 'inspection')
+const query = computed(() => {
+  if (scope.value === 'current' && props.kind !== 'point') return currentLedgerFilters(props.kind, props.currentQuery)
+  const result: Record<string, string> = { from: from.value, to: to.value }
+  if (community.value !== 'all') result.communityId = community.value
+  if (ledgerKind.value === 'campaign' && campaignType.value !== 'all') result.typeId = campaignType.value
+  return result
+})
+const summary = computed(() => ledgerFilterSummary(props.kind === 'point' ? 'inspection' : props.kind, query.value, bootstrap.value))
+const preview = ref<number | null>(null), previewBusy = ref(false), previewError = ref('')
+let previewRequest: AbortController | undefined
+let previewTimer: ReturnType<typeof setTimeout> | undefined
+let previewVersion = 0
 function selectRange(value: string) {
   range.value = value
-  if (value === 'custom') return
-  const today = bootstrap.value?.today ?? todayLocal()
-  const [year, month] = today.split('-').map(Number)
-  const firstMonth = value === 'year' ? 1 : value === 'quarter' ? Math.floor(((month ?? 1) - 1) / 3) * 3 + 1 : month ?? 1
-  const lastMonth = value === 'year' ? 12 : value === 'quarter' ? firstMonth + 2 : firstMonth
-  const lastDay = new Date(year ?? 2026, lastMonth, 0).getDate()
-  from.value = `${year}-${String(firstMonth).padStart(2, '0')}-01`
-  to.value = `${year}-${String(lastMonth).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  if (value !== 'custom') {
+    const dates = ledgerDates(value, bootstrap.value?.today ?? todayLocal())
+    from.value = dates.from; to.value = dates.to
+  }
 }
+async function loadPreview() {
+  const version = ++previewVersion
+  previewRequest?.abort()
+  preview.value = null; previewError.value = ''
+  if (!open.value || props.kind === 'point') { previewBusy.value = false; return }
+  previewBusy.value = true
+  const controller = new AbortController(); previewRequest = controller
+  try {
+    const data = await $fetch<PageDto<unknown>>(`/api/${props.kind === 'campaign' ? 'campaigns' : 'inspections'}`, { signal: controller.signal, query: { ...query.value, page: 1, pageSize: 1 } })
+    if (version === previewVersion) preview.value = ledgerKind.value === 'rectification' ? data.matchingIssueCount ?? 0 : data.total
+  } catch (cause) { if (version === previewVersion && !controller.signal.aborted) previewError.value = errorMessage(cause) }
+  finally { if (version === previewVersion) previewBusy.value = false }
+}
+watch([open, query, ledgerKind], () => {
+  ++previewVersion; previewRequest?.abort(); clearTimeout(previewTimer)
+  preview.value = null; previewError.value = ''; previewBusy.value = open.value && props.kind !== 'point'
+  if (open.value) previewTimer = setTimeout(() => { void loadPreview() }, 150)
+}, { flush: 'sync' })
+onBeforeUnmount(() => { clearTimeout(previewTimer); previewRequest?.abort() })
 watch(open, async value => {
   if (!value) return
   error.value = ''
   selectedPoints.value = []
   pointSearch.value = ''
   kind.value = 'inspection'
+  scope.value = props.currentQuery !== undefined && props.kind !== 'point' ? 'current' : 'custom'
   community.value = props.communityId || 'all'
   campaignType.value = props.typeId || 'all'
   photos.value = false
@@ -60,19 +90,17 @@ watch(open, async value => {
   finally { loading.value = false }
 })
 async function exportLedger() {
-  if (disabled.value) return
-  if (!from.value || !to.value || from.value > to.value) { error.value = '请选择正确的时间范围'; return }
+  if (disabled.value || previewBusy.value || previewError.value) return
+  if (scope.value === 'custom' && (!from.value || !to.value || from.value > to.value)) { error.value = '请选择正确的时间范围'; return }
   if (props.kind === 'point' && !selectedPoints.value.length) { error.value = '请选择点位'; return }
   busy.value = true
   error.value = ''
   const name = ledgerKind.value === 'campaign' ? '整治台账' : kind.value === 'inspection' ? '排查台账' : '整改台账'
   const route = `${ledgerKind.value}-ledger`
-  const query = new URLSearchParams({ from: from.value, to: to.value })
-  if (community.value !== 'all') query.set('communityId', community.value)
-  if (ledgerKind.value === 'campaign' && campaignType.value !== 'all') query.set('typeId', campaignType.value)
-  if (props.kind === 'point') for (const point of selectedPoints.value) query.append('pointId', point.id)
-  if (canIncludePhotos.value) query.set('photos', String(photos.value))
-  try { await downloadWord(`/api/exports/${route}?${query}`, `${name}.docx`); open.value = false }
+  const parameters = new URLSearchParams({ ...query.value, scope: scope.value })
+  if (props.kind === 'point') for (const point of selectedPoints.value) parameters.append('pointId', point.id)
+  if (canIncludePhotos.value) parameters.set('photos', String(photos.value))
+  try { await downloadWord(`/api/exports/${route}?${parameters}`, `${name}.docx`); open.value = false }
   catch (cause) { error.value = errorMessage(cause) }
   finally { busy.value = false }
 }
@@ -105,7 +133,9 @@ onBeforeUnmount(() => { clearTimeout(pointTimer); pointSequence++ })
     <template #body>
       <div class="space-y-3">
         <UAlert v-if="error" :description="error" color="error" variant="subtle" />
-        <p v-if="props.kind !== 'point'" class="text-xs text-muted" data-testid="ledger-scope-help">{{ props.kind === 'campaign' ? '导出使用下方日期、社区及整治类型，列表搜索词不参与。' : '导出使用下方日期和社区，列表搜索、点位、类型及状态筛选不参与。' }}</p>
+        <UFormField v-if="currentQuery !== undefined && props.kind !== 'point'" label="导出范围">
+          <div class="chip-row"><UButton label="当前筛选" :aria-pressed="scope === 'current'" color="neutral" variant="ghost" class="filter-chip" :disabled="disabled" @click="scope = 'current'" /><UButton label="自定义范围" :aria-pressed="scope === 'custom'" color="neutral" variant="ghost" class="filter-chip" :disabled="disabled" @click="scope = 'custom'" /></div>
+        </UFormField>
         <UFormField v-if="props.kind !== 'campaign'" label="台账类型">
           <div class="chip-row">
             <UButton v-for="option in kindOptions" :key="option.value" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="kind === option.value" :data-testid="`ledger-kind-${option.value}`" :disabled="disabled" @click="kind = option.value">{{ option.label }}</UButton>
@@ -120,7 +150,8 @@ onBeforeUnmount(() => { clearTimeout(pointTimer); pointSequence++ })
             <UButton v-if="pointOptions.length < pointTotal" label="加载更多" color="neutral" variant="link" :loading="pointsBusy" :disabled="disabled" @click="listPoints(false)" />
           </div>
         </template>
-        <UFormField label="时间范围" help="日期单独选择，默认本月">
+        <template v-if="scope === 'custom'">
+        <UFormField label="时间范围">
           <div class="chip-row"><UButton v-for="option in ranges" :key="option.value" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="range === option.value" :disabled="disabled" @click="selectRange(option.value)">{{ option.label }}</UButton></div>
         </UFormField>
         <p v-if="range !== 'custom'" class="text-sm" data-testid="ledger-dates">{{ from }} 至 {{ to }}</p>
@@ -130,12 +161,16 @@ onBeforeUnmount(() => { clearTimeout(pointTimer); pointSequence++ })
         </div>
         <UFormField label="所属社区"><USelect v-model="community" :items="communities" class="w-full" :disabled="disabled" data-testid="ledger-community" /></UFormField>
         <UFormField v-if="ledgerKind === 'campaign'" label="整治类型"><USelect v-model="campaignType" :items="campaignTypes" class="w-full" :disabled="disabled" data-testid="ledger-campaign-type" /></UFormField>
+        </template>
+        <p class="text-sm text-muted" data-testid="ledger-summary">{{ summary }}</p>
+        <p v-if="props.kind !== 'point'" class="text-sm" aria-live="polite" data-testid="ledger-preview">{{ previewBusy ? '正在核对记录…' : preview === null ? '' : `预计 ${preview} ${ledgerKind === 'rectification' ? '项问题' : '条记录'}` }}</p>
+        <UAlert v-if="previewError" :description="previewError" color="error"><template #actions><UButton label="重试" @click="loadPreview" /></template></UAlert>
         <div v-if="canIncludePhotos" class="check-row"><UCheckbox v-model="photos" label="附照片" :disabled="disabled" data-testid="ledger-photos" /></div>
       </div>
     </template>
     <template #footer>
       <UButton label="取消" color="neutral" variant="outline" :disabled="disabled" @click="open = false" />
-      <UButton label="导出 Word" :loading="busy" :disabled="loading" data-testid="export-ledger" @click="exportLedger" />
+      <UButton label="导出 Word" :loading="busy" :disabled="loading || previewBusy || !!previewError" data-testid="export-ledger" @click="exportLedger" />
     </template>
   </UModal>
 </template>

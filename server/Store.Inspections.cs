@@ -28,7 +28,8 @@ public sealed partial class Store
             SELECT 1 FROM issues x WHERE x.inspection_id=n.id
             AND ($overdue=0 OR (x.status<>'closed' AND x.deadline<$today))
             AND ($soon=0 OR (x.status<>'closed' AND x.deadline>=$today AND x.deadline<=$through))
-            AND ($awaiting=0 OR x.status='feedback') AND ($open=0 OR x.status<>'closed')))
+            AND ($awaiting=0 OR x.status='feedback') AND ($open=0 OR x.status<>'closed')
+            AND ($issueType='' OR x.issue_type_id=$issueType)))
         AND ($rectify='' OR $rectify=CASE WHEN n.result='normal' THEN 'none'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='pending') THEN 'pending'
              WHEN EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='feedback') THEN 'feedback' ELSE 'closed' END)
@@ -89,7 +90,8 @@ public sealed partial class Store
             """ + " " + InspectionWhere + " " + """
              AND ($overdue=0 OR (matched.status<>'closed' AND matched.deadline<$today))
              AND ($soon=0 OR (matched.status<>'closed' AND matched.deadline>=$today AND matched.deadline<=$through))
-             AND ($awaiting=0 OR matched.status='feedback') AND ($open=0 OR matched.status<>'closed');
+             AND ($awaiting=0 OR matched.status='feedback') AND ($open=0 OR matched.status<>'closed')
+             AND ($issueType='' OR matched.issue_type_id=$issueType);
             """, null, [.. parameters, ("$today", Today)]);
         return Convert.ToInt32(command.ExecuteScalar());
     }
@@ -120,11 +122,11 @@ public sealed partial class Store
         }
     }
 
-    public InspectionDto[] GetLedgerInspections(string from, string to, string? communityId = null, string[]? pointIds = null)
+    public InspectionDto[] GetLedgerInspections(string from, string to, string? communityId = null, string[]? pointIds = null, InspectionQuery? filters = null)
     {
         lock (_gate)
         {
-            var parameters = InspectionParameters(new(CommunityId: communityId, From: from, To: to));
+            var parameters = InspectionParameters((filters ?? new()) with { CommunityId = communityId, From = from, To = to });
             return ReadInspectionList(InspectionWhere + LedgerPointSql(pointIds?.Length ?? 0, "n.point_id") + " ORDER BY n.inspection_date,n.rowid;", [.. parameters, .. LedgerPointParameters(pointIds)]);
         }
     }

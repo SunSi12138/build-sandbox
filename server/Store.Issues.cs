@@ -81,15 +81,21 @@ public sealed partial class Store
         }
     }
 
-    public IssueDto[] GetLedgerIssues(string from, string to, string? communityId = null, string[]? pointIds = null)
+    public IssueDto[] GetLedgerIssues(string from, string to, string? communityId = null, string[]? pointIds = null, InspectionQuery? filters = null)
     {
         lock (_gate)
         {
             from = DateText(from, "开始日期");
             to = DateText(to, "结束日期");
             CheckDateRange(from, to);
-            return ReadIssueList("WHERE n.inspection_date>=$from AND n.inspection_date<=$to AND ($community='' OR n.community_id=$community)" + LedgerPointSql(pointIds?.Length ?? 0, "n.point_id") + " ORDER BY n.inspection_date,n.rowid,x.rowid;",
-                Today, [("$from", from), ("$to", to), ("$community", communityId ?? ""), .. LedgerPointParameters(pointIds)]);
+            var parameters = InspectionParameters((filters ?? new()) with { CommunityId = communityId, From = from, To = to });
+            return ReadIssueList("JOIN points pt ON pt.id=n.point_id " + InspectionWhere + """
+                 AND ($issueType='' OR x.issue_type_id=$issueType)
+                 AND ($overdue=0 OR (x.status<>'closed' AND x.deadline<$today))
+                 AND ($soon=0 OR (x.status<>'closed' AND x.deadline>=$today AND x.deadline<=$through))
+                 AND ($awaiting=0 OR x.status='feedback') AND ($open=0 OR x.status<>'closed')
+                """ + LedgerPointSql(pointIds?.Length ?? 0, "n.point_id") + " ORDER BY n.inspection_date,n.rowid,x.rowid;",
+                Today, [.. parameters, .. LedgerPointParameters(pointIds)]);
         }
     }
 

@@ -120,13 +120,13 @@ public sealed partial class Store
         }
     }
 
-    public ActivityDto[] GetLedgerActivities(string from, string to, string? communityId = null, string? typeId = null)
+    public ActivityDto[] GetLedgerActivities(string from, string to, string? communityId = null, string? typeId = null, ActivityQuery? filters = null)
     {
         lock (_gate)
         {
             if (!string.IsNullOrWhiteSpace(communityId)) _ = RequireCommunity(communityId);
             if (!string.IsNullOrWhiteSpace(typeId)) _ = RequireActivityType(typeId);
-            var parameters = ActivityParameters(new(CommunityId: communityId, TypeId: typeId, From: from, To: to));
+            var parameters = ActivityParameters((filters ?? new()) with { CommunityId = communityId, TypeId = typeId, From = from, To = to });
             return ReadActivities(ActivityWhere + " ORDER BY a.activity_date,a.rowid;", parameters);
         }
     }

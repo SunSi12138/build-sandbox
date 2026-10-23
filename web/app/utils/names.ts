@@ -4,5 +4,5 @@ export function splitNames(value: string): string[] {
 }
 
 export function normalizeNames(value: string): string {
-  return value.split(/[，,。.\s]+/u).filter(Boolean).join(' ')
+  return value.split(/[，,、；;\s]+/u).filter(Boolean).join(' ')
 }

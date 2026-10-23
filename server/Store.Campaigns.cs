@@ -117,14 +117,14 @@ public sealed partial class Store
         }
     }
 
-    public CampaignDto[] GetLedgerCampaigns(string from, string to, string? communityId = null, string? typeId = null, string[]? pointIds = null)
+    public CampaignDto[] GetLedgerCampaigns(string from, string to, string? communityId = null, string? typeId = null, string[]? pointIds = null, CampaignQuery? filters = null)
     {
         lock (_gate)
         {
             if (!string.IsNullOrEmpty(communityId)) _ = RequireCommunity(communityId);
             if (!string.IsNullOrEmpty(typeId)) _ = RequireCampaignType(typeId);
             return ReadCampaigns(CampaignWhere + LedgerPointSql(pointIds?.Length ?? 0, "c.point_id") + " ORDER BY c.campaign_date,c.rowid;",
-                [.. CampaignParameters(new(CommunityId: communityId, TypeId: typeId, From: from, To: to)), .. LedgerPointParameters(pointIds)]);
+                [.. CampaignParameters((filters ?? new()) with { CommunityId = communityId, TypeId = typeId, From = from, To = to }), .. LedgerPointParameters(pointIds)]);
         }
     }
 

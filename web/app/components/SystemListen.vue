@@ -59,9 +59,9 @@ onMounted(load)
 onBeforeUnmount(() => { disposed = true })
 </script>
 <template>
-  <UPopover v-model:open="open" :content="{ align: 'end' }"><UButton icon="i-lucide-wifi" :label="applying ? '正在切换…' : label" trailing-icon="i-lucide-chevron-down" color="neutral" variant="outline" data-testid="listen-trigger" aria-label="监听地址" />
+  <UPopover v-model:open="open" :content="{ align: 'end' }"><UButton icon="i-lucide-wifi" :label="applying ? '正在切换…' : label" trailing-icon="i-lucide-chevron-down" color="neutral" variant="outline" data-testid="listen-trigger" aria-label="访问设置" />
     <template #content><div class="w-80 max-w-[calc(100vw-24px)] space-y-2 p-3 compact">
-      <h2 class="section-title">监听地址</h2>
+      <h2 class="section-title">访问设置</h2>
       <USkeleton v-if="loading && !info" class="h-24 rounded" />
       <template v-if="info?.canConfigure">
         <div class="check-row"><UCheckbox :model-value="selected.includes('127.0.0.1')" :disabled="applying" label="仅本机" class="flex-1" @update:model-value="toggle('127.0.0.1', $event)" /><span class="text-xs text-muted">127.0.0.1</span></div>
@@ -79,5 +79,5 @@ onBeforeUnmount(() => { disposed = true })
       <div v-for="address in newAddresses.length ? newAddresses : info?.addresses ?? []" :key="address" class="flex items-center gap-1"><a :href="address" class="min-w-0 flex-1 break-all text-xs text-primary">{{ address }}</a><UButton label="复制" color="neutral" variant="ghost" @click="copy(address)" /></div>
     </div></template>
   </UPopover>
-  <UModal v-model:open="warningOpen" title="应用监听设置？" description="本机的 localhost 将无法访问"><template #footer><UButton label="取消" color="neutral" variant="outline" @click="warningOpen = false" /><UButton label="应用" @click="apply" /></template></UModal>
+  <UModal v-model:open="warningOpen" title="应用访问设置？" description="本机也需改用所选地址访问"><template #footer><UButton label="取消" color="neutral" variant="outline" @click="warningOpen = false" /><UButton label="应用" @click="apply" /></template></UModal>
 </template>

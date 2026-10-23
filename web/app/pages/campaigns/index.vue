@@ -5,7 +5,7 @@ import { errorMessage } from '~/utils/format'
 useHead({ title: '整治记录 · 街道生态环保' })
 const route = useRoute()
 const { bootstrap, load: loadAppData } = useAppData()
-const { field, page, setPage } = useQueryFilters()
+const { field, page, setPage, flush } = useQueryFilters()
 const q = field('q'),
   pointId = field('pointId'),
   communityId = field('communityId', 'all'),
@@ -43,14 +43,17 @@ const columns: TableColumn<CampaignDto>[] = [
   },
 ]
 let version = 0
+let request: AbortController | undefined
+onBeforeUnmount(() => { ++version; request?.abort() })
 async function load() {
   if (route.path.replace(/\/+$/, '') !== '/campaigns') return
-  const current = ++version
+  const current = ++version; request?.abort(); const controller = new AbortController(); request = controller
   loading.value = true
   error.value = ''
   try {
     await loadAppData()
     const data = await $fetch<PageDto<CampaignDto>>('/api/campaigns', {
+      signal: controller.signal,
       query: {
         pointId: pointId.value || undefined,
         q: q.value || undefined,
@@ -90,6 +93,7 @@ function clearDates() {
   )
 }
 watch(() => route.fullPath, load, { immediate: true })
+async function openExport() { await flush(); exportOpen.value = true }
 </script>
 <template>
   <div class="page-stack">
@@ -100,7 +104,7 @@ watch(() => route.fullPath, load, { immediate: true })
           color="neutral"
           variant="outline"
           class="desktop-only"
-          @click="exportOpen = true"
+          @click="openExport"
         /><UButton
           to="/campaigns/new"
           icon="i-lucide-plus"
@@ -173,7 +177,7 @@ watch(() => route.fullPath, load, { immediate: true })
           color="neutral"
           variant="link"
           class="mobile-only"
-          @click="exportOpen = true"
+          @click="openExport"
         />
       </div>
     </div>
@@ -238,7 +242,7 @@ watch(() => route.fullPath, load, { immediate: true })
           ><UButton to="/campaigns/new" label="新增整治"
         /></EmptyState></div
     ></PageState>
-    <LedgerExport
+    <LedgerExport :current-query="route.query"
       v-model:open="exportOpen"
       kind="campaign"
       :community-id="communityId === 'all' ? undefined : communityId"

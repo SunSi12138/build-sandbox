@@ -41,6 +41,15 @@ public static class Api
     }
     private static Task Deleted(HttpContext context) { context.Response.StatusCode = 204; return Task.CompletedTask; }
 
+    internal static InspectionQuery InspectionFilters(HttpContext context) => new(Query(context, "pointId"), Query(context, "communityId"),
+        Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30),
+        Query(context, "rectify"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "typeId"), Flag(context, "temporary"),
+        Flag(context, "awaitingReview"), Flag(context, "openOnly"), Query(context, "issueTypeId"));
+    internal static CampaignQuery CampaignFilters(HttpContext context) => new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"),
+        Query(context, "from"), Query(context, "to"), PointId: Query(context, "pointId"));
+    internal static ActivityQuery ActivityFilters(HttpContext context) => new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"),
+        Query(context, "from"), Query(context, "to"));
+
     public static void Map(WebApplication app, Store store)
     {
         RequestDelegate health = context => Write(context, new OkDto(), AppJsonContext.Default.OkDto);
@@ -100,10 +109,6 @@ public static class Api
         RequestDelegate promotePoint = async context => await Write(context, store.PromotePoint(Id(context), await Read(context, AppJsonContext.Default.PointPromoteRequest)), AppJsonContext.Default.PointDto);
         app.MapPost("/api/points/{id}/promote", promotePoint);
 
-        static InspectionQuery InspectionFilters(HttpContext context) => new(Query(context, "pointId"), Query(context, "communityId"),
-            Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30),
-            Query(context, "rectify"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "typeId"), Flag(context, "temporary"),
-            Flag(context, "awaitingReview"), Flag(context, "openOnly"), Query(context, "issueTypeId"));
         RequestDelegate inspections = context => Write(context, store.ListInspections(InspectionFilters(context)), AppJsonContext.Default.InspectionPage);
         RequestDelegate inspectionCounts = context => Write(context, store.GetInspectionCounts(InspectionFilters(context)), AppJsonContext.Default.InspectionCountsDto);
         RequestDelegate inspection = context => Write(context, store.GetInspectionDetail(Id(context)), AppJsonContext.Default.InspectionDetailDto);

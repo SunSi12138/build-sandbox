@@ -23,7 +23,42 @@ const uploadFailed = ref(false)
 const error = ref('')
 const saved = ref(false)
 const ready = ref(false)
-const communities = computed(() => [{ label: '全部社区或跨社区', value: 'all' },
+const moreOpen = ref(false)
+const leaveOpen = ref(false)
+const draftSaved = ref(false)
+let original = ''
+let persistTimer: ReturnType<typeof setTimeout> | undefined
+let resolveLeave: ((leave: boolean) => void) | undefined
+const dirty = computed(() => Boolean(props.initial && ready.value && JSON.stringify(state) !== original))
+function persist() {
+  clearTimeout(persistTimer)
+  if (!ready.value || props.initial || saved.value) return
+  try {
+    localStorage.setItem(draftKey, JSON.stringify({ version: 1, data: state }))
+    draftSaved.value = true
+  } catch { error.value = '草稿未能保存，请勿关闭页面。' }
+}
+function finishLeave(leave: boolean) { leaveOpen.value = false; resolveLeave?.(leave); resolveLeave = undefined }
+function guardLeave() {
+  persist()
+  if (saving.value) return false
+  if (saved.value || (!uploadBusy.value && !dirty.value)) return true
+  leaveOpen.value = true
+  return new Promise<boolean>(resolve => { resolveLeave = resolve })
+}
+function beforeUnload(event: BeforeUnloadEvent) {
+  persist()
+  if (!saved.value && (saving.value || uploadBusy.value || dirty.value)) { event.preventDefault(); event.returnValue = '' }
+}
+onBeforeRouteLeave(guardLeave)
+onBeforeRouteUpdate(guardLeave)
+onBeforeUnmount(() => {
+  persist()
+  window.removeEventListener('beforeunload', beforeUnload)
+  document.removeEventListener('visibilitychange', persist)
+  resolveLeave?.(false)
+})
+const communities = computed(() => [{ label: '跨社区', value: 'all' },
   ...(bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id }))])
 const types = computed(() => (bootstrap.value?.activityTypes ?? []).map(item => ({ label: item.name, value: item.id })))
 const disabled = computed(() => initializing.value || saving.value)
@@ -49,8 +84,9 @@ function restoreDraft() {
 }
 watch(state, () => {
   if (!ready.value || props.initial || saved.value) return
-  try { localStorage.setItem(draftKey, JSON.stringify({ version: 1, data: state })) }
-  catch { error.value = '本机草稿无法保存。' }
+  draftSaved.value = false
+  clearTimeout(persistTimer)
+  persistTimer = setTimeout(persist, 250)
 }, { deep: true })
 watch(() => props.initial, initial => {
   if (!initial) return
@@ -72,11 +108,17 @@ async function initialize() {
       restoreDraft()
       if (!state.communityId) state.communityId = 'all'
     }
+    original = JSON.stringify(state)
+    moreOpen.value = Boolean(state.endDate || state.participants || state.participantCount || state.outcome || state.notes)
     ready.value = true
   } catch (cause) { error.value = errorMessage(cause) }
   finally { initializing.value = false }
 }
-onMounted(() => { void initialize() })
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnload)
+  document.addEventListener('visibilitychange', persist)
+  void initialize()
+})
 function validate(data: State): FormError[] {
   const issues: FormError[] = []
   if (!data.name.trim()) issues.push({ name: 'name', message: '请填写活动名称' })
@@ -86,6 +128,7 @@ function validate(data: State): FormError[] {
   if (!data.content.trim()) issues.push({ name: 'content', message: '请填写开展情况' })
   if (data.participantCount && (!/^\d+$/.test(data.participantCount) || Number(data.participantCount) > 100000000))
     issues.push({ name: 'participantCount', message: '请填写有效的非负整数' })
+  if (issues.some(issue => issue.name === 'endDate' || issue.name === 'participantCount')) moreOpen.value = true
   return issues
 }
 async function save() {
@@ -105,6 +148,7 @@ async function save() {
     const result = await $fetch<ActivityDetailDto>(id ? `/api/activities/${id}` : '/api/activities',
       { method: id ? 'PUT' : 'POST', body, retry: 0 })
     saved.value = true
+    clearTimeout(persistTimer)
     if (!id) { try { localStorage.removeItem(draftKey) } catch { /* record was saved */ } }
     toast.add({ title: '已保存', color: 'success', duration: 2000 })
     emit('saved', result)
@@ -124,23 +168,31 @@ async function save() {
           <UFormField name="typeId" label="活动类型" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" :disabled="disabled" data-testid="activity-type" /></UFormField>
           <UFormField name="communityId" label="所属社区"><USelect v-model="state.communityId" :items="communities" class="w-full" :disabled="disabled" /></UFormField>
           <UFormField name="date" label="开展日期" required><UInput v-model="state.date" type="date" :max="todayLocal()" class="w-full" :disabled="disabled" /></UFormField>
-          <UFormField name="endDate" label="结束日期"><UInput v-model="state.endDate" type="date" :min="state.date" class="w-full" :disabled="disabled" /></UFormField>
           <UFormField name="location" label="活动地点" class="field-full"><UInput v-model="state.location" maxlength="300" class="w-full" :disabled="disabled" /></UFormField>
           <UFormField name="organizer" label="组织单位" class="field-full"><NameTagsInput v-model="state.organizer" :maxlength="200" class="w-full" :disabled="disabled" /></UFormField>
-          <UFormField name="participants" label="参加单位及人员" class="field-full"><NameTagsInput v-model="state.participants" :maxlength="2000" class="w-full" :disabled="disabled" /></UFormField>
-          <UFormField name="participantCount" label="参加人数"><UInput v-model="state.participantCount" type="number" min="0" step="1" inputmode="numeric" class="w-full" :disabled="disabled" /></UFormField>
         </div>
       </section>
       <section class="form-section">
-        <h2>开展情况</h2>
         <div class="field-grid">
-          <UFormField name="content" label="活动内容及开展情况" required class="field-full"><UTextarea v-model="state.content" :rows="5" :maxlength="12000" autoresize class="w-full" :disabled="disabled" data-testid="activity-content" /></UFormField>
+          <UFormField name="content" label="开展情况" required class="field-full"><UTextarea v-model="state.content" :rows="5" :maxlength="12000" autoresize class="w-full" :disabled="disabled" data-testid="activity-content" /></UFormField>
+        </div>
+      </section>
+      <section class="form-section"><h2>活动照片</h2><PhotoUploader v-model="state.photos" phase="activity" :quality="bootstrap?.settings.jpegQuality" :disabled="disabled" :max="20" @busy="uploadBusy = $event" @failed="uploadFailed = $event" /></section>
+      <section class="form-section">
+        <UButton type="button" label="更多信息" color="neutral" variant="ghost" :trailing-icon="moreOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" :aria-expanded="moreOpen" aria-controls="activity-more" @click="moreOpen = !moreOpen" />
+        <div v-show="moreOpen" id="activity-more" class="field-grid mt-3">
+          <UFormField name="endDate" label="结束日期"><UInput v-model="state.endDate" type="date" :min="state.date" class="w-full" :disabled="disabled" /></UFormField>
+          <UFormField name="participants" label="参加单位及人员" class="field-full"><NameTagsInput v-model="state.participants" :maxlength="2000" class="w-full" :disabled="disabled" /></UFormField>
+          <UFormField name="participantCount" label="参加人数"><UInput v-model="state.participantCount" type="number" min="0" step="1" inputmode="numeric" class="w-full" :disabled="disabled" /></UFormField>
           <UFormField name="outcome" label="活动成效" class="field-full"><UTextarea v-model="state.outcome" :rows="3" :maxlength="12000" autoresize class="w-full" :disabled="disabled" /></UFormField>
           <UFormField name="notes" label="备注" class="field-full"><UTextarea v-model="state.notes" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="disabled" /></UFormField>
         </div>
       </section>
-      <section class="form-section"><h2>活动照片</h2><PhotoUploader v-model="state.photos" phase="activity" :quality="bootstrap?.settings.jpegQuality" :disabled="disabled" :max="20" @busy="uploadBusy = $event" @failed="uploadFailed = $event" /></section>
     </div>
-    <div class="form-actions"><UButton type="button" to="/activities" color="neutral" variant="outline" :disabled="saving">取消</UButton><UButton type="submit" :loading="saving" :disabled="disabled || uploadBusy || uploadFailed" data-testid="activity-save">保存活动</UButton></div>
+    <p v-if="draftSaved && !initial" class="draft-state" role="status">草稿已保存到此浏览器</p>
+    <div class="form-actions"><UButton type="button" :to="initial ? `/activities/${initial.activity.id}` : '/activities'" color="neutral" variant="outline" :disabled="saving">取消</UButton><UButton type="submit" :loading="saving" :disabled="disabled || uploadBusy || uploadFailed" data-testid="activity-save">保存活动</UButton></div>
   </UForm>
+  <UModal v-model:open="leaveOpen" :title="uploadBusy ? '照片尚未上传完成' : '放弃未保存的修改？'" :description="uploadBusy ? '离开后，未上传的照片需重新选择' : '离开后，本次修改不会保存'" :dismissible="false" :close="false">
+    <template #footer><UButton label="继续编辑" color="neutral" variant="outline" @click="finishLeave(false)" /><UButton label="离开" color="error" @click="finishLeave(true)" /></template>
+  </UModal>
 </template>

@@ -225,6 +225,84 @@ public sealed class WordStoreTests
         Assert.Equal(400, Assert.Throws<ApiException>(() => fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, typeId: "missing")).StatusCode);
     }
 
+    [Fact]
+    public void CurrentInspectionAndIssueExportsMatchCombinedFiltersWithoutPagination()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var types = store.GetIssueTypes();
+        var yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        InspectionDetailDto Create(string inspector, bool matching) => store.CreateInspection(new(fixture.Point.Id, yesterday, inspector, "issues", Issues:
+            [new("应导出的分类问题", "清理", matching ? yesterday : Store.Today, IssueTypeId: types[0].Id),
+             new("其他类别不应混入", "清理", yesterday, IssueTypeId: types[1].Id)]));
+        var wanted = Create("筛选人员甲", true);
+        _ = Create("筛选人员乙", true);
+        _ = Create("筛选人员甲", false); // Only a different category is overdue.
+        var filters = new InspectionQuery(Q: "筛选人员甲", TypeId: fixture.Point.TypeId, IssueTypeId: types[0].Id,
+            Rectify: "pending", Overdue: true, OpenOnly: true, Page: 99, PageSize: 1);
+        var list = store.ListInspections(filters with { Page = 1 });
+        Assert.Equal(wanted.Inspection.Id, Assert.Single(list.Items).Id);
+        Assert.Equal(1, list.MatchingIssueCount);
+        var issues = store.GetLedgerIssues(yesterday, Store.Today, filters: filters);
+        Assert.Equal(wanted.Issues[0].Id, Assert.Single(issues).Id);
+        var inspection = DocumentText(store.ExportInspectionLedgerWord("", "", filters: filters).FilePath);
+        Assert.Contains("共 1 次排查", inspection);
+        Assert.DoesNotContain("筛选人员乙", inspection);
+        var ledger = DocumentText(store.ExportLedgerWord("", "", filters: filters).FilePath);
+        Assert.Contains("应导出的分类问题", ledger);
+        Assert.DoesNotContain("其他类别不应混入", ledger);
+        Assert.Contains("共 1 条", ledger);
+        Assert.Empty(store.GetLedgerInspections(yesterday, Store.Today, filters: filters with { Temporary = true }));
+    }
+
+    [Theory]
+    [InlineData("", "")]
+    [InlineData("2000-01-01", "")]
+    [InlineData("", "2099-12-31")]
+    public void CurrentCampaignExportKeepsSearchAndPointFilters(string from, string to)
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var type = store.GetCampaignTypes()[0];
+        var other = store.SavePoint(null, new("另一点位", fixture.Community.Id, fixture.Point.TypeId, "地址", Frequency: "weekly"));
+        store.SaveCampaign(null, new("筛选整治", type.Id, fixture.Point.Id, Store.Today, "命中整治内容"));
+        store.SaveCampaign(null, new("筛选整治", type.Id, other.Id, Store.Today, "其他点位不得导出"));
+        store.SaveCampaign(null, new("无关整治", type.Id, fixture.Point.Id, Store.Today, "未搜索命中不得导出"));
+        var filters = new CampaignQuery(Q: "筛选整治", PointId: fixture.Point.Id, Page: 99);
+        var text = DocumentText(store.ExportCampaignLedgerWord(from, to, filters: filters).FilePath);
+        Assert.Contains("命中整治内容", text);
+        Assert.DoesNotContain("其他点位不得导出", text);
+        Assert.DoesNotContain("未搜索命中不得导出", text);
+    }
+
+    [Fact]
+    public void CurrentActivityExportKeepsSearchAndIncludesOnlyMatchingPhotos()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var type = store.GetActivityTypes()[0];
+        var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "activity");
+        var otherPhoto = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "activity");
+        store.SaveActivity(null, new("筛选学习", type.Id, Store.Today, "匹配活动内容", PhotoIds: [photo.Id]));
+        store.SaveActivity(null, new("其他学习", type.Id, Store.Today, "不应出现的活动内容", PhotoIds: [otherPhoto.Id]));
+        var file = store.ExportActivityLedgerWord("", "", includePhotos: true, filters: new(Q: "筛选学习", Page: 99));
+        Assert.Contains("匹配活动内容", DocumentText(file.FilePath));
+        Assert.DoesNotContain("不应出现的活动内容", DocumentText(file.FilePath));
+        Assert.Equal(new[] { "120x80" }, MediaDimensions(file.FilePath));
+    }
+
+    [Fact]
+    public void CurrentExportHandlesEmptyRangesButStillRejectsInvalidDates()
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.Store;
+        var empty = store.ExportActivityLedgerWord("", "", filters: new());
+        Assert.Contains("共 0", DocumentText(empty.FilePath));
+        Assert.Equal(400, Assert.Throws<ApiException>(() => store.ExportActivityLedgerWord("bad", "", filters: new())).StatusCode);
+        Assert.Equal(400, Assert.Throws<ApiException>(() => store.ExportActivityLedgerWord("2026-12-31", "2026-01-01", filters: new())).StatusCode);
+        Assert.Equal(400, Assert.Throws<ApiException>(() => store.ExportInspectionLedgerWord("", "", filters: new(Rectify: "unknown"))).StatusCode);
+    }
+
     private static string DocumentText(string path)
     {
         using var archive = ZipFile.OpenRead(path);

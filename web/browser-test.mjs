@@ -11,6 +11,7 @@ import { chromium } from 'playwright'
 import { verifyWordDownloads } from './word-browser-test.mjs'
 import { verifyOptimization } from './optimization-browser-test.mjs'
 import { verifyRound3 } from './round3-browser-test.mjs'
+import { verifyUsability } from './ux-browser-test.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const executableArgument = process.argv.indexOf('--executable')
@@ -48,6 +49,7 @@ const report = { passed: false, cases: [], externalRequests: [], pageErrors: [],
 let browser
 let page
 let expectedWasmFailure = false
+let activeCase = ''
 
 async function api(route, options = {}) {
   const response = await fetch(directOrigin + '/api' + route, {
@@ -61,6 +63,7 @@ async function api(route, options = {}) {
 
 async function test(name, action) {
   const started = Date.now()
+  activeCase = name
   console.log('RUN ' + name)
   try {
     await action()
@@ -311,7 +314,8 @@ try {
   context.on('request', request => { const url = request.url(); if (/\.(?:wasm|css|js)(?:\?|$)/.test(url)) report.resources.push(new URL(url).pathname) })
   page = await context.newPage()
   page.on('pageerror', error => report.pageErrors.push(String(error)))
-  page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push({ text: message.text(), expectedWasmFailure }) })
+  page.on('requestfailed', request => { report.failedRequests ??= []; report.failedRequests.push({ url: request.url(), error: request.failure()?.errorText, case: activeCase }) })
+  page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push({ text: message.text(), location: message.location(), case: activeCase, expectedWasmFailure }) })
 
   await test('Fresh HTTP page: offline resources, six navigation items and hash query persistence', async () => {
     await page.goto(origin + '/', { waitUntil: 'networkidle' }); await waitForText('逾期')
@@ -657,6 +661,7 @@ try {
   })
   await verifyOptimization({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg })
   await verifyRound3({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg, evidence })
+  await verifyUsability({ browser, origin, api, test, bootstrap, activityId, evidence })
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')
   assert.deepEqual(report.pageErrors, [], 'Unhandled browser errors occurred')
   assert.deepEqual(report.consoleErrors.filter(entry => !entry.expectedWasmFailure), [], 'Unexpected browser console errors occurred')
