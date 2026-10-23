@@ -106,7 +106,7 @@ public sealed class WordExporterTests
         Assert.Equal("宋体", (string?)titleFont.Element(W + "altName")?.Attribute(W + "val"));
         Assert.Contains(styles.Descendants(W + "sz"), size => (string?)size.Attribute(W + "val") == "44");
         Assert.Contains(styles.Descendants(W + "sz"), size => (string?)size.Attribute(W + "val") == "32");
-        var title = document.Descendants(W + "p").First(paragraph => Text(paragraph).Contains("排查记录单", StringComparison.Ordinal));
+        var title = document.Descendants(W + "p").First(paragraph => Text(paragraph).Contains("检查记录单", StringComparison.Ordinal));
         Assert.Equal("center", Alignment(title, styles));
         var borders = document.Descendants(W + "tblBorders").First();
         foreach (var edge in new[] { "top", "left", "bottom", "right", "insideH", "insideV" })
@@ -179,7 +179,13 @@ public sealed class WordExporterTests
         Assert.Equal(3, drawings.Length);
         var imageRows = document.Descendants(W + "tr").Where(row => row.Descendants(W + "drawing").Any()).ToArray();
         Assert.Contains(imageRows, row => row.Descendants(W + "drawing").Count() == 2);
-        Assert.All(imageRows, row => { Assert.Equal(2, row.Elements(W + "tc").Count()); Assert.InRange(row.Descendants(W + "drawing").Count(), 1, 2); });
+        Assert.All(imageRows, row =>
+        {
+            var count = row.Descendants(W + "drawing").Count();
+            Assert.InRange(count, 1, 2);
+            Assert.Equal(count, row.Elements(W + "tc").Count());
+            if (count == 1) Assert.Equal("2", (string?)row.Element(W + "tc")?.Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val"));
+        });
         var page = Assert.Single(document.Descendants(W + "pgSz"));
         var margin = Assert.Single(document.Descendants(W + "pgMar"));
         var halfPageEmu = (Number(page, W + "w") - Number(margin, W + "left") - Number(margin, W + "right")) * 635L / 2;
@@ -220,7 +226,7 @@ public sealed class WordExporterTests
     }
 
     [Fact]
-    public void LedgerIsLandscapeWithNineColumnsFivePointTableFontAndAccurateSummary()
+    public void LedgerIsLandscapeWithTenColumnsFivePointTableFontAndAccurateSummary()
     {
         var issues = LedgerIssues();
         var ledger = new WordLedger("2026-10-01", "2026-10-31", "东苑社区", issues, [], false);
@@ -231,10 +237,10 @@ public sealed class WordExporterTests
         Assert.Equal("landscape", (string?)page.Attribute(W + "orient"));
         Assert.InRange(Number(page, W + "w"), 16820, 16855);
         Assert.InRange(Number(page, W + "h"), 11890, 11920);
-        var table = Assert.Single(document.Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 9);
-        Assert.Equal(9, table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
+        var table = Assert.Single(document.Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 10);
+        Assert.Equal(10, table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
         var header = table.Elements(W + "tr").First();
-        Assert.Equal(new[] { "序号", "排查日期", "点位名称", "所属社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论" }, header.Elements(W + "tc").Select(Text).ToArray());
+        Assert.Equal(new[] { "序号", "检查日期", "场所名称", "所属网格", "问题描述", "整改期限", "状态", "反馈情况", "复查结论", "跟进过程" }, header.Elements(W + "tc").Select(Text).ToArray());
         Assert.NotNull(header.Element(W + "trPr")?.Element(W + "tblHeader"));
         Assert.All(table.Descendants(W + "sz"), size => Assert.Contains((string?)size.Attribute(W + "val"), new[] { "21", "24" }));
         var text = Regex.Replace(Text(document), @"\s", "");
@@ -268,9 +274,9 @@ public sealed class WordExporterTests
         using var package = new Package(Render(stream => WordExporter.WriteLedger(stream,
             new("2026-10-01", "2026-10-31", "东苑社区", [issue, Issue("short", "普通问题保持一行", "清理", "2026-10-12")], [], false), Settings())));
         ValidatePackage(package);
-        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 9);
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements().Count() == 10);
         var rows = table.Elements(W + "tr").ToArray();
-        var continued = rows.Where(row => row.Elements(W + "tc").Count() == 9 && Text(row.Elements(W + "tc").First()) == "1").ToArray();
+        var continued = rows.Where(row => row.Elements(W + "tc").Count() == 10 && Text(row.Elements(W + "tc").First()) == "1").ToArray();
         Assert.True(continued.Length > 1);
         Assert.Equal(description.Replace("\r\n", "\n", StringComparison.Ordinal), string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(4)))));
         Assert.Equal("2026-10-11\n" + feedback, string.Concat(continued.Select(row => CellLines(row.Elements(W + "tc").ElementAt(7)))));
@@ -280,7 +286,7 @@ public sealed class WordExporterTests
             Assert.NotNull(row.Element(W + "trPr")?.Element(W + "cantSplit"));
             Assert.True(CellLines(row.Elements(W + "tc").ElementAt(4)).EnumerateRunes().Count() < 600);
         });
-        Assert.Single(rows, row => row.Elements(W + "tc").Count() == 9 && Text(row.Elements(W + "tc").First()) == "2");
+        Assert.Single(rows, row => row.Elements(W + "tc").Count() == 10 && Text(row.Elements(W + "tc").First()) == "2");
         Assert.NotNull(rows[0].Element(W + "trPr")?.Element(W + "tblHeader"));
         Assert.Single(rows[^1].Elements(W + "tc"));
         Assert.Equal("共 2 条，已闭环 0，待复查 1，待整改 1，其中逾期 0", Text(rows[^1]));
@@ -504,7 +510,7 @@ public sealed class WordExporterTests
             var main = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), table => table.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 10);
             var summary = Assert.Single(main.Elements(W + "tr").Last().Elements(W + "tc"));
             Assert.Equal("10", (string?)summary.Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val"));
-            Assert.Contains("共 2 次排查，正常 1，发现问题 1；问题共 2 项，已闭环 2", Text(summary));
+            Assert.Contains("共 2 次排查，正常 1，发现问题 1，未完成检查 0；问题共 2 项，已闭环 2", Text(summary));
             Assert.NotNull(summary.Descendants(W + "b").FirstOrDefault());
         }
         var first = Campaign() with { Content = new string('清', 100), Outcome = "完成。剩余文字不显示。", GarbageTons = 1.25m, AreaSqm = 25.35m };
@@ -558,8 +564,8 @@ public sealed class WordExporterTests
         var headings = package.Xml("word/document.xml").Descendants(W + "p")
             .Where(p => (string?)p.Element(W + "pPr")?.Element(W + "pStyle")?.Attribute(W + "val") == "Heading1").Select(Text).ToArray();
         var expected = new List<string> { "一、发现问题" };
-        if (photos) expected.Add("二、现场照片");
-        if (notes) expected.Add(photos ? "三、备注" : "二、备注");
+        if (notes) expected.Add("二、备注");
+        if (photos) expected.Add(notes ? "三、现场照片" : "二、现场照片");
         Assert.Equal(expected, headings);
         if (notes) Assert.Contains(detail.Inspection.Notes, Text(package.Xml("word/document.xml")));
     }
@@ -598,7 +604,7 @@ public sealed class WordExporterTests
         var issue = Issue("long-context", new string('核', 3000), "整改要求", "2026-10-12");
         using var package = new Package(Render(stream => WordExporter.WriteLedger(stream,
             new("2026-10-01", "2026-10-31", "东苑社区", [issue], [], false), Settings())));
-        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), t => t.Element(W + "tblGrid")?.Elements().Count() == 9);
+        var table = Assert.Single(package.Xml("word/document.xml").Descendants(W + "tbl"), t => t.Element(W + "tblGrid")?.Elements().Count() == 10);
         var rows = table.Elements(W + "tr").Skip(1).SkipLast(1).ToArray();
         Assert.True(rows.Length > 2);
         Assert.All(rows, row =>

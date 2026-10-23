@@ -5,6 +5,25 @@ using Xunit;
 namespace StreetEcoTool.Tests;
 public sealed class CommunityReportingTests
 {
+    [Fact]
+    public void PrintableReportNumbersRowsWithoutChangingExcelSourceAndPreservesLongContent()
+    {
+        using var env = new V2Environment(); using var store = env.Open();
+        var description = string.Concat(Enumerable.Repeat("楼道内堆放纸箱，请清理并保持出口畅通。", 30));
+        var report = new ReportDto("问题整改台账", "全部网格", ["编号", "场所", "问题", "状态"], [["a0123456789012345678901234567890b", "幸福路18号", description, "待整改"]]);
+        using var stream = new MemoryStream();
+        WordExporter.WriteCommunityReport(stream, report, store.GetSettings()); stream.Position = 0;
+        using var zip = new ZipArchive(stream); using var reader = new StreamReader(zip.GetEntry("word/document.xml")!.Open());
+        var document = System.Xml.Linq.XDocument.Parse(reader.ReadToEnd());
+        System.Xml.Linq.XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+        var rows = document.Descendants(w + "tr").ToArray();
+        Assert.Equal("序号", string.Concat(rows[0].Descendants(w + "tc").First().Descendants(w + "t").Select(x => x.Value)));
+        Assert.Equal(description, string.Concat(rows.Skip(1).SelectMany(r => r.Elements(w + "tc").ElementAt(2).Descendants(w + "t")).Select(x => x.Value)));
+        var widths = document.Descendants(w + "gridCol").Select(x => int.Parse(x.Attribute(w + "w")!.Value)).ToArray();
+        Assert.True(widths[2] > widths[0] * 3);
+        Assert.Equal("编号", report.Headers[0]); Assert.StartsWith("a012345", report.Rows[0][0]);
+        Assert.All(rows.Skip(1), r => Assert.Equal("1", string.Concat(r.Elements(w + "tc").First().Descendants(w + "t").Select(x => x.Value))));
+    }
     private static JsonElement Data(string json) { using var d = JsonDocument.Parse(json); return d.RootElement.Clone(); }
     [Fact]
     public void RemindersRespectTypeCompletionAndVoidsAndSelectedExportsStayScoped()

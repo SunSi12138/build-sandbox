@@ -39,13 +39,35 @@ public static class WordExporter
     {
         using var document = new Document(destination, true, report.Title, settings.StreetName);
         document.Paragraph(report.Title, "Title");
-        document.Paragraph(report.Scope);
-        document.Paragraph($"共 {report.Rows.Length} 条；生成日期：{Store.Today}");
-        document.Table(report.Headers, report.Rows, report.Headers.Select(_ => 1).ToArray(), fontSize: 18);
+        document.Paragraph(report.Scope, "ReportInfo", indent: false);
+        document.Paragraph($"共 {report.Rows.Length} 条；生成日期：{Store.Today}", "ReportInfo", indent: false);
+        // The printable report uses row numbers; Excel and the data API retain stable record IDs.
+        var headers = report.Headers.ToArray();
+        var numbered = headers.Length > 0 && headers[0] is "编号" or "安排编号";
+        if (numbered) headers[0] = "序号";
+        var rows = report.Rows.Select((row, index) => row.Select((value, column) =>
+            numbered && column == 0 ? (index + 1).ToString(CultureInfo.InvariantCulture) : value).ToArray()).ToArray();
+        int Weight(string header) => header switch
+        {
+            "序号" => 7, "问题" or "整改要求" => 26, "地址" => 28,
+            "名称" or "场所" or "安排名称" or "经营使用" or "分组" => 19,
+            "电话" => 15, "用途" => 17, "责任单位" => 14,
+            "网格" or "检查类型" => 13,
+            "开始日期" or "结束日期" or "检查日期" or "发现日期" or "整改期限" or "完成日期" or "完成期限" => 14,
+            "问题数" or "完成数" => 7, "状态" or "结果" or "进度" => 12,
+            _ => 11
+        };
+        bool Center(string header) => header is "序号" or "状态" or "结果" or "进度" or "电话"
+            || header.EndsWith("日期", StringComparison.Ordinal) || header.EndsWith("期限", StringComparison.Ordinal)
+            || header is "在用场所" or "已查场所" or "检查次数" or "未完成检查" or "问题数" or "完成数" or "已完成整改" or "尚未完成且超期";
+        document.Table(headers, rows, headers.Select(Weight).ToArray(),
+            centeredColumns: Enumerable.Range(0, headers.Length).Where(i => Center(headers[i])).ToArray(),
+            repeatColumns: Enumerable.Range(0, headers.Length).Where(i => headers[i] is "序号" or "场所" or "名称" or "分组" or "安排名称").ToArray());
+        if (rows.Length == 0) document.Paragraph("当前筛选条件下没有记录。", "ReportInfo", indent: false);
     }
     public static void WriteRecord(Stream destination, InspectionDetailDto detail, SettingsDto settings, WordPhoto[] photos)
     {
-        using var document = new Document(destination, false, "排查记录单", settings.StreetName);
+        using var document = new Document(destination, false, "检查记录单", settings.StreetName);
         document.Paragraph("检查记录单", "Title");
         WriteInspectionInfo(document, detail.Inspection);
         if (detail.Inspection.InspectionTypeName.Length > 0) document.Paragraph("检查类型：" + detail.Inspection.InspectionTypeName);
@@ -55,23 +77,26 @@ public static class WordExporter
         if (detail.Inspection.Result == "incomplete") document.Paragraph("本次未完成检查：" + detail.Inspection.IncompleteReason);
         if (detail.Issues.Length == 0 && detail.Inspection.Result != "incomplete") document.Paragraph(detail.Inspection.Result == "normal" ? "本次检查未发现问题。" : "原登记问题均已作废。");
         else WriteIssues(document, detail.Issues);
+        if (!string.IsNullOrWhiteSpace(detail.Inspection.Notes))
+        {
+            document.Section("备注");
+            document.Paragraph(detail.Inspection.Notes);
+        }
         var operationIds = (detail.IssueDetails ?? []).SelectMany(x => x.Actions).Where(x => x.Kind is "progress" or "transfer" or "extend" or "assign").SelectMany(x => x.Photos).Select(x => x.Id).ToHashSet();
         WriteSitePhotos(document, detail, photos.Where(x => !operationIds.Contains(x.Photo.Id)).ToArray(), false);
-        foreach (var item in detail.IssueDetails ?? [])
+        var histories = (detail.IssueDetails ?? []).Where(item => item.Actions.Length > 0).ToArray();
+        if (histories.Length > 0) document.Section("办理过程");
+        foreach (var item in histories)
         {
-            if (item.Actions.Length == 0) continue;
-            document.Section("办理过程：" + item.Issue.Description);
+            var issueNumber = Array.FindIndex(detail.Issues, issue => issue.Id == item.Issue.Id) + 1;
+            document.Paragraph(issueNumber > 0 ? $"问题 {issueNumber}" : "问题办理记录", "Heading2");
+            if (issueNumber == 0) document.Paragraph(item.Issue.Description);
             foreach (var action in item.Actions)
             {
                 document.Paragraph($"{action.Date}　{ActionName(action.Kind)}：{action.Notes}");
                 var ids = action.Photos.Select(x => x.Id).ToHashSet();
                 document.Gallery(photos.Where(x => ids.Contains(x.Photo.Id)).Select(x => (x, ActionName(action.Kind) + " · " + action.Date)).ToArray());
             }
-        }
-        if (!string.IsNullOrWhiteSpace(detail.Inspection.Notes))
-        {
-            document.Section("备注");
-            document.Paragraph(detail.Inspection.Notes);
         }
     }
 
@@ -173,7 +198,7 @@ public static class WordExporter
         document.Paragraph("环境整治记录单", "Title");
         document.Table(null,
         [
-            ["整治名称", campaign.Name], ["点位名称", campaign.PointName], ["整治类型", campaign.TypeName], ["所属社区", campaign.CommunityName],
+            ["整治名称", campaign.Name], ["场所名称", campaign.PointName], ["整治类型", campaign.TypeName], ["所属网格", campaign.CommunityName],
             ["整治地点", campaign.Location], ["整治日期", DateRange(campaign.Date, campaign.EndDate)],
             ["组织单位", campaign.Organizer], ["参加单位及人员", campaign.Participants]
         ], [24, 76], labelColumn: true);
@@ -249,7 +274,7 @@ public static class WordExporter
             inspection.Result == "normal" ? "正常" : inspection.Result == "incomplete" ? "未完成检查" : "发现问题", Number(inspection.IssueCount), RectifyStatus(inspection), inspection.NoticeNumber
         });
         var normal = ledger.Inspections.Count(inspection => inspection.Result == "normal");
-        document.Table(["序号", "排查日期", "点位名称", "所属社区", "点位类型", "排查人", "排查结果", "问题数", "整改情况", "通知单编号"],
+        document.Table(["序号", "检查日期", "场所名称", "所属网格", "场所形态", "检查人", "检查结果", "问题数", "整改情况", "通知单编号"],
             rows, [5, 10, 18, 11, 10, 8, 9, 7, 12, 10], centeredColumns: [0, 1, 6, 7, 8], repeatColumns: [1, 2, 3],
             summary: $"共 {ledger.Inspections.Length} 次排查，正常 {normal}，发现问题 {ledger.Inspections.Count(x => x.Result == "issues")}，未完成检查 {ledger.Inspections.Count(x => x.Result == "incomplete")}；问题共 {ledger.Inspections.Sum(item => item.IssueCount)} 项，已闭环 {ledger.Inspections.Sum(item => item.ClosedCount)}");
     }
@@ -265,7 +290,7 @@ public static class WordExporter
             campaign.Location, Number(campaign.ParticipantCount), Number(campaign.VehicleCount), DecimalNumber(campaign.GarbageTons),
             DecimalNumber(campaign.AreaSqm), CampaignSummary(campaign)
         });
-        document.Table(["序号", "整治日期", "整治名称", "类型", "所属社区", "整治地点", "参加人数", "出动车辆", "清运垃圾（吨）", "清理面积（㎡）", "整治内容及成效（摘要）"],
+        document.Table(["序号", "整治日期", "整治名称", "类型", "所属网格", "整治地点", "参加人数", "出动车辆", "清运垃圾（吨）", "清理面积（㎡）", "整治内容及成效（摘要）"],
             rows, [4, 9, 14, 8, 8, 11, 6, 6, 7, 7, 20], centeredColumns: [0, 1], rightAlignedColumns: [6, 7, 8, 9], repeatColumns: [1, 2, 4],
             summary: $"共 {ledger.Campaigns.Length} 次整治，累计参加 {ledger.Campaigns.Sum(item => (long)(item.ParticipantCount ?? 0))} 人、出动车辆 {ledger.Campaigns.Sum(item => (long)(item.VehicleCount ?? 0))} 辆、清运垃圾 {DecimalNumber(ledger.Campaigns.Sum(item => item.GarbageTons ?? 0))} 吨、清理面积 {DecimalNumber(ledger.Campaigns.Sum(item => item.AreaSqm ?? 0))} ㎡");
         if (!ledger.IncludePhotos) return;
@@ -302,10 +327,10 @@ public static class WordExporter
     {
         List<Cell[]> rows =
         [
-            [new("点位名称", Header: true), new(inspection.PointName), new("点位类型", Header: true), new(inspection.TypeName)],
-            [new("所属社区", Header: true), new(inspection.CommunityName), new("排查日期", Header: true), new(inspection.Date, Align: "center")],
+            [new("场所名称", Header: true), new(inspection.PointName), new("场所形态", Header: true), new(inspection.TypeName)],
+            [new("所属网格", Header: true), new(inspection.CommunityName), new("检查日期", Header: true), new(inspection.Date, Align: "center")],
             [new("详细地址", Header: true), new(inspection.Address, Span: 3)],
-            [new("排查人", Header: true), new(inspection.Inspector), new("排查结果", Header: true), new(inspection.Result == "normal" ? "正常" : inspection.Result == "incomplete" ? "未完成检查" : "发现问题", Align: "center")]
+            [new("检查人", Header: true), new(inspection.Inspector), new("检查结果", Header: true), new(inspection.Result == "normal" ? "正常" : inspection.Result == "incomplete" ? "未完成检查" : "发现问题", Align: "center")]
         ];
         var contact = string.Join("　", new[] { inspection.Contact, inspection.Phone }.Where(value => !string.IsNullOrWhiteSpace(value)));
         if (contact.Length > 0) rows.Add([new("联系人及电话", Header: true), new(contact, Span: 3)]);
@@ -316,7 +341,7 @@ public static class WordExporter
     private static void WriteLedgerInfo(Document document, string from, string to, string community, SettingsDto settings, string preparedDate, string? pointScope)
     {
         document.CellTable([
-            [new("统计范围", Header: true), new(ChineseDate(from) + "至" + ChineseDate(to)), new("所属社区", Header: true), new(community == "全部社区" ? "全部" : community)],
+            [new("统计范围", Header: true), new(ChineseDate(from) + "至" + ChineseDate(to)), new("所属网格", Header: true), new(community == "全部社区" ? "全部" : community)],
             [new("制表单位", Header: true), new(string.IsNullOrWhiteSpace(settings.IssuingUnit) ? settings.StreetName : settings.IssuingUnit), new("制表日期", Header: true), new(preparedDate, Align: "center")]
         ], [12, 48, 12, 28]);
         if (!string.IsNullOrEmpty(pointScope))
@@ -714,6 +739,14 @@ public static class WordExporter
             for (var index = 0; index < photos.Length; index += 2)
             {
                 Start("tr"); Start("trPr"); Value("cantSplit", "1"); End();
+                if (index + 1 == photos.Length)
+                {
+                    // Center an unpaired photo without leaving an empty bordered cell or enlarging it.
+                    CellStart(widths.Sum(), span: 2);
+                    PhotoCell(photos[index].Photo, photos[index].Caption, widths[0] - 200);
+                    End(); End();
+                    continue;
+                }
                 for (var column = 0; column < 2; column++)
                 {
                     CellStart(widths[column]);
@@ -888,6 +921,7 @@ public static class WordExporter
               <w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="照片标注"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr><w:rPr><w:rFonts w:ascii="仿宋" w:hAnsi="仿宋" w:eastAsia="仿宋" w:cs="仿宋" w:hint="eastAsia"/><w:sz w:val="21"/><w:szCs w:val="21"/></w:rPr></w:style>
               <w:style w:type="paragraph" w:styleId="Photo"><w:name w:val="照片"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr><w:rPr><w:rFonts w:ascii="仿宋" w:hAnsi="仿宋" w:eastAsia="仿宋" w:cs="仿宋" w:hint="eastAsia"/><w:sz w:val="2"/><w:szCs w:val="2"/></w:rPr></w:style>
               <w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/><w:ind w:firstLine="0"/><w:jc w:val="center"/></w:pPr><w:rPr><w:rFonts w:ascii="宋体" w:hAnsi="宋体" w:eastAsia="宋体" w:cs="宋体" w:hint="eastAsia"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
+              <w:style w:type="paragraph" w:styleId="ReportInfo"><w:name w:val="台账说明"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:firstLine="0"/></w:pPr><w:rPr><w:sz w:val="24"/><w:szCs w:val="24"/></w:rPr></w:style>
             </w:styles>
             """;
     }
