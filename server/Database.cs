@@ -10,7 +10,7 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 1;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
@@ -91,10 +91,23 @@ public sealed partial class Store : IDisposable
             );
             CREATE TABLE issues (
                 id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE RESTRICT,
+                issue_type_id TEXT NOT NULL REFERENCES issue_types(id) ON DELETE RESTRICT, issue_type_name TEXT NOT NULL,
                 description TEXT NOT NULL, requirement TEXT NOT NULL DEFAULT '', deadline TEXT NOT NULL, responsible_unit TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','feedback','closed')),
                 feedback_date TEXT, feedback_notes TEXT NOT NULL DEFAULT '', review_date TEXT,
                 review_conclusion TEXT NOT NULL DEFAULT '', closed_date TEXT
+            );
+            CREATE TABLE issue_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE activity_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE activities (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                type_id TEXT NOT NULL REFERENCES activity_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
+                community_id TEXT REFERENCES communities(id) ON DELETE RESTRICT, community_name TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '', activity_date TEXT NOT NULL, end_date TEXT,
+                organizer TEXT NOT NULL DEFAULT '', participants TEXT NOT NULL DEFAULT '',
+                participant_count INTEGER CHECK(participant_count IS NULL OR participant_count >= 0),
+                content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                CHECK(end_date IS NULL OR end_date >= activity_date)
             );
             CREATE TABLE issue_actions (
                 id TEXT PRIMARY KEY, issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE RESTRICT,
@@ -121,20 +134,23 @@ public sealed partial class Store : IDisposable
                     action_id TEXT REFERENCES issue_actions(id) ON DELETE RESTRICT,
                     point_id TEXT REFERENCES points(id) ON DELETE RESTRICT,
                     campaign_id TEXT REFERENCES campaigns(id) ON DELETE RESTRICT,
-                    phase TEXT NOT NULL CHECK(phase IN ('site','after','review','point','before','process')),
+                    activity_id TEXT REFERENCES activities(id) ON DELETE RESTRICT,
+                    phase TEXT NOT NULL CHECK(phase IN ('site','after','review','point','before','process','activity')),
                     relative_path TEXT NOT NULL UNIQUE, width INTEGER NOT NULL CHECK(width>0), height INTEGER NOT NULL CHECK(height>0),
                     uploaded_at TEXT NOT NULL, has_thumb INTEGER NOT NULL DEFAULT 0 CHECK(has_thumb IN (0,1)),
-                    CHECK((inspection_id IS NOT NULL)+(issue_id IS NOT NULL)+(point_id IS NOT NULL)+(campaign_id IS NOT NULL) <= 1),
+                    CHECK((inspection_id IS NOT NULL)+(issue_id IS NOT NULL)+(point_id IS NOT NULL)+(campaign_id IS NOT NULL)+(activity_id IS NOT NULL) <= 1),
                     CHECK(action_id IS NULL OR issue_id IS NOT NULL),
                     CHECK(inspection_id IS NULL OR phase='site'),
                     CHECK(issue_id IS NULL OR phase IN ('site','after','review')),
                     CHECK(point_id IS NULL OR phase='point'),
-                    CHECK(campaign_id IS NULL OR phase IN ('before','process','after'))
+                    CHECK(campaign_id IS NULL OR phase IN ('before','process','after')),
+                    CHECK(activity_id IS NULL OR phase='activity')
                 );
             CREATE INDEX ix_points_community_type ON points(community_id,type_id,disabled);
             CREATE INDEX ix_inspections_point_date ON inspections(point_id,inspection_date);
             CREATE INDEX ix_inspections_community_date ON inspections(community_id,inspection_date);
             CREATE INDEX ix_issues_status_deadline ON issues(status,deadline);
+            CREATE INDEX ix_issues_type ON issues(issue_type_id);
             CREATE INDEX ix_issues_inspection ON issues(inspection_id);
             CREATE INDEX ix_actions_issue ON issue_actions(issue_id);
             CREATE INDEX ix_photos_inspection ON photos(inspection_id);
@@ -142,11 +158,13 @@ public sealed partial class Store : IDisposable
             CREATE INDEX ix_photos_unattached ON photos(uploaded_at) WHERE inspection_id IS NULL AND issue_id IS NULL AND point_id IS NULL AND campaign_id IS NULL;
             CREATE INDEX ix_photos_point ON photos(point_id);
             CREATE INDEX ix_photos_campaign ON photos(campaign_id);
+            CREATE INDEX ix_photos_activity ON photos(activity_id);
+            CREATE INDEX ix_activities_date ON activities(activity_date,community_id,type_id);
             CREATE INDEX ix_campaigns_date ON campaigns(campaign_date,community_id,type_id);
             CREATE INDEX ix_campaigns_point_date ON campaigns(point_id,campaign_date);
             CREATE INDEX ix_points_temporary ON points(temporary,disabled);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=3;
+            PRAGMA user_version=1;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),
@@ -155,6 +173,16 @@ public sealed partial class Store : IDisposable
         {
             using var type = Command("INSERT INTO point_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
             type.ExecuteNonQuery();
+        }
+        foreach (var name in new[] { "环境卫生", "垃圾堆放", "餐饮油烟", "扬尘污染", "水体污染", "噪声污染", "其他" })
+        {
+            using var command = Command("INSERT INTO issue_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
+            command.ExecuteNonQuery();
+        }
+        foreach (var name in new[] { "工作部署会议", "宣传教育", "集中学习", "业务培训", "志愿服务", "其他" })
+        {
+            using var command = Command("INSERT INTO activity_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
+            command.ExecuteNonQuery();
         }
         foreach (var name in new[] { "卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他" })
         {
