@@ -65,6 +65,7 @@ const issueState = reactive<IssueUpdateRequest>({
   requirement: '',
   deadline: '',
   responsibleUnit: '',
+  issueTypeId: '',
 })
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 watch(
@@ -246,12 +247,14 @@ function openIssueEdit(issue: IssueDto) {
     requirement: issue.requirement,
     deadline: issue.deadline,
     responsibleUnit: issue.responsibleUnit,
+    issueTypeId: issue.issueTypeId,
   })
   issueEditError.value = ''
   issueEditOpen.value = true
 }
 function validateIssue(): FormError[] {
   const errors: FormError[] = []
+  if (!issueState.issueTypeId) errors.push({ name: 'issueTypeId', message: '请选择问题类型' })
   if (!issueState.description.trim())
     errors.push({ name: 'description', message: '请填写问题描述' })
   if (!issueState.deadline) errors.push({ name: 'deadline', message: '请选择整改期限' })
@@ -510,7 +513,7 @@ watch(() => route.query.issue, revealIssue)
             <div v-if="expanded[issue.id]" :id="`issue-body-${issue.id}`" class="issue-body">
               <dl class="detail-grid">
                 <div class="detail-wide">
-                  <dt>问题描述</dt>
+                  <dt>问题类型</dt><dd>{{ issue.issueTypeName }}</dd><dt>问题描述</dt>
                   <dd class="whitespace-pre-wrap">{{ issue.description }}</dd>
                 </div>
                 <div class="detail-wide">
@@ -676,7 +679,7 @@ watch(() => route.query.issue, revealIssue)
           :validate="validateIssue"
           class="field-grid"
           @submit="saveIssue"
-          ><UFormField name="description" label="问题描述" required class="field-full"
+          ><UFormField name="issueTypeId" label="问题类型" required class="field-full"><USelect v-model="issueState.issueTypeId" :items="(bootstrap?.issueTypes ?? []).map(item => ({ label: item.name, value: item.id }))" placeholder="请选择" class="w-full" :disabled="issueEditing" /></UFormField><UFormField name="description" label="问题描述" required class="field-full"
             ><UTextarea
               v-model="issueState.description"
               :rows="3"

@@ -3,10 +3,10 @@ import type { FormError } from '@nuxt/ui'
 import type { CommunityDto, PointTypeDto } from '~/types/api'
 import { errorMessage } from '~/utils/format'
 
-const props = defineProps<{ kind: 'communities' | 'point-types' | 'campaign-types'; items: CommunityDto[] | PointTypeDto[] }>()
+const props = defineProps<{ kind: 'communities' | 'point-types' | 'campaign-types' | 'issue-types' | 'activity-types'; items: CommunityDto[] | PointTypeDto[] }>()
 const emit = defineEmits<{ changed: [] }>()
 const toast = useToast()
-const label = computed(() => props.kind === 'communities' ? '社区' : props.kind === 'point-types' ? '点位类型' : '整治类型')
+const label = computed(() => props.kind === 'communities' ? '社区' : props.kind === 'point-types' ? '点位类型' : props.kind === 'campaign-types' ? '整治类型' : props.kind === 'issue-types' ? '问题类型' : '活动类型')
 const editOpen = ref(false)
 const deleteOpen = ref(false)
 const saving = ref(false)
