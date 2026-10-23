@@ -11,7 +11,7 @@ namespace StreetEcoTool;
 public sealed record BackupEntryDto(string Name, string Date, long Bytes);
 public sealed record BackupOverviewDto(BackupEntryDto[] Items, int RetentionCount);
 public sealed record BackupManifest(int FormatVersion, int SchemaVersion, string CreatedAt, string Application);
-public sealed record RestorePreviewDto(string Token, string CreatedAt, int SchemaVersion, int PhotoCount, int PointCount, int InspectionCount, int IssueCount, long ExpandedBytes, string ExpiresAt, int CampaignCount);
+public sealed record RestorePreviewDto(string Token, string CreatedAt, int SchemaVersion, int PhotoCount, int PointCount, int InspectionCount, int IssueCount, long ExpandedBytes, string ExpiresAt, int CampaignCount, int ActivityCount = 0);
 public sealed record RestoreRequest(string Token, bool Confirm = false);
 public sealed record RestoreResultDto(bool Ok, string PreservedBackup, string Message);
 internal sealed record RestoreJournal(string BackupName, bool Committed);
@@ -267,7 +267,7 @@ public sealed partial class Store
         using (var dates = connection.CreateCommand())
         {
             dates.CommandText = "SELECT inspection_date FROM inspections UNION ALL SELECT deadline FROM issues UNION ALL SELECT feedback_date FROM issues UNION ALL SELECT review_date FROM issues UNION ALL SELECT closed_date FROM issues UNION ALL SELECT action_date FROM issue_actions;";
-            dates.CommandText = dates.CommandText.TrimEnd(';') + " UNION ALL SELECT campaign_date FROM campaigns UNION ALL SELECT end_date FROM campaigns;";
+            dates.CommandText = dates.CommandText.TrimEnd(';') + " UNION ALL SELECT campaign_date FROM campaigns UNION ALL SELECT end_date FROM campaigns UNION ALL SELECT activity_date FROM activities UNION ALL SELECT end_date FROM activities;";
             using var reader = dates.ExecuteReader();
             while (reader.Read())
                 if (!reader.IsDBNull(0) && !DateOnly.TryParseExact(reader.GetString(0), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
@@ -314,7 +314,7 @@ public sealed partial class Store
         }
         return new RestorePreviewDto(token, createdAt, checked((int)version), photoCount,
             checked((int)Number(connection, "SELECT count(*) FROM points;")), checked((int)Number(connection, "SELECT count(*) FROM inspections;")),
-            checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM campaigns;")));
+            checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM campaigns;")), checked((int)Number(connection, "SELECT count(*) FROM activities;")));
     }
 
     private static readonly string[] RequiredSchemaQueries =
@@ -324,9 +324,12 @@ public sealed partial class Store
         "SELECT id,name FROM point_types LIMIT 0;",
         "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary FROM points LIMIT 0;",
         "SELECT id,point_id,inspection_date,inspector,result,notes,notice_number,point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone FROM inspections LIMIT 0;",
-        "SELECT id,inspection_id,description,requirement,deadline,responsible_unit,status,feedback_date,feedback_notes,review_date,review_conclusion,closed_date FROM issues LIMIT 0;",
+        "SELECT id,inspection_id,issue_type_id,issue_type_name,description,requirement,deadline,responsible_unit,status,feedback_date,feedback_notes,review_date,review_conclusion,closed_date FROM issues LIMIT 0;",
+        "SELECT id,name FROM issue_types LIMIT 0;",
+        "SELECT id,name FROM activity_types LIMIT 0;",
+        "SELECT id,name,type_id,type_name,community_id,community_name,location,activity_date,end_date,organizer,participants,participant_count,content,outcome,notes FROM activities LIMIT 0;",
         "SELECT id,issue_id,kind,action_date,notes FROM issue_actions LIMIT 0;",
-        "SELECT id,inspection_id,issue_id,action_id,point_id,campaign_id,phase,relative_path,width,height,uploaded_at,has_thumb FROM photos LIMIT 0;",
+        "SELECT id,inspection_id,issue_id,action_id,point_id,campaign_id,activity_id,phase,relative_path,width,height,uploaded_at,has_thumb FROM photos LIMIT 0;",
         "SELECT id,name FROM campaign_types LIMIT 0;",
         "SELECT id,name,point_id,point_name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes FROM campaigns LIMIT 0;"
     ];
