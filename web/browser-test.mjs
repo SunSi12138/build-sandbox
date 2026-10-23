@@ -195,6 +195,8 @@ async function waitForVisualPage(name, title) {
       case 'inspection-new': return Boolean(input('inspection-date')?.value && (input('inspection-inspector')?.value || input('inspection-inspector')?.closest('.names-editor')?.querySelector('.name-edit-tag')) && count('[data-testid="inspection-point-option"]') > 0)
       case 'inspection-detail': return count('.issue-block') >= 2 && Boolean(input('batch-review'))
       case 'campaigns': return count('[data-testid="campaign-row"]') > 0
+      case 'activities': return count('[data-testid="activity-row"]') > 0
+      case 'activity-new': return Boolean(input('activity-save') && !input('activity-save').disabled)
       case 'campaign-new': return Boolean(input('campaign-save') && !input('campaign-save').disabled)
       case 'settings': return Boolean(content.querySelector('#settings-basic input')?.value)
       default: return false
@@ -261,7 +263,7 @@ async function visualAssertions(name, width) {
   })
   assert(value.scrollWidth <= width + 1, `${name}: horizontal overflow ${value.scrollWidth} > ${width}`)
   assert.deepEqual(value.smallText, [], `${name}: text smaller than 12 px`)
-  if (name === 'inspections' || name === 'campaigns') {
+  if (name === 'inspections' || name === 'campaigns' || name === 'activities') {
     assert.equal(value.dateInputs.length, 2, `${name}: both date filters must render`)
     assert(value.dateInputs.every(input => input.visible === (width >= 768)), `${name}: date filters must be visible on desktop and initially collapsed on mobile`)
     assert.equal(value.dateToggleVisible, width < 768, `${name}: mobile date toggle must remain accessible`)
@@ -311,12 +313,12 @@ try {
   page.on('pageerror', error => report.pageErrors.push(String(error)))
   page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push({ text: message.text(), expectedWasmFailure }) })
 
-  await test('Fresh HTTP page: offline resources, five navigation items and hash query persistence', async () => {
+  await test('Fresh HTTP page: offline resources, six navigation items and hash query persistence', async () => {
     await page.goto(origin + '/', { waitUntil: 'networkidle' }); await waitForText('逾期')
     report.secureContext = await page.evaluate(() => isSecureContext); assert.equal(report.secureContext, false)
     assert((await iconCount()) >= 5)
-    assert.equal(await page.locator('.sidebar-nav-link').count(), 5)
-    assert.equal(await page.locator('.mobile-tab').count(), 5)
+    assert.equal(await page.locator('.sidebar-nav-link').count(), 6)
+    assert.equal(await page.locator('.mobile-tab').count(), 6)
     await page.goto(origin + '/#/points?q=' + encodeURIComponent(point.name), { waitUntil: 'networkidle' })
     await page.reload({ waitUntil: 'networkidle' }); await waitForText(point.name)
     assert(page.url().includes(encodeURIComponent(point.name)))
@@ -361,6 +363,7 @@ try {
     await page.getByTestId('inspection-inspector').fill('浏览器验收员')
     await page.getByTestId('inspection-result-issues').click()
     const description = '河岸边有散落生活垃圾，需要清理并加强日常巡查。'
+    await selectOption(page.getByTestId('inspection-issue-type').first(), bootstrap.issueTypes[0].name)
     await page.getByTestId('inspection-issue-description').first().fill(description)
     await page.getByTestId('inspection-issue-deadline').first().fill(bootstrap.today)
     const encoded = await page.evaluate(() => {
@@ -469,8 +472,10 @@ try {
     await page.getByLabel('经纬度', { exact: true }).fill('88.893426 29.274331')
     await page.getByTestId('inspection-inspector').fill('临时点位验收员')
     await page.getByTestId('inspection-result-issues').click()
+    await selectOption(page.getByTestId('inspection-issue-type').first(), bootstrap.issueTypes[0].name)
     await page.getByTestId('inspection-issue-description').first().fill('沿河道路存在垃圾堆积。')
     await page.getByRole('button', { name: '添加问题', exact: true }).click()
+    await selectOption(page.getByTestId('inspection-issue-type').nth(1), bootstrap.issueTypes[1].name)
     await page.getByTestId('inspection-issue-description').nth(1).fill('路边排水沟有杂物堵塞。')
     const before = (await api('/points?q=' + encodeURIComponent('临时河岸排查点') + '&temporary=all')).total
     assert.equal(before, 0)
@@ -550,7 +555,27 @@ try {
     assert.equal(await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v3')), null)
   })
 
-  await test('Seven Word exports download through the current UI', async () => {
+  let activityId
+  await test('Activity creation: type management, local photo compression, draft and Word record', async () => {
+    await page.goto(origin + '/#/activities/new', { waitUntil: 'networkidle' })
+    await page.getByTestId('activity-name').fill('环保工作部署会议')
+    await selectOption(page.getByTestId('activity-type'), bootstrap.activityTypes[0].name)
+    await page.getByTestId('activity-content').fill('安排近期环保专项宣传和重点问题排查工作。')
+    await uploadIn(page.getByTestId('photo-file-input'), 'meeting.jpg', fixtureJpeg)
+    await page.reload({ waitUntil: 'networkidle' })
+    assert.equal(await page.getByTestId('activity-name').inputValue(), '环保工作部署会议')
+    const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/activities' && response.request().method() === 'POST' && response.status() === 201)
+    await page.getByTestId('activity-save').click()
+    const result = await (await response).json()
+    activityId = result.activity.id
+    await page.waitForURL('**/#/activities/' + activityId)
+    assert.equal(result.photos.length, 1)
+    const download = page.waitForEvent('download')
+    await page.getByTestId('export-activity-record').click()
+    assert((await download).suggestedFilename().endsWith('.docx'))
+  })
+
+  await test('Nine Word exports download through the current UI', async () => {
     await verifyWordDownloads({ page, origin, evidence, inspectionId: closedInspectionId, campaignId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
   })
 
@@ -592,9 +617,9 @@ try {
     assert.equal((await api('/campaigns/' + campaignId)).photos.length, 3)
   })
 
-  await test('Twenty-seven screenshots and responsive design assertions across all nine pages', async () => {
+  await test('Thirty-three screenshots and responsive design assertions across eleven pages', async () => {
     for (let index = 0; index < 6; index++) await api('/inspections', { method: 'POST', body: { pointId: point.id, date: bootstrap.today, inspector: '列表验收员 ' + (index + 1), result: 'normal' } })
-    const pages = [ ['home', '/', '首页'], ['points', '/points', '点位管理'], ['point-detail', '/points/' + point.id, point.name], ['inspections', '/inspections', '排查记录'], ['inspection-new', '/inspections/new', '新增排查'], ['inspection-detail', '/inspections/' + closedInspectionId, '临时河岸排查点'], ['campaigns', '/campaigns', '整治记录'], ['campaign-new', '/campaigns/new', '新增整治'], ['settings', '/settings?tab=basic', '工具设置'] ]
+    const pages = [ ['home', '/', '首页'], ['points', '/points', '点位管理'], ['point-detail', '/points/' + point.id, point.name], ['inspections', '/inspections', '排查记录'], ['inspection-new', '/inspections/new', '新增排查'], ['inspection-detail', '/inspections/' + closedInspectionId, '临时河岸排查点'], ['campaigns', '/campaigns', '整治记录'], ['campaign-new', '/campaigns/new', '新增整治'], ['activities', '/activities', '活动记录'], ['activity-new', '/activities/new', '新增活动'], ['settings', '/settings?tab=basic', '工具设置'] ]
     report.screenshots = []
     for (const [width, height] of [[375, 812], [768, 1024], [1440, 900]]) {
       await page.setViewportSize({ width, height })
