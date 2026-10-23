@@ -23,7 +23,7 @@ public sealed partial class Store
         WHERE ($point='' OR n.point_id=$point) AND ($community='' OR n.community_id=$community)
         AND ($from='' OR n.inspection_date>=$from) AND ($to='' OR n.inspection_date<=$to)
         AND ($q='' OR n.point_name LIKE $like OR n.notice_number LIKE $like OR n.inspector LIKE $like)
-        AND ($type='' OR n.type_id=$type) AND ($temporary=0 OR pt.temporary=1)
+        AND ($type='' OR n.type_id=$type) AND ($issueType='' OR EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.issue_type_id=$issueType)) AND ($temporary=0 OR pt.temporary=1)
         AND (($overdue=0 AND $soon=0 AND $awaiting=0 AND $open=0) OR EXISTS(
             SELECT 1 FROM issues x WHERE x.inspection_id=n.id
             AND ($overdue=0 OR (x.status<>'closed' AND x.deadline<$today))
@@ -77,7 +77,7 @@ public sealed partial class Store
         if (rectify is not ("" or "none" or "pending" or "feedback" or "closed")) throw new ApiException(400, "整改状态筛选无效。");
         return [("$point", query.PointId ?? ""), ("$community", query.CommunityId ?? ""),
             ("$from", from ?? ""), ("$to", to ?? ""), ("$q", q), ("$like", "%" + q + "%"),
-            ("$type", query.TypeId ?? ""), ("$temporary", query.Temporary ? 1 : 0), ("$overdue", query.Overdue ? 1 : 0),
+            ("$type", query.TypeId ?? ""), ("$issueType", query.IssueTypeId ?? ""), ("$temporary", query.Temporary ? 1 : 0), ("$overdue", query.Overdue ? 1 : 0),
             ("$soon", query.DueSoon ? 1 : 0), ("$awaiting", query.AwaitingReview ? 1 : 0), ("$open", query.OpenOnly ? 1 : 0), ("$rectify", rectify),
             ("$through", DateTime.Today.AddDays(3).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))];
     }
@@ -154,7 +154,7 @@ public sealed partial class Store
                 var community = RequireCommunity(point.CommunityId, transaction);
                 var validatedIssues = inputIssues.Select(issue => new IssueCreateRequest(Text(issue.Description, "问题描述", 8000, true),
                     Text(issue.Requirement, "整改要求", 8000), DateText(issue.Deadline, "整改期限"),
-                    Text(string.IsNullOrWhiteSpace(issue.ResponsibleUnit) ? point.CommunityName : issue.ResponsibleUnit, "责任单位", 200, true), issue.PhotoIds)).ToArray();
+                    Text(string.IsNullOrWhiteSpace(issue.ResponsibleUnit) ? point.CommunityName : issue.ResponsibleUnit, "责任单位", 200, true), issue.PhotoIds, issue.IssueTypeId)).ToArray();
                 using (var insert = Command("""
                     INSERT INTO inspections(id,point_id,inspection_date,inspector,result,notes,notice_number,
                     point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone)
@@ -167,8 +167,9 @@ public sealed partial class Store
                 foreach (var issue in validatedIssues)
                 {
                     var issueId = NewId();
-                    using (var insertIssue = Command("INSERT INTO issues(id,inspection_id,description,requirement,deadline,responsible_unit,status) VALUES($id,$inspection,$description,$requirement,$deadline,$unit,'pending');",
-                        transaction, ("$id", issueId), ("$inspection", inspectionId), ("$description", issue.Description), ("$requirement", issue.Requirement),
+                    var kind = RequireIssueType(issue.IssueTypeId, transaction);
+                    using (var insertIssue = Command("INSERT INTO issues(id,inspection_id,issue_type_id,issue_type_name,description,requirement,deadline,responsible_unit,status) VALUES($id,$inspection,$type,$typeName,$description,$requirement,$deadline,$unit,'pending');",
+                        transaction, ("$id", issueId), ("$inspection", inspectionId), ("$type", kind.Id), ("$typeName", kind.Name), ("$description", issue.Description), ("$requirement", issue.Requirement),
                         ("$deadline", issue.Deadline), ("$unit", issue.ResponsibleUnit))) insertIssue.ExecuteNonQuery();
                     AttachPhotos(issue.PhotoIds, "site", null, issueId, transaction);
                 }

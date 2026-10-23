@@ -33,7 +33,7 @@ public sealed partial class Store
 
     public BootstrapDto GetBootstrap()
     {
-        lock (_gate) return new(GetSettings(), GetCommunities(), GetPointTypes(), Today, GetCampaignTypes());
+        lock (_gate) return new(GetSettings(), GetCommunities(), GetPointTypes(), Today, GetCampaignTypes(), GetIssueTypes(), GetActivityTypes());
     }
 
     public CommunityDto[] GetCommunities()
