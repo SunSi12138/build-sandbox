@@ -17,6 +17,11 @@ public sealed partial class Store
               body TEXT NOT NULL CHECK(json_valid(body)), revision INTEGER NOT NULL DEFAULT 1,
               updated_at TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN(0,1)));
             CREATE INDEX IF NOT EXISTS ix_community_records_parent ON community_records(kind,parent_id,archived);
+            CREATE TABLE IF NOT EXISTS record_photos (
+              record_id TEXT NOT NULL REFERENCES community_records(id),
+              photo_id TEXT NOT NULL UNIQUE REFERENCES photos(id), active INTEGER NOT NULL DEFAULT 1,
+              PRIMARY KEY(record_id,photo_id));
+            CREATE TABLE IF NOT EXISTS imported_rows(source_key TEXT PRIMARY KEY, record_id TEXT NOT NULL, kind TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS community_history (
               id TEXT PRIMARY KEY, kind TEXT NOT NULL, record_id TEXT NOT NULL, at TEXT NOT NULL,
               action TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL);
@@ -32,6 +37,7 @@ public sealed partial class Store
             INSERT OR IGNORE INTO map_layers VALUES('jlyh','吉林一号','jlyh','tms',1,1,1,12,18,0);
             INSERT OR IGNORE INTO map_layers VALUES('tdt-vec','天地图街道','tdt-vec','xyz',0,0,1,0,18,1);
             INSERT OR IGNORE INTO map_layers VALUES('tdt-cva','地名标注','tdt-cva','xyz',0,0,1,0,18,2);
+            PRAGMA user_version=5;
             """, transaction)) command.ExecuteNonQuery();
         using (var count = Command("SELECT COUNT(*) FROM community_records WHERE kind='inspection-type';", transaction))
             if (Convert.ToInt32(count.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
@@ -63,8 +69,12 @@ public sealed partial class Store
         }
     }
 
-    private static CommunityRecord ReadCommunityRecord(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
-        JsonDocument.Parse(row.GetString(4)).RootElement.Clone(), row.GetInt32(5), row.GetString(6), row.GetInt32(7) != 0);
+    private static CommunityRecord ReadCommunityRecord(SqliteDataReader row)
+    {
+        using var document = JsonDocument.Parse(row.GetString(4));
+        return new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
+            document.RootElement.Clone(), row.GetInt32(5), row.GetString(6), row.GetInt32(7) != 0);
+    }
 
     public CommunityRecord SaveCommunityRecord(string kind, string? id, CommunityWrite request)
     {
@@ -76,23 +86,31 @@ public sealed partial class Store
         {
             PrepareWrite();
             if (kind is "unit" or "use") _ = GetPointInternal(parent);
+            if (kind == "unit") ValidateUnit(id, parent, request);
             if (kind == "plan")
             {
                 var start = DateText(JsonText(request.Data, "from"), "开始日期");
                 var end = DateText(JsonText(request.Data, "to"), "完成期限");
                 CheckDateRange(start, end);
                 _ = Text(JsonText(request.Data, "inspector"), "检查人员", 200, true);
+                var typeId = JsonText(request.Data, "typeId");
+                if (!ListCommunityRecords("inspection-type").Any(x => x.Id == typeId)) throw new ApiException(400, "请选择有效的检查类型。");
                 if (!request.Data.TryGetProperty("pointIds", out var pointIds) || pointIds.ValueKind != JsonValueKind.Array || pointIds.GetArrayLength() == 0) throw new ApiException(400, "请选择检查场所。");
                 foreach (var pointId in pointIds.EnumerateArray()) _ = GetPointInternal(pointId.GetString() ?? "");
             }
             if (kind == "use")
             {
                 var unitId = JsonText(request.Data, "unitId");
-                if (unitId.Length > 0 && !ListCommunityRecords("unit", parent).Any(x => x.Id == unitId)) throw new ApiException(400, "所选内部单元不属于这个场所。");
+                var state = JsonText(request.Data, "state");
+                if (state is not ("使用中" or "暂停使用" or "已结束" or "待核实")) throw new ApiException(400, "请选择使用状态。");
+                if (!request.Data.TryGetProperty("purposes", out var purposes) || purposes.ValueKind != JsonValueKind.Array || purposes.GetArrayLength() == 0 || purposes.GetArrayLength() > 20 || purposes.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(x.GetString()))) throw new ApiException(400, "请选择至少一种用途。");
+                if (unitId.Length > 0 && !ListCommunityRecords("unit", parent, state == "已结束").Any(x => x.Id == unitId)) throw new ApiException(400, "所选楼层或房间已停用或不属于这个场所。");
                 var start = JsonText(request.Data, "startDate");
                 var end = JsonText(request.Data, "endDate");
                 if (start.Length > 0) _ = DateText(start, "开始日期");
                 if (end.Length > 0) _ = DateText(end, "结束日期");
+                if (state == "已结束" && end.Length == 0) throw new ApiException(400, "停业或退租时请填写结束日期。");
+                if (state != "已结束" && end.Length > 0) throw new ApiException(400, "填写结束日期时，请将状态改为已结束。");
                 if (start.Length > 0 && end.Length > 0 && string.CompareOrdinal(end, start) < 0) throw new ApiException(400, "结束日期不能早于开始日期。");
             }
             var actualId = id ?? NewId();
@@ -100,10 +118,12 @@ public sealed partial class Store
             var revision = 1;
             if (id is not null)
             {
-                using var existing = Command("SELECT body,revision,parent_id FROM community_records WHERE id=$id AND kind=$kind;", null, ("$id", id), ("$kind", kind));
+                using var existing = Command("SELECT body,revision,parent_id,name,archived FROM community_records WHERE id=$id AND kind=$kind;", null, ("$id", id), ("$kind", kind));
                 using var row = existing.ExecuteReader();
                 if (!row.Read()) throw new ApiException(404, "资料不存在。");
-                before = row.GetString(0); revision = row.GetInt32(1) + 1;
+                using var previousBody = JsonDocument.Parse(row.GetString(0));
+                before = JsonSerializer.Serialize(new CommunityWrite(row.GetString(2), row.GetString(3), previousBody.RootElement.Clone(), row.GetInt32(1), row.GetInt32(4) != 0), CommunityJsonContext.Default.CommunityWrite);
+                revision = row.GetInt32(1) + 1;
                 if (request.Revision != revision - 1) throw new ApiException(409, "这条资料已在其他页面修改，请刷新后再保存。");
                 if (kind is "unit" or "use" && parent != row.GetString(2)) throw new ApiException(400, "已有资料不能直接换到其他场所。");
             }
@@ -115,7 +135,8 @@ public sealed partial class Store
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body,revision=excluded.revision,updated_at=excluded.updated_at,archived=excluded.archived;
                 """, transaction, ("$id", actualId), ("$kind", kind), ("$parent", parent), ("$name", name), ("$body", body),
                 ("$revision", revision), ("$at", now), ("$archived", request.Archived ? 1 : 0))) command.ExecuteNonQuery();
-            AddCommunityHistory(kind, actualId, before, body, id is null ? "新增" : request.Archived ? "停用" : "修改", transaction);
+            if (kind is "use" or "unit") SaveRecordPhotos(actualId, request.Data, transaction);
+            AddCommunityHistory(kind, actualId, before, JsonSerializer.Serialize(request, CommunityJsonContext.Default.CommunityWrite), id is null ? "新增" : request.Archived ? "停用" : "修改", transaction);
             transaction.Commit();
             return new(actualId, kind, parent, name, request.Data.Clone(), revision, now, request.Archived);
         }

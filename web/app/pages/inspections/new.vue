@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { InspectionScopeValue } from '~/types/community'
+import type { GeoShape, InspectionScopeValue } from '~/types/community'
 import type { InspectionCreateRequest, InspectionDetailDto, InspectionResult, PageDto, PhotoUploadDto, PointDetailDto, PointDto } from '~/types/api'
 import { errorMessage, queryText, todayLocal, parseCoordinates } from '~/utils/format'
 
@@ -13,6 +13,7 @@ interface IssueDraft {
 }
 interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
 interface InspectionDraft {
+  tempShape: GeoShape | null
   scope: InspectionScopeValue
   submissionKey: string
   pointMode: 'regular' | 'temporary'
@@ -45,7 +46,7 @@ let leaveDecision: ((leave: boolean) => void) | undefined
 
 function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
 function emptyDraft(pointId = ''): InspectionDraft {
-  return { scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '' }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
+  return { tempShape: null, scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '' }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
 }
 const draft = reactive<InspectionDraft>(emptyDraft())
 const initializing = ref(true)
@@ -124,6 +125,7 @@ function loadLocalDraft() {
     const text = (key: string) => typeof value[key] === 'string' ? value[key] as string : ''
     const issues = Array.isArray(value.issues) ? value.issues : []
     Object.assign(draft, {
+      tempShape: value.tempShape && typeof value.tempShape === 'object' && 'coordinates' in value.tempShape ? value.tempShape : null,
       pointMode: value.pointMode === 'temporary' ? 'temporary' : 'regular',
       newPoint: Object.fromEntries(Object.keys(emptyNewPoint()).map(key => [key, value.newPoint && typeof value.newPoint === 'object' && typeof (value.newPoint as Record<string, unknown>)[key] === 'string' ? (value.newPoint as Record<string, unknown>)[key] : ''])),
       pointId: text('pointId'), date: text('date') || today.value, inspector: text('inspector'),
@@ -300,12 +302,15 @@ function validate(state: InspectionDraft) {
     if (!state.newPoint.address.trim()) errors.push({ name: 'newPoint.address', message: '请填写详细地址' })
     const coords = parseCoordinates(state.newPoint.coordinates)
     if (coords.error) errors.push({ name: 'newPoint.coordinates', message: coords.error })
+    else if (!state.tempShape && coords.longitude === null) errors.push({ name: 'newPoint.coordinates', message: '请在地图标记位置或填写经纬度' })
   } else if (!state.pointId || !selectedPoint.value) errors.push({ name: 'pointId', message: '请选择一个检查场所。' })
   else if (selectedPoint.value?.disabled) errors.push({ name: 'pointId', message: '该场所已停用，请选择其他场所或先启用。' })
   if (!dateIsValid(state.date)) errors.push({ name: 'date', message: '请选择有效的检查日期。' })
   else if (state.date > today.value) errors.push({ name: 'date', message: '检查日期不能晚于今天。' })
   if (!state.inspector.trim()) errors.push({ name: 'inspector', message: '请填写检查人。' })
   if (!state.scope.inspectionTypeId) errors.push({ name: 'result', message: '请选择检查类型' })
+  if (state.result === 'normal' && state.scope.checklist.some(x => x.result === 'issues')) errors.push({ name: 'result', message: '检查项目中有问题，请选择发现问题并登记详情' })
+  if (state.result !== 'incomplete' && state.scope.checklist.some(x => x.result === 'unchecked')) errors.push({ name: 'result', message: '还有项目未检查，请补充结果或选择未完成' })
   if (state.result === 'incomplete' && !state.scope.incompleteReason.trim()) errors.push({ name: 'result', message: '请填写未完成原因' })
   if (state.result !== 'normal') {
     if (state.result === 'issues' && !state.issues.length) errors.push({ name: 'result', message: '发现问题时，请至少登记一条问题。' })
@@ -336,7 +341,7 @@ async function saveInspection() {
   const body: InspectionCreateRequest = {
     ...draft.scope, submissionKey: draft.submissionKey,
     pointId: draft.pointMode === 'regular' ? draft.pointId : null,
-    newPoint: draft.pointMode === 'temporary' ? { name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
+    newPoint: draft.pointMode === 'temporary' ? { shape: draft.tempShape, name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
     notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: draft.photos.map(photo => photo.id),
     issues: draft.result !== 'normal' ? draft.issues.map(issue => ({
       description: issue.description.trim(), requirement: issue.requirement, deadline: issue.deadline,
@@ -408,8 +413,8 @@ onBeforeUnmount(() => {
             </div>
             <div v-else class="field-grid">
               <UFormField name="newPoint.name" label="名称" required class="field-full"><UInput v-model="draft.newPoint.name" data-testid="temporary-point-name" :maxlength="200" class="w-full"  :disabled="formDisabled" /></UFormField>
-              <UFormField name="newPoint.communityId" label="社区" required><USelect v-model="draft.newPoint.communityId" :items="communities" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.typeId" label="类型" required><USelect v-model="draft.newPoint.typeId" :items="pointTypes" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField>
-              <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="经纬度" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full"  :disabled="formDisabled" /></UFormField>
+              <UFormField name="newPoint.communityId" label="网格" required><USelect v-model="draft.newPoint.communityId" :items="communities" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.typeId" label="类型" required><USelect v-model="draft.newPoint.typeId" :items="pointTypes" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField>
+              <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="位置" required class="field-full"><LocationPicker v-model="draft.tempShape" :disabled="formDisabled" @picked="shape => { draft.newPoint.coordinates = shape.coordinates[0]!.join(',') }" /><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" :disabled="formDisabled" @update:model-value="draft.tempShape = null" /></UFormField>
             </div>
           </section>
           <InspectionScope v-model="draft.scope" :point-id="draft.pointMode === 'regular' ? draft.pointId : ''" :disabled="formDisabled" />

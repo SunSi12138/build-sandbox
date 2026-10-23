@@ -84,6 +84,7 @@ onMounted(() => { void fetchSettings() })
 <template>
   <div class="page-stack">
     <PageHeader title="系统设置" />
+    <UButton to="/imports" label="导入场所、网格" icon="i-lucide-file-up" variant="outline" class="self-start" />
     <div class="flex gap-2 flex-wrap"><UButton to="/catalogs" label="人员与检查类型" icon="i-lucide-list-checks" variant="outline" /><UButton to="/layers" label="地图图层" icon="i-lucide-map" variant="outline" /><UButton to="/campaigns" label="整治记录" icon="i-lucide-brush-cleaning" variant="outline" /></div>
     <UTabs v-model="active" :items="tabs" :content="false" variant="link" :ui="{ root: 'min-w-0', list: 'overflow-x-auto flex-nowrap justify-start', trigger: 'shrink-0 min-h-10 text-sm px-3', indicator: 'h-0.5' }" />
     <UAlert v-if="error" :description="error" color="error" variant="subtle"><template #actions><UButton v-if="!ready" color="neutral" variant="outline" @click="fetchSettings(true)">重试</UButton></template></UAlert>

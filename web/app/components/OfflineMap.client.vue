@@ -108,6 +108,7 @@ watch(element, target => {
   })
   map.on('movestart', () => { missing.value = false })
   refreshFeatures(); refreshLayers()
+  if (!props.editable && props.features.length === 1) focus(props.features[0]!.shape)
   resizing = new ResizeObserver(() => map?.updateSize()); if (element.value) resizing.observe(element.value)
 }, { flush: 'post' })
 onBeforeUnmount(() => { resizing?.disconnect(); map?.setTarget(undefined); map?.dispose() })

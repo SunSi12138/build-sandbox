@@ -45,7 +45,7 @@ public sealed partial class Store
             var east = SaveCommunity(null, new("东苑社区", "东苑社区居民委员会"));
             var west = SaveCommunity(null, new("西河社区", "西河社区居民委员会"));
             var types = GetPointTypes();
-            string Type(string name) => types.First(type => type.Name == name).Id;
+            string Type(string name) => types.First(type => type.Name == (name switch { "餐饮油烟" or "小散乱污" => "建筑物", "工地扬尘" => "地块", "河道水体" or "垃圾堆放" => "公共区域", _ => "其他" })).Id;
             var restaurant = SavePoint(null, new("惠民早餐店", east.Id, Type("餐饮油烟"), "建设路 12 号", "张店长", "13800000000", "weekly", "示例数据，仅供试用。"));
             var construction = SavePoint(null, new("建设路改造工地", east.Id, Type("工地扬尘"), "建设路与和平路交叉口", "李负责人", "13800000001", "weekly"));
             var river = SavePoint(null, new("中心河西河桥段", west.Id, Type("河道水体"), "西河桥至滨河步道段", "王联系人", "13800000002", "monthly"));

@@ -125,6 +125,8 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
+            using var linked = Command("SELECT COUNT(*) FROM record_photos WHERE photo_id=$id;", null, ("$id", id));
+            if (Convert.ToInt32(linked.ExecuteScalar()) > 0) throw new ApiException(409, "这张照片已存入使用记录，请在记录中移除；历史照片会保留。");
             DeletePhotoCore(id);
         }
     }
@@ -226,7 +228,8 @@ public sealed partial class Store
             string path;
             using (var existing = Command("""
                 SELECT relative_path FROM photos
-                WHERE id=$id AND phase=$phase AND inspection_id IS NULL AND issue_id IS NULL AND action_id IS NULL AND point_id IS NULL AND campaign_id IS NULL;
+                WHERE id=$id AND phase=$phase AND inspection_id IS NULL AND issue_id IS NULL AND action_id IS NULL AND point_id IS NULL AND campaign_id IS NULL
+                  AND NOT EXISTS(SELECT 1 FROM record_photos r WHERE r.photo_id=photos.id);
                 """, tx, ("$id", id), ("$phase", phase)))
             {
                 if (existing.ExecuteScalar() is not string relativePath)
@@ -280,7 +283,8 @@ public sealed partial class Store
             var expiredIds = new List<string>();
             var cutoff = DateTime.Now.AddDays(-7).ToString("yyyy-MM-dd'T'HH:mm:ss", CultureInfo.InvariantCulture);
             using (var command = Command("""
-                SELECT id FROM photos WHERE inspection_id IS NULL AND issue_id IS NULL AND action_id IS NULL AND point_id IS NULL AND campaign_id IS NULL AND uploaded_at < $cutoff;
+                SELECT id FROM photos WHERE inspection_id IS NULL AND issue_id IS NULL AND action_id IS NULL AND point_id IS NULL AND campaign_id IS NULL AND uploaded_at < $cutoff
+                  AND NOT EXISTS(SELECT 1 FROM record_photos r WHERE r.photo_id=photos.id);
                 """, null, ("$cutoff", cutoff)))
             using (var reader = command.ExecuteReader())
                 while (reader.Read()) expiredIds.Add(reader.GetString(0));

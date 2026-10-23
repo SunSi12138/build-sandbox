@@ -153,6 +153,8 @@ public sealed partial class Store
             var inspectionType = string.IsNullOrWhiteSpace(request.InspectionTypeId) ? null : ListCommunityRecords("inspection-type").FirstOrDefault(x => x.Id == request.InspectionTypeId) ?? throw new ApiException(400, "检查类型已停用或不存在。");
             var checklist = request.Checklist ?? [];
             if (checklist.Length > 100 || checklist.Any(x => x is null || x.Result is not ("normal" or "issues" or "na" or "unchecked") || string.IsNullOrWhiteSpace(x.Name))) throw new ApiException(400, "检查项目填写不正确。");
+            if (request.Result == "normal" && checklist.Any(x => x.Result == "issues")) throw new ApiException(400, "检查项目中有问题，请将结果改为发现问题并登记问题详情。");
+            if (request.Result != "incomplete" && checklist.Any(x => x.Result == "unchecked")) throw new ApiException(400, "还有未检查的项目，请补充结果，或选择未完成并填写原因。");
             if (request.Shape is not null) ValidateShape(request.Shape);
             var inputIssues = request.Issues ?? [];
             if (request.Result == "normal" && inputIssues.Length > 0) throw new ApiException(400, "正常排查不能同时包含问题。");
@@ -172,6 +174,11 @@ public sealed partial class Store
                     using var useQuery = Command("SELECT id,name,body,archived FROM community_records WHERE kind='use' AND id=$id AND parent_id=$parent;", transaction, ("$id", request.UseId), ("$parent", point.Id));
                     using var useRow = useQuery.ExecuteReader();
                     if (!useRow.Read()) throw new ApiException(400, "经营使用记录不属于该场所。");
+                    using var useBody = JsonDocument.Parse(useRow.GetString(2));
+                    var start = JsonText(useBody.RootElement, "startDate");
+                    var end = JsonText(useBody.RootElement, "endDate");
+                    if (useRow.GetInt32(3) != 0) throw new ApiException(400, "使用记录已停用，请选择有效记录。");
+                    if ((start.Length > 0 && string.CompareOrdinal(date, start) < 0) || (end.Length > 0 && string.CompareOrdinal(date, end) > 0)) throw new ApiException(400, "检查日期不在该经营、使用记录的起止日期内。");
                     useId = useRow.GetString(0); useName = useRow.GetString(1);
                 }
                 var validatedIssues = inputIssues.Select(issue => new IssueCreateRequest(Text(issue.Description, "问题描述", 8000, true),

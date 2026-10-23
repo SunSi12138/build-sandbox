@@ -10,7 +10,7 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 4;
+    public const int SchemaVersion = 5;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
@@ -56,6 +56,16 @@ public sealed partial class Store : IDisposable
             DataSource = DatabasePath, Pooling = false, ForeignKeys = true, DefaultTimeout = 15
         }.ToString());
         _db.Open();
+        if (!initialize)
+        {
+            using var version = Command("PRAGMA user_version;");
+            if (Convert.ToInt32(version.ExecuteScalar()) == 4)
+            {
+                var path = Path.Combine(BackupDir, "before-v5-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + NewId()[..6] + ".db");
+                using var backup = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+                backup.Open(); _db.BackupDatabase(backup);
+            }
+        }
         using (var pragmas = Command("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000;")) pragmas.ExecuteNonQuery();
         if (initialize) InitializeCurrentDatabase();
         InitializeCommunityTables();
@@ -201,9 +211,9 @@ public sealed partial class Store : IDisposable
             var version = Number(connection, "PRAGMA user_version;");
             var application = Number(connection, "PRAGMA application_id;");
             if (version == 0 && application == 0 && Number(connection, "SELECT COUNT(*) FROM sqlite_master;") == 0) return true;
-            if (version != SchemaVersion || application != DatabaseApplicationId)
+            if (version is not (4 or SchemaVersion) || application != DatabaseApplicationId)
                 throw new ApiException(409, "数据库版本或标识不受支持。现有文件未被重建，请保留数据并使用对应版本的程序。");
-            foreach (var sql in RequiredSchemaQueries)
+            foreach (var sql in SchemaQueriesFor(version))
             {
                 using var command = connection.CreateCommand(); command.CommandText = sql;
                 using var reader = command.ExecuteReader();

@@ -21,6 +21,7 @@ const loading = ref(true),
   changing = ref(false),
   promoteOpen = ref(false)
 const id = computed(() => queryText(route.params.id))
+const historyOpen = ref(false)
 const back = computed(() => {
   const value = queryText(route.query.returnTo)
   return /^\/points\/?(?:\?|$)/.test(value) ? value : '/points'
@@ -77,6 +78,7 @@ async function remove() {
   }
 }
 const menu = computed(() => [
+  { label: '变更记录', onSelect: () => { historyOpen.value = true } },
   ...(detail.value?.point.temporary
     ? [
         {
@@ -106,6 +108,7 @@ watch(id, load, { immediate: true })
 </script>
 <template>
   <div class="page-stack">
+    <RecordHistory v-model:open="historyOpen" :record-id="id" />
     <PageHeader :title="detail?.point.name || '场所详情'" :back="back"
       ><template v-if="detail" #badge
         ><StatusBadge v-if="detail.point.temporary" tone="outline">临时</StatusBadge

@@ -46,7 +46,7 @@ export function rectifyLabel(record: Pick<InspectionDto, 'rectifyStatus' | 'issu
   return compact ? `${label} ${record.closedCount}/${record.issueCount}` : label
 }
 export function rectifyTone(status: string): 'warning' | 'info' | 'success' {
-  return status === 'pending' ? 'warning' : status === 'feedback' ? 'info' : 'success'
+  return status === 'pending' || status === 'incomplete' ? 'warning' : status === 'feedback' ? 'info' : 'success'
 }
 export function overdueDays(deadline: string | null | undefined, today = todayLocal()): number {
   if (!deadline || deadline >= today) return 0

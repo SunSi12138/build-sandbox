@@ -240,7 +240,7 @@ public sealed partial class Store
         }
         var application = Number(connection, "PRAGMA application_id;");
         var version = Number(connection, "PRAGMA user_version;");
-        if (application != DatabaseApplicationId || version != SchemaVersion)
+        if (application != DatabaseApplicationId || version is not (4 or SchemaVersion))
             throw new InvalidDataException("这不是本工具支持的备份，或数据库来自更新版本。");
         using (var integrity = connection.CreateCommand())
         {
@@ -259,7 +259,7 @@ public sealed partial class Store
             throw new InvalidDataException("备份的设置记录不完整。");
         // Read all required columns before replacing a live database, including columns
         // whose absence SQLite's generic integrity_check would not consider an error.
-        foreach (var sql in RequiredSchemaQueries)
+        foreach (var sql in SchemaQueriesFor(version))
         {
             using var schema = connection.CreateCommand(); schema.CommandText = sql;
             using var reader = schema.ExecuteReader();
@@ -317,6 +317,10 @@ public sealed partial class Store
             checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM campaigns;")));
     }
 
+    private static IEnumerable<string> SchemaQueriesFor(long version) => version == 4
+        ? RequiredSchemaQueries.Where(sql => !sql.Contains("FROM record_photos", StringComparison.Ordinal) && !sql.Contains("FROM imported_rows", StringComparison.Ordinal))
+        : RequiredSchemaQueries;
+
     private static readonly string[] RequiredSchemaQueries =
     [
         "SELECT id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality FROM settings LIMIT 0;",
@@ -325,6 +329,8 @@ public sealed partial class Store
         "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary FROM points LIMIT 0;",
         "SELECT id,point_id,inspection_date,inspector,result,notes,notice_number,point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone,inspection_type_id,inspection_type_name,use_id,use_name,created_at,incomplete_reason,checklist,submission_key FROM inspections LIMIT 0;",
         "SELECT id,kind,parent_id,name,body,revision,updated_at,archived FROM community_records LIMIT 0;",
+        "SELECT record_id,photo_id,active FROM record_photos LIMIT 0;",
+        "SELECT source_key,record_id,kind FROM imported_rows LIMIT 0;",
         "SELECT id,kind,record_id,at,action,before_json,after_json FROM community_history LIMIT 0;",
         "SELECT kind,record_id,shape,revision FROM map_shapes LIMIT 0;",
         "SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order FROM map_layers LIMIT 0;",

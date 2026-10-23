@@ -102,7 +102,24 @@ public sealed partial class Store
             var area = 0.0;
             for (var i = 0; i < ring.Length - 1; i++) area += ring[i][0] * ring[i + 1][1] - ring[i + 1][0] * ring[i][1];
             if (Math.Abs(area) < 1e-12) throw new ApiException(400, "区域不能只有一条线。");
+            for (var i = 0; i < ring.Length - 1; i++)
+            {
+                if (ring[i].SequenceEqual(ring[i + 1])) throw new ApiException(400, "区域边界有重复点，请移除重复点。");
+                for (var j = i + 2; j < ring.Length - 1; j++)
+                {
+                    if (i == 0 && j == ring.Length - 2) continue;
+                    if (SegmentsIntersect(ring[i], ring[i + 1], ring[j], ring[j + 1])) throw new ApiException(400, "区域边界互相交叉，请调整交叉位置。");
+                }
+            }
         }
+    }
+
+    private static bool SegmentsIntersect(double[] a, double[] b, double[] c, double[] d)
+    {
+        static double Cross(double[] p, double[] q, double[] r) => (q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);
+        static bool On(double[] p, double[] q, double[] r) => r[0]>=Math.Min(p[0],q[0]) && r[0]<=Math.Max(p[0],q[0]) && r[1]>=Math.Min(p[1],q[1]) && r[1]<=Math.Max(p[1],q[1]);
+        var abC=Cross(a,b,c); var abD=Cross(a,b,d); var cdA=Cross(c,d,a); var cdB=Cross(c,d,b);
+        return (abC*abD<0 && cdA*cdB<0) || (abC==0 && On(a,b,c)) || (abD==0 && On(a,b,d)) || (cdA==0 && On(c,d,a)) || (cdB==0 && On(c,d,b));
     }
 
     public string? FindTile(string layerId, int z, int x, int y)

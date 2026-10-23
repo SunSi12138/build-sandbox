@@ -128,6 +128,11 @@ public sealed partial class Store
         var type = RequirePointType(Text(request.TypeId, "点位类型", 100, true), transaction);
         ValidateFrequency(request.Frequency);
         var (longitude, latitude) = ValidateCoordinates(request.Longitude, request.Latitude);
+        if (request.Shape is not null)
+        {
+            ValidateShape(request.Shape);
+            (longitude, latitude) = ValidateCoordinates(request.Shape.Coordinates[0][0], request.Shape.Coordinates[0][1]);
+        }
         var actualId = id ?? NewId();
         (string Name, object? Value)[] parameters = [("$id", actualId), ("$name", name), ("$community", community.Id), ("$type", type.Id),
             ("$address", Text(request.Address, "详细地址", 1000, true)), ("$contact", Text(request.Contact, "联系人", 100)),
@@ -149,7 +154,25 @@ public sealed partial class Store
                 ("$id",actualId),("$shape",System.Text.Json.JsonSerializer.Serialize(request.Shape,CommunityJsonContext.Default.GeoShape)),("$revision",version+1));
             shape.ExecuteNonQuery();
         }
-        AddCommunityHistory("point", actualId, "", System.Text.Json.JsonSerializer.Serialize(request, AppJsonContext.Default.PointWriteRequest), id is null ? "新增场所" : "修改场所", transaction);
+        else if (existing is not null && (longitude != existing.Longitude || latitude != existing.Latitude))
+        {
+            using var previous = Command("SELECT COALESCE((SELECT revision FROM map_shapes WHERE kind='point' AND record_id=$id),0);", transaction, ("$id", actualId));
+            var version = Convert.ToInt32(previous.ExecuteScalar());
+            if (version != request.ShapeRevision) throw new ApiException(409, "地图位置已被修改，请刷新后再保存。");
+            if (longitude is not null && latitude is not null)
+            {
+                var replacement = new GeoShape("Point", [[longitude.Value, latitude.Value]]);
+                using var shape = Command("INSERT INTO map_shapes(kind,record_id,shape,revision) VALUES('point',$id,$shape,$revision) ON CONFLICT(kind,record_id) DO UPDATE SET shape=excluded.shape,revision=excluded.revision;", transaction,
+                    ("$id", actualId), ("$shape", System.Text.Json.JsonSerializer.Serialize(replacement, CommunityJsonContext.Default.GeoShape)), ("$revision", version + 1));
+                shape.ExecuteNonQuery();
+            }
+            else
+            {
+                using var remove = Command("DELETE FROM map_shapes WHERE kind='point' AND record_id=$id;", transaction, ("$id", actualId));
+                remove.ExecuteNonQuery();
+            }
+        }
+        AddCommunityHistory("point", actualId, existing is null ? "" : System.Text.Json.JsonSerializer.Serialize(existing, AppJsonContext.Default.PointDto), System.Text.Json.JsonSerializer.Serialize(request, AppJsonContext.Default.PointWriteRequest), id is null ? "新增场所" : "修改场所", transaction);
         return actualId;
     }
 
@@ -176,11 +199,14 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            _ = GetPointInternal(id);
+            var before = GetPointInternal(id);
             if (request.Disabled is null) throw new ApiException(400, "请提供停用状态。");
-            using var command = Command("UPDATE points SET disabled=$disabled WHERE id=$id;", null,
+            using var transaction = _db.BeginTransaction();
+            using var command = Command("UPDATE points SET disabled=$disabled WHERE id=$id;", transaction,
                 ("$id", id), ("$disabled", request.Disabled.Value ? 1 : 0));
             RequireChanged(command.ExecuteNonQuery(), "点位");
+            AddCommunityHistory("point", id, System.Text.Json.JsonSerializer.Serialize(before, AppJsonContext.Default.PointDto), request.Disabled.Value ? "{\"disabled\":true}" : "{\"disabled\":false}", request.Disabled.Value ? "停用场所" : "恢复场所", transaction);
+            transaction.Commit();
             return GetPointInternal(id);
         }
     }
@@ -235,10 +261,11 @@ public sealed partial class Store
         {
             PrepareWrite();
             _ = GetPoint(id);
-            using (var used = Command("SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id) + (SELECT COUNT(*) FROM campaigns WHERE point_id=$id);", null, ("$id", id)))
-                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该点位已有排查或整治记录，不能删除；请停用点位。");
+            using (var used = Command("SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id) + (SELECT COUNT(*) FROM campaigns WHERE point_id=$id) + (SELECT COUNT(*) FROM community_records WHERE parent_id=$id AND kind IN('unit','use')) + (SELECT COUNT(*) FROM community_records r,json_each(r.body,'$.pointIds') j WHERE r.kind='plan' AND j.value=$id);", null, ("$id", id)))
+                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该场所已有使用、检查或工作安排记录，请改为停用以保留资料。");
             ExecuteWithPhotoDeletion(ReadPhotos(pointId: id).Select(photo => photo.Id).ToArray(), transaction =>
             {
+                using (var shape = Command("DELETE FROM map_shapes WHERE kind='point' AND record_id=$id;", transaction, ("$id", id))) shape.ExecuteNonQuery();
                 using var command = Command("DELETE FROM points WHERE id=$id;", transaction, ("$id", id));
                 RequireChanged(command.ExecuteNonQuery(), "点位");
             });

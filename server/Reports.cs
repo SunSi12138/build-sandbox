@@ -6,7 +6,7 @@ using System.Xml.Linq;
 
 namespace StreetEcoTool;
 public sealed record ReportDto(string Title, string Scope, string[] Headers, string[][] Rows);
-public sealed record ReportQuery(string Kind, string From = "", string To = "", string CommunityId = "", string Status = "", string Search = "", string TypeId = "");
+public sealed record ReportQuery(string Kind, string From = "", string To = "", string CommunityId = "", string Status = "", string Search = "", string TypeId = "", string PlanId = "");
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ReportDto))]
 public partial class ReportJsonContext : JsonSerializerContext;
@@ -71,6 +71,29 @@ public sealed partial class Store
                 }
                 scope = $"发现日期：{(query.From.Length == 0 ? "不限" : query.From)} 至 {(query.To.Length == 0 ? "不限" : query.To)}；" + scope;
             }
+            else if (query.Kind == "plans")
+            {
+                title = "检查安排进度"; headers = ["安排编号", "安排名称", "检查人员", "检查类型", "开始日期", "完成期限", "场所", "网格", "进度", "检查日期"];
+                var types = ListCommunityRecords("inspection-type", includeArchived: true);
+                foreach (var plan in ListCommunityRecords("plan", includeArchived: true))
+                {
+                    if (query.PlanId.Length > 0 && plan.Id != query.PlanId || !Match(plan.Name + JsonText(plan.Data, "inspector"))) continue;
+                    var start = JsonText(plan.Data, "from"); var end = JsonText(plan.Data, "to"); var type = JsonText(plan.Data, "typeId");
+                    if (string.CompareOrdinal(end, from) < 0 || string.CompareOrdinal(start, to) > 0) continue;
+                    var ids = plan.Data.GetProperty("pointIds").EnumerateArray().Select(x => x.GetString()!).Distinct().ToArray();
+                    foreach (var id in ids)
+                    {
+                        var point = GetPointInternal(id);
+                        if (query.CommunityId.Length > 0 && point.CommunityId != query.CommunityId) continue;
+                        using var checkedQuery = Command("SELECT MAX(inspection_date) FROM inspections WHERE point_id=$point AND result<>'incomplete' AND inspection_date>=$from AND inspection_date<=$to AND ($type='' OR inspection_type_id=$type);", null, ("$point", id), ("$from", start), ("$to", end), ("$type", type));
+                        var date = checkedQuery.ExecuteScalar() as string ?? "";
+                        var status = plan.Archived ? "archived" : date.Length > 0 ? "completed" : string.CompareOrdinal(Today, end) > 0 ? "overdue" : "pending";
+                        if (query.Status.Length > 0 && query.Status != status) continue;
+                        rows.Add([plan.Id, plan.Name, JsonText(plan.Data, "inspector"), types.FirstOrDefault(x => x.Id == type)?.Name ?? "", start, end, point.Name, point.CommunityName, status switch { "archived" => "已取消", "completed" => "已检查", "overdue" => "逾期未查", _ => "待检查" }, date]);
+                    }
+                }
+                scope = $"安排期间：{(query.From.Length == 0 ? "不限" : query.From)} 至 {(query.To.Length == 0 ? "不限" : query.To)}；" + scope;
+            }
             else throw new ApiException(400, "不支持的台账类型。");
             if (query.Search.Length > 0) scope += "；搜索：" + query.Search;
             if (query.TypeId.Length > 0) scope += "；类型：" + (query.Kind == "inspections" ? ListCommunityRecords("inspection-type", includeArchived: true).FirstOrDefault(x => x.Id == query.TypeId)?.Name : GetPointTypes().FirstOrDefault(x => x.Id == query.TypeId)?.Name);
@@ -80,7 +103,7 @@ public sealed partial class Store
     private static string ReportStatus(string s) => s switch { "" or "all" => "全部", "pending" => "待整改", "feedback" => "待复查", "closed" => "已完成", "overdue" => "已超期", "true" => "已停用", "false" => "使用中", "normal" => "未发现问题", "issues" => "发现问题", "incomplete" => "未完成检查", _ => s };
     public void MapReportApi(WebApplication app)
     {
-        static ReportQuery Query(HttpContext c) => new(c.Request.RouteValues["kind"]!.ToString()!, c.Request.Query["from"].ToString(), c.Request.Query["to"].ToString(),c.Request.Query["communityId"].ToString(),c.Request.Query["status"].ToString(),c.Request.Query["q"].ToString(),c.Request.Query["typeId"].ToString());
+        static ReportQuery Query(HttpContext c) => new(c.Request.RouteValues["kind"]!.ToString()!, c.Request.Query["from"].ToString(), c.Request.Query["to"].ToString(),c.Request.Query["communityId"].ToString(),c.Request.Query["status"].ToString(),c.Request.Query["q"].ToString(),c.Request.Query["typeId"].ToString(),c.Request.Query["planId"].ToString());
         RequestDelegate preview = c => Api.Write(c, GetReport(Query(c)), ReportJsonContext.Default.ReportDto);
         RequestDelegate download = async c =>
         {
