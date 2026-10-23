@@ -240,12 +240,12 @@ public static class WordExporter
         using var document = new Document(destination, false, "活动开展情况记录单", settings.StreetName);
         var activity = detail.Activity;
         document.Paragraph("生态环保活动开展情况记录单", "Title");
-        var information = new List<string[]>
-        {
+        List<string[]> information =
+        [
             ["活动名称", activity.Name], ["活动类型", activity.TypeName], ["开展日期", DateRange(activity.Date, activity.EndDate)],
             ["活动地点", activity.Location], ["组织单位", activity.Organizer], ["所属社区", activity.CommunityName],
             ["参加单位及人员", activity.Participants]
-        };
+        ];
         if (activity.ParticipantCount is not null) information.Add(["参加人数", Number(activity.ParticipantCount) + "人"]);
         document.Table(null, information, [24, 76], labelColumn: true);
         document.Section("开展情况");
