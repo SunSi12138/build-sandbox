@@ -8,14 +8,14 @@
 
 ```text
 hbtool/
-  StreetEcoTool-win-x86.exe
+  StreetEcoTool-win-x64.exe
   StreetEcoTool-linux-arm64
   wwwroot/
   README.md
   使用说明.md
 ```
 
-Windows 完整解压到可写目录，双击 `StreetEcoTool-win-x86.exe`。Linux ARM64：
+Windows 完整解压到可写目录，双击 `StreetEcoTool-win-x64.exe`。Linux ARM64：
 
 ```sh
 chmod +x StreetEcoTool-linux-arm64
@@ -31,10 +31,10 @@ chmod +x StreetEcoTool-linux-arm64
 命令行优先于程序同目录 `appsettings.json`；配置优先于默认值：
 
 ```powershell
-.\StreetEcoTool-win-x86.exe --port 5181
-.\StreetEcoTool-win-x86.exe --listen 127.0.0.1 --listen 192.168.1.100
-.\StreetEcoTool-win-x86.exe --listen 0.0.0.0 --no-browser
-.\StreetEcoTool-win-x86.exe --seed-demo
+.\StreetEcoTool-win-x64.exe --port 5181
+.\StreetEcoTool-win-x64.exe --listen 127.0.0.1 --listen 192.168.1.100
+.\StreetEcoTool-win-x64.exe --listen 0.0.0.0 --no-browser
+.\StreetEcoTool-win-x64.exe --seed-demo
 ```
 
 可选配置（发布包不包含此文件，避免覆盖用户设置）：
@@ -129,7 +129,7 @@ journalctl -u street-eco-tool -n 80 --no-pager
 
 ## 平台和浏览器边界
 
-Windows x86 在 Windows Server 2022 x64/WOW64 构建与运行验证；不支持 Windows7/8.1。Linux ARM64 在 Ubuntu24.04原生构建，已核验产物最高 GLIBC 符号2.38，不能承诺旧发行版或 Alpine/musl 兼容。linux-x64只用于测试，不进入统一发布包。
+Windows x64 在 Windows Server 2022 x64 构建与运行验证；不支持 Windows7/8.1。Linux ARM64 在 Ubuntu20.04容器中原生构建，打包检查要求最高 GLIBC 符号不超过2.31；不支持 Alpine/musl。linux-x64只用于测试，不进入统一发布包。
 
 浏览器基线：Chrome/Edge111+、Safari/iOS16.4+、Firefox128+。自动化主要是 Chromium；最低版本和真机相机不能视为已逐一验收。没有 HTTPS 专属功能、Service Worker 或公网资源依赖。
 
@@ -153,7 +153,7 @@ dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:
 npm --prefix web ci
 npm --prefix web run typecheck
 npm --prefix web run generate
-# 对应原生宿主，Windows需x86 MSVC，Linux需clang、zlib开发包
+# 对应原生宿主，Windows需x64 MSVC，Linux需clang、zlib开发包
 dotnet publish server/StreetEcoTool.csproj -c Release -r <RID> -o publish/<RID> -p:PublishAot=true -p:SelfContained=true -warnaserror
 python3 tests/api-smoke.py --executable publish/<RID>/StreetEcoTool --report test-results/api.json
 python3 tests/word-smoke.py --executable publish/<RID>/StreetEcoTool --report test-results/word.json
@@ -168,7 +168,7 @@ node browser-test.mjs --executable ../publish/<RID>/StreetEcoTool
 统一打包：
 
 ```sh
-python3 scripts/package.py --win-x86 publish/win-x86/StreetEcoTool.exe --linux-arm64 publish/linux-arm64/StreetEcoTool --web-static web/.output/public --output dist
+python3 scripts/package.py --win-x64 publish/win-x64/StreetEcoTool.exe --linux-arm64 publish/linux-arm64/StreetEcoTool --web-static web/.output/public --output dist
 ```
 
 输出 `dist/hbtool.zip` 与校验文件。主程序架构、ZIP CRC、Linux执行位及共享wwwroot都会核对。历史完整说明仅保留在 [历史README](docs/history/v2-README.md)，其中旧迁移能力和旧测试数字不代表当前版本。

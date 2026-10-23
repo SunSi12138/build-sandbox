@@ -62,7 +62,7 @@ jobs:
       matrix:
         include:
           - os: windows-2022
-            rid: win-x86
+            rid: win-x64
           - os: ubuntu-22.04
             rid: linux-x64
     runs-on: ${{ matrix.os }}
@@ -75,11 +75,11 @@ jobs:
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
-      - name: Enable x86 MSVC tools
+      - name: Enable x64 MSVC tools
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x86
+          arch: x64
       - name: Unit tests
         if: matrix.rid == 'linux-x64'
         run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror
@@ -177,14 +177,14 @@ jobs:
           path: package-input/wwwroot
       - uses: actions/download-artifact@v8
         with:
-          name: bin-win-x86
+          name: bin-win-x64
           path: package-input/bin
       - uses: actions/download-artifact@v8
         with:
           name: bin-linux-arm64
           path: package-input/bin
       - name: Package both architectures with shared frontend
-        run: python scripts/package.py --win-x86 package-input/bin/StreetEcoTool-win-x86.exe --linux-arm64 package-input/bin/StreetEcoTool-linux-arm64 --web-static package-input/wwwroot --output dist
+        run: python scripts/package.py --win-x64 package-input/bin/StreetEcoTool-win-x64.exe --linux-arm64 package-input/bin/StreetEcoTool-linux-arm64 --web-static package-input/wwwroot --output dist
       - uses: actions/upload-artifact@v7
         with:
           name: hbtool
