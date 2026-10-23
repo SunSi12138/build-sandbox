@@ -54,18 +54,19 @@ public sealed partial class Store
             _ = SavePoint(null, new("已停用示例点位", west.Id, Type("其他"), "示例巷 5 号", "", "", "weekly", "已停用点位不纳入周期提醒。", true));
             string Day(int offset) => DateTime.Today.AddDays(offset).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             var inspector = GetSettings().DefaultInspector;
+            var issueType = GetIssueTypes()[0].Id;
             CreateInspection(new(restaurant.Id, Today, inspector, "normal", "油烟净化设施已正常运行，清洗台账齐全。"));
             var problem = CreateInspection(new(construction.Id, Day(-7), inspector, "issues", "现场排查发现两项问题。", "示例-2026-001",
-                [new("裸露土方覆盖不到位，周边有明显扬尘。", "及时覆盖裸土，落实洒水降尘措施。", Day(-2)),
-                 new("出入口车辆冲洗设施需维护。", "检修冲洗设施并保持路面整洁。", Day(2))]));
+                [new("裸露土方覆盖不到位，周边有明显扬尘。", "及时覆盖裸土，落实洒水降尘措施。", Day(-2), IssueTypeId: issueType),
+                 new("出入口车辆冲洗设施需维护。", "检修冲洗设施并保持路面整洁。", Day(2), IssueTypeId: issueType)]));
             RecordFeedback(problem.Issues[1].Id, new(Day(-1), "社区反馈已安排维修，待现场复查。"));
             var water = CreateInspection(new(river.Id, Day(-12), inspector, "issues", "河岸局部发现杂物。", "",
-                [new("河岸有零散生活垃圾。", "清理河岸垃圾并加强日常巡查。", Day(-5))]));
+                [new("河岸有零散生活垃圾。", "清理河岸垃圾并加强日常巡查。", Day(-5), IssueTypeId: issueType)]));
             RecordFeedback(water.Issues[0].Id, new(Day(-8), "已完成河岸清理。"));
             ReviewAndClose(water.Issues[0].Id, new(Day(-7), "现场复查清理到位，予以闭环。"));
             CreateInspection(new(rubbish.Id, Day(-6), inspector, "issues", "", "",
-                [new("垃圾收集点周边散落杂物，部分垃圾桶盖未关闭。", "清扫周边环境并规范垃圾桶使用。", Today)]));
-            CreateInspection(new(null, Today, inspector, "issues", Issues: [new("巷口有散落垃圾。", "清理散落垃圾。", Day(5))],
+                [new("垃圾收集点周边散落杂物，部分垃圾桶盖未关闭。", "清扫周边环境并规范垃圾桶使用。", Today, IssueTypeId: issueType)]));
+            CreateInspection(new(null, Today, inspector, "issues", Issues: [new("巷口有散落垃圾。", "清理散落垃圾。", Day(5), IssueTypeId: issueType)],
                 NewPoint: new("东苑北巷临时排查点", east.Id, Type("垃圾堆放"), "东苑北巷路口", Longitude: 88.893426, Latitude: 29.274331)));
             CreateInspection(new(restaurant.Id, Day(-14), inspector, "normal"));
             SaveCampaign(null, new("西河沿岸卫生大扫除", GetCampaignTypes()[0].Id, river.Id, Day(-2),
