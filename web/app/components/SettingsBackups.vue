@@ -82,6 +82,7 @@ onMounted(fetchBackups)
       <UButton color="neutral" variant="outline" :loading="uploading" :disabled="restoring" @click="fileInput?.click()">{{ uploading ? '正在校验' : '恢复备份' }}</UButton>
     </div>
     <UProgress v-if="uploading" animation="carousel" aria-label="正在校验备份" />
+    <p class="text-sm text-muted">ZIP 包含业务资料和照片。地图缓存请另行复制程序目录中的 tiles 文件夹。</p>
     <UAlert v-if="restoreError && !confirmOpen" :color="cacheRefreshFailed ? 'warning' : 'error'" variant="subtle" :description="restoreError"><template v-if="cacheRefreshFailed" #actions><UButton color="neutral" variant="outline" @click="reloadPage">刷新</UButton></template></UAlert>
     <div v-if="restoredResult" class="text-xs text-muted break-all">保留位置：{{ restoredResult.preservedBackup }}</div>
     <section>

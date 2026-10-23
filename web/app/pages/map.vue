@@ -34,7 +34,7 @@ useHead({ title: '社区地图' })
     <UAlert v-if="error" :description="error" color="error" />
     <div class="map-page-grid">
       <aside class="panel map-sidebar">
-        <div class="panel-body space-y-3"><UInput v-model="query" placeholder="找场所、网格" icon="i-lucide-search" class="w-full" /><div class="flex gap-1"><UInput v-model="coordinates" placeholder="经度,纬度" class="min-w-0 flex-1" @keydown.enter="locate" /><UButton label="定位" color="neutral" variant="outline" @click="locate" /></div></div>
+        <div class="panel-body space-y-3"><UInput v-model="query" placeholder="找场所、网格" icon="i-lucide-search" class="w-full" /><div class="flex gap-1"><UInput v-model="coordinates" placeholder="经度,纬度" class="min-w-0 flex-1" @keydown.enter="locate" /><UButton label="定位" color="neutral" variant="outline" @click="locate" /></div><CoordinateConverter v-model="coordinates" @converted="locate" /></div>
         <div class="map-place-list"><button v-for="item in filtered" :key="`${item.kind}:${item.id}`" class="map-place-row" :class="{ active: selected?.id === item.id }" @click="choose(item)"><strong>{{ item.name }}</strong><span>{{ item.kind === 'grid' ? '网格' : item.openIssues ? `${item.openIssues}项未完成` : '场所' }}</span></button><p v-if="!loading && !filtered.length" class="p-4 text-muted">暂无标记</p></div>
       </aside>
       <div class="space-y-3 min-w-0">
@@ -44,7 +44,7 @@ useHead({ title: '社区地图' })
           <UButton v-if="selected" :label="`保存到${selected.name}`" :loading="saving" variant="outline" @click="saveShape(selected.kind, selected.id, selected.revision)" />
           <template v-if="pending.type === 'Polygon'"><USelect v-model="gridId" :items="grids" placeholder="选择网格" /><UButton label="保存网格边界" :disabled="!gridId || saving" variant="outline" @click="saveShape('grid', gridId, mapState.features.find(x => x.kind === 'grid' && x.id === gridId)?.revision ?? 0)" /></template>
         </div>
-        <div v-else-if="selected" class="panel panel-body flex flex-wrap gap-3 items-center"><strong class="mr-auto">{{ selected.name }}</strong><UButton label="修改位置" icon="i-lucide-pencil" color="neutral" variant="outline" @click="canvas?.edit(selected.shape)" /><UButton v-if="selected.kind === 'point'" :to="`/points/${selected.id}`" label="场所档案" /><UButton v-if="selected.kind === 'point'" :to="`/inspections/new?pointId=${selected.id}`" label="登记检查" variant="outline" /></div>
+        <div v-else-if="selected" class="panel panel-body flex flex-wrap gap-3 items-center"><strong class="mr-auto">{{ selected.name }}</strong><UButton label="修改位置" :disabled="saving || loading" icon="i-lucide-pencil" color="neutral" variant="outline" @click="canvas?.edit(selected.shape)" /><UButton v-if="selected.kind === 'point'" :to="`/points/${selected.id}`" label="场所档案" /><UButton v-if="selected.kind === 'point'" :to="`/inspections/new?pointId=${selected.id}`" label="登记检查" variant="outline" /></div>
       </div>
     </div>
     <PointEditor v-model:open="editor" :initial-coordinates="pendingCoordinates" :initial-shape="pending" @saved="created" />

@@ -1,0 +1,43 @@
+CommunityGIS 开发与交付说明
+
+技术栈：.NET 10 Native AOT Web API + SQLite；Nuxt 4 + Nuxt UI，静态构建；OpenLayers 10；浏览器本地 WASM 图片压缩；BCL 生成 DOCX/XLSX。
+来源：SunSi12138/build-sandbox 的 hbtool 分支；本项目分支 community-gis。
+运行目标：Windows x64。当前目录已包含源码及运行版。其他平台尚未构建交付。
+
+开发：
+安装 .NET SDK 10.0.302、Windows C++ 构建工具、Node.js、pnpm。
+在 web 运行 pnpm install --frozen-lockfile。
+前端：web 下 pnpm dev；后端：dotnet run --project server/StreetEcoTool.csproj -- --no-browser。
+Nuxt 开发代理连接 localhost:5180。后端开发数据保存在其输出目录，独立于运行版。
+
+构建：
+PowerShell 中执行 ./scripts/build-community.ps1。
+可传 -Pnpm "pnpm.cmd完整路径"。
+已完成构建后可用 -SkipBuild 仅装配运行版。
+脚本保留运行版已有的 data、photos、backup、tiles、appsettings.json。
+更新时先停止运行版；前后端必须同时更新，不支持旧页面调用新版接口。
+
+数据：
+数据库 schema 6。兼容本项目 schema 4/5，启动升级前自动保留数据库备份。
+不直接打开旧 hbtool schema 3 数据库。旧 Map 通过 Excel 网格导入迁移。
+业务备份 ZIP 包含数据库及照片，地图缓存需要另存。
+不包含登录、角色权限、互联网部署或手机离线同步。局域网协作沿用 hbtool 模式。
+
+坐标和地图：
+统一保存 WGS84。旧高德 GCJ-02 可在导入/坐标输入时换算。
+高德 SDK 未打包；当前使用本地 OpenLayers，引擎、图标、压缩 WASM 都在 wwwroot。
+已复制吉林一号缓存3,272张（31,831,064字节），12—18级。未复制不明来源的约10.7 GB其他缓存。
+不含地图下载器、离线地址搜索、导航路线或三维功能。
+
+已做的检查：
+后端定向业务测试覆盖照片归属、导入事务、单元层级、并发冲突、合并、人员交接、作废恢复、草稿备份、缓存导入、数据升级、周期提醒、导出范围和 Word 内容。
+Nuxt 类型检查和静态构建通过；Windows x64 Native AOT 发布通过。
+最终原生程序流程检查覆盖场所/区域/多用途、问题反馈复查、未完成检查、共享草稿、浏览器照片压缩上传、统计、Word/Excel及勾选导出。
+新浏览器上下文阻断外网请求下，地图、页面、图片压缩正常，未发生外网资源请求或页面错误。
+移动尺寸390px无整页横向溢出，宽报表在表格内部滚动；实际手机仍需连接用户局域网确认防火墙和Wi-Fi隔离设置。
+Office 文件已检查生成与内容，未对所有 WPS/Office 版本做排版兼容认证。
+
+定向测试：dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj --filter FullyQualifiedName~Community
+浏览器流程：先启动独立测试目录中的程序，端口5199，再于 web 执行 node community-smoke.mjs。
+注意：流程脚本会建立测试资料，仅在空白测试数据库上运行，不要对正式库运行。
+旧 hbtool 测试包含原有版本号、类型和无修订号接口断言；不应把它们当作本项目最新产品契约。

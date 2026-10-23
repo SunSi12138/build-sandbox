@@ -12,7 +12,7 @@ public sealed partial class Store
         RequireActive(detail.Inspection.Voided);
         var issues = detail.Issues.Where(x => !x.Voided).ToArray();
         var ids = issues.Select(x => x.Id).ToHashSet();
-        return detail with { Issues = issues, IssueDetails = detail.IssueDetails?.Where(x => ids.Contains(x.Issue.Id)).ToArray(), Photos = detail.Photos.Where(x => x.IssueId is null || ids.Contains(x.IssueId)).ToArray() };
+        return detail with { Issues = issues, IssueDetails = detail.IssueDetails?.Where(x => ids.Contains(x.Issue.Id)).Select(x => x with { Actions = x.Actions.Concat(ReadWordOperations(x.Issue.Id)).OrderBy(a => a.Date, StringComparer.Ordinal).ToArray() }).ToArray(), Photos = detail.Photos.Where(x => x.IssueId is null || ids.Contains(x.IssueId)).ToArray() };
     }
     public WordDownload ExportInspectionWord(string id, bool notice)
     {
@@ -26,7 +26,7 @@ public sealed partial class Store
                 if (string.IsNullOrWhiteSpace(settings.StreetName)) throw new ApiException(400, "请先填写街道全称");
                 if (string.IsNullOrWhiteSpace(settings.IssuingUnit)) settings = settings with { IssuingUnit = settings.StreetName };
             }
-            var photos = ResolveWordPhotos(detail.Photos.Where(photo => photo.Phase == "site"));
+            var photos = ResolveWordPhotos(notice ? detail.Photos.Where(photo => photo.Phase == "site") : detail.Photos);
             var fileName = WordExporter.FileName(notice ? "整改通知单" : "排查记录单", detail.Inspection.PointName, detail.Inspection.Date);
             return WriteWordTemporary(fileName, destination =>
             {
@@ -137,9 +137,40 @@ public sealed partial class Store
             // The ledger's photo collection already contains historical action photos.
             // Keep the text history even when the caller does not request photos.
             while (reader.Read()) actions.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), []));
-            history.Add(new(issue.Id, actions.ToArray()));
+            history.Add(new(issue.Id, actions.Concat(ReadWordOperations(issue.Id)).OrderBy(x => x.Date, StringComparer.Ordinal).ToArray()));
         }
         return history.ToArray();
+    }
+
+    private IssueActionDto[] ReadWordOperations(string issueId)
+    {
+        var result = new List<IssueActionDto>();
+        foreach (var item in CommunityHistory(issueId))
+        {
+            if (item.After.Length == 0) continue;
+            using var json = System.Text.Json.JsonDocument.Parse(item.After);
+            var data = json.RootElement; var kind = JsonText(data, "kind");
+            if (kind is not ("progress" or "transfer" or "extend" or "assign")) continue;
+            var text = JsonText(data, "notes");
+            if (kind == "extend") text += "；新期限：" + JsonText(data, "deadline");
+            if (kind == "transfer") text += "；接收单位：" + JsonText(data, "responsibleUnit");
+            if (JsonText(data, "follower").Length > 0) text += "；跟进人员：" + JsonText(data, "follower");
+            var photoIds = data.TryGetProperty("photoIds", out var ids) && ids.ValueKind == System.Text.Json.JsonValueKind.Array ? ids.EnumerateArray().Select(x => x.GetString()).ToHashSet() : [];
+            result.Add(new(item.Id, kind, JsonText(data, "date"), text, ReadPhotos(issueId: issueId).Where(x => photoIds.Contains(x.Id)).ToArray()));
+        }
+        return [.. result];
+    }
+
+    public WordDownload ExportPlaceWord(string id)
+    {
+        lock (_gate)
+        {
+            var detail = GetPointDetail(id);
+            var units = ListCommunityRecords("unit", id, true);
+            var uses = ListCommunityRecords("use", id, true).Select(x => new WordUseRecord(x, units.FirstOrDefault(u => u.Id == JsonText(x.Data, "unitId"))?.Name ?? "整个场所", ResolveWordPhotos(GetRecordPhotos(x.Id)))).ToArray();
+            var photos = ResolveWordPhotos(detail.Photos ?? []);
+            return WriteWordTemporary(WordExporter.FileName("场所档案", detail.Point.Name, Today), stream => WordExporter.WritePlaceRecord(stream, detail.Point, uses, photos, GetSettings()));
+        }
     }
 
     // This helper is called only while _gate is held, so the file paths and database
@@ -172,6 +203,8 @@ public sealed partial class Store
 
     public void MapWordApi(WebApplication app)
     {
+        RequestDelegate place = async context => await SendWordAsync(context, ExportPlaceWord(Api.Id(context)));
+        app.MapGet("/api/points/{id}/export/record", place);
         RequestDelegate record = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), false));
         RequestDelegate notice = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), true));
         RequestDelegate rectification = async context => await SendWordAsync(context, ExportRectificationWord(Api.Id(context)));

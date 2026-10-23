@@ -106,6 +106,14 @@ public sealed partial class Store
             }
             if (kind is "unit" or "use") { _ = GetPointInternal(parent); RequireUnmergedPoint(parent); }
             if (kind == "unit") ValidateUnit(id, parent, request);
+            if (kind == "inspection-type")
+            {
+                var frequency = JsonText(request.Data, "frequency");
+                if (frequency.Length > 0) ValidateFrequency(frequency);
+                var grid = JsonText(request.Data, "communityId"); if (grid.Length > 0) _ = RequireCommunity(grid);
+                var pointType = JsonText(request.Data, "pointTypeId"); if (pointType.Length > 0) _ = RequirePointType(pointType);
+                if (request.Data.TryGetProperty("items", out var checks) && (checks.ValueKind != JsonValueKind.Array || checks.GetArrayLength() > 100 || checks.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(x.GetString())))) throw new ApiException(400, "检查项目请每行填写一项，最多100项。");
+            }
             if (kind == "plan")
             {
                 var start = DateText(JsonText(request.Data, "from"), "开始日期");

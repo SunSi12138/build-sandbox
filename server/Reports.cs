@@ -6,7 +6,7 @@ using System.Xml.Linq;
 
 namespace StreetEcoTool;
 public sealed record ReportDto(string Title, string Scope, string[] Headers, string[][] Rows);
-public sealed record ReportQuery(string Kind, string From = "", string To = "", string CommunityId = "", string Status = "", string Search = "", string TypeId = "", string PlanId = "");
+public sealed record ReportQuery(string Kind, string From = "", string To = "", string CommunityId = "", string Status = "", string Search = "", string TypeId = "", string PlanId = "", string[]? Ids = null);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ReportDto))]
 public partial class ReportJsonContext : JsonSerializerContext;
@@ -24,7 +24,14 @@ public sealed partial class Store
             string title; string[] headers;
             bool Match(string value) => string.IsNullOrEmpty(query.Search) || value.Contains(query.Search, StringComparison.OrdinalIgnoreCase);
             var scope = $"网格：{GetCommunities().FirstOrDefault(x => x.Id == query.CommunityId)?.Name ?? "全部"}；状态：{ReportStatus(query.Status)}";
-            if (query.Kind == "places")
+            if (query.Kind == "statistics")
+            {
+                title = "工作统计"; headers = ["编号", "分组", "在用场所", "已查场所", "检查次数", "未完成检查", "问题数", "已完成整改", "尚未完成且超期"];
+                var statistics = GetStatistics(query.From, query.To, query.CommunityId);
+                rows.AddRange(new[] { statistics.Total }.Concat(statistics.Grids).Select(x => new[] { x.Id, x.Name, x.Places.ToString(), x.CheckedPlaces.ToString(), x.Inspections.ToString(), x.Incomplete.ToString(), x.Issues.ToString(), x.Closed.ToString(), x.Overdue.ToString() }));
+                scope = $"检查日期：{statistics.From} 至 {statistics.To}；整改为这些检查发现问题的当前状态；" + scope;
+            }
+            else if (query.Kind == "places")
             {
                 title = "场所台账"; headers = ["编号", "名称", "网格", "场所形态", "地址", "联系人", "电话", "状态"];
                 for (var page = 1; ; page++)
@@ -97,13 +104,20 @@ public sealed partial class Store
             else throw new ApiException(400, "不支持的台账类型。");
             if (query.Search.Length > 0) scope += "；搜索：" + query.Search;
             if (query.TypeId.Length > 0) scope += "；类型：" + (query.Kind == "inspections" ? ListCommunityRecords("inspection-type", includeArchived: true).FirstOrDefault(x => x.Id == query.TypeId)?.Name : GetPointTypes().FirstOrDefault(x => x.Id == query.TypeId)?.Name);
+            if (query.Ids is { Length: > 0 })
+            {
+                if (query.Ids.Length > 200) throw new ApiException(400, "一次最多选择 200 条，请缩小查询范围。");
+                var ids = query.Ids.ToHashSet(StringComparer.Ordinal);
+                rows = rows.Where(x => ids.Contains(x[0])).ToList();
+                scope += $"；已勾选 {rows.Count} 条";
+            }
             return new(title, scope, headers, [.. rows]);
         }
     }
     private static string ReportStatus(string s) => s switch { "" or "all" => "全部", "pending" => "待整改", "feedback" => "待复查", "closed" => "已完成", "overdue" => "已超期", "true" => "已停用", "false" => "使用中", "normal" => "未发现问题", "issues" => "发现问题", "incomplete" => "未完成检查", _ => s };
     public void MapReportApi(WebApplication app)
     {
-        static ReportQuery Query(HttpContext c) => new(c.Request.RouteValues["kind"]!.ToString()!, c.Request.Query["from"].ToString(), c.Request.Query["to"].ToString(),c.Request.Query["communityId"].ToString(),c.Request.Query["status"].ToString(),c.Request.Query["q"].ToString(),c.Request.Query["typeId"].ToString(),c.Request.Query["planId"].ToString());
+        static ReportQuery Query(HttpContext c) => new(c.Request.RouteValues["kind"]!.ToString()!, c.Request.Query["from"].ToString(), c.Request.Query["to"].ToString(),c.Request.Query["communityId"].ToString(),c.Request.Query["status"].ToString(),c.Request.Query["q"].ToString(),c.Request.Query["typeId"].ToString(),c.Request.Query["planId"].ToString(), c.Request.Query["ids"].ToString().Split(',', StringSplitOptions.RemoveEmptyEntries));
         RequestDelegate preview = c => Api.Write(c, GetReport(Query(c)), ReportJsonContext.Default.ReportDto);
         RequestDelegate download = async c =>
         {

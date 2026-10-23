@@ -26,7 +26,7 @@ internal static class Startup
             var options = ParseArguments(args);
             if (options.Help)
             {
-                Console.WriteLine("街道生态环保工具\n参数：--port 5180　--listen 0.0.0.0（可重复）　--no-browser　--seed-demo　--help\n默认仅本机；无桌面的设备使用 --listen 0.0.0.0。\n配置示例：{\"port\":5180,\"listen\":[\"127.0.0.1\"]}");
+                Console.WriteLine("社区管理\n参数：--port 5180　--listen 0.0.0.0（可重复）　--no-browser　--seed-demo　--help\n默认仅本机；无桌面的设备使用 --listen 0.0.0.0。\n配置示例：{\"port\":5180,\"listen\":[\"127.0.0.1\"]}");
                 return 0;
             }
 
@@ -325,7 +325,7 @@ internal static class Startup
     private static void PrintAddresses(ListeningService listening)
     {
         var info = listening.GetInfo(IPAddress.Loopback);
-        Console.WriteLine($"\n街道生态环保工具已启动\n当前监听：{string.Join(", ", info.Listen)}");
+        Console.WriteLine($"\n社区管理已启动\n当前监听：{string.Join(", ", info.Listen)}");
         foreach (var address in info.Addresses) Console.WriteLine($"可访问：{address}");
     }
 

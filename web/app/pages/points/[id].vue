@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {downloadWord} from '~/utils/wordDownload'
 import type { PointDetailDto } from '~/types/api'
 import {
   coordinatesText,
@@ -77,7 +78,9 @@ async function remove() {
     deleting.value = false
   }
 }
+async function exportPlace(){try{await downloadWord(`/api/points/${id.value}/export/record`,`${detail.value?.point.name||'场所'}-档案.docx`)}catch(e){toast.add({title:errorMessage(e),color:'error'})}}
 const menu = computed(() => [
+  {label:'导出档案 Word（含照片）',onSelect:()=>{void exportPlace()}},
   { label: '变更记录', onSelect: () => { historyOpen.value = true } },
   ...(detail.value?.point.temporary
     ? [

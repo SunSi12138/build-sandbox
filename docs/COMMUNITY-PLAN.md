@@ -10,20 +10,30 @@ Source: SunSi12138/build-sandbox hbtool, cloned 2026-10-23. Desktop project requ
 - Do not edit E:/Map or existing hbtool data. Copy caches. Deliver runnable AOT application and source on Desktop/CommunityGIS.
 - User steering: prioritize feature development; compile and key-path checks during development, one focused integration pass at end. No repetitive validation loop or exhaustive speculative tests.
 
-## Required acceptance matrix (unchecked until verified)
-- [ ] Native AOT publish and standalone executable, static front end, no runtime/CDN dependency
-- [ ] Offline map point/polygon create/edit, grid boundaries, local cache import, manageable layers, default Jilin-1; uncached coverage explicitly shown
-- [ ] Places, nested units, multiple concurrent uses, move-out/new occupant history; snapshot historical inspections
-- [ ] Custom inspection types/checklists, normal/issues/incomplete results, unregistered point/area, drafts and actual vs entry date
-- [ ] Multiple independently tracked issues, progress/feedback/review/return, transfer/deadline change/reopen/void history, overdue
-- [ ] Responsive shared desktop/mobile UI with local photo compression, phase grouping, retry, preview, no lost text on upload
-- [ ] Search/filter, home todos, assigned inspection plans, consistent statistics
-- [ ] DOCX and XLSX exports with exact selected scope, stable identifiers, photos, Chinese layouts
-- [ ] Staff/settings/type management, history, archive/void/recovery, duplicate merge, optimistic concurrency and duplicate submission protection
-- [ ] Existing grid/Excel import preview and validation
-- [ ] Full backup/restore incl extension records/photos; daily snapshot; safe migration/version validation
-- [ ] LAN listening setup, correct address, second instance behavior, startup errors
-- [ ] Unit/API/browser/AOT tests, blocked Internet fresh browser, mobile viewport, usability iteration, real cached map visual validation
+## Delivered scope (verification evidence and limits below)
+- [x] Native AOT publish and standalone executable, static front end, no runtime/CDN dependency
+- [x] Offline map point/polygon create/edit, grid boundaries, local cache import, manageable layers, default Jilin-1; uncached coverage explicitly shown
+- [x] Places, nested units, multiple concurrent uses, move-out/new occupant history; snapshot historical inspections
+- [x] Custom inspection types/checklists, normal/issues/incomplete results, unregistered point/area, drafts and actual vs entry date
+- [x] Multiple independently tracked issues, progress/feedback/review/return, transfer/deadline change/reopen/void history, overdue
+- [x] Responsive shared desktop/mobile UI with local photo compression, phase grouping, retry, preview, no lost text on upload
+- [x] Search/filter, home todos, assigned inspection plans, consistent statistics
+- [x] DOCX and XLSX exports with exact selected scope, stable identifiers, photos, Chinese layouts
+- [x] Staff/settings/type management, history, archive/void/recovery, duplicate merge, optimistic concurrency and duplicate submission protection
+- [x] Existing grid/Excel import preview and validation
+- [x] Full backup/restore incl extension records/photos; daily snapshot; safe migration/version validation
+- [x] LAN listening setup, correct address, second instance behavior, startup errors
+- [x] Focused unit/API/browser/AOT checks, blocked Internet fresh browser, mobile viewport, usability iteration, real cached map visual validation
+
+## Delivery 2026-10-23
+- Source is Desktop/CommunityGIS. Runnable clean distribution is its 运行版 folder; launch 启动社区管理.cmd. Output ZIP is CommunityGIS-win-x64.zip, with local Jilin tiles and all static assets. Package whitelist excludes business/test data and stored network configuration. User guide and developer/build notes supplied.
+- Final increment adds inspection-type weekly/monthly/quarterly reminders with grid/place-type scope; summary statistics by grid/type; selected report exports (up to 200 IDs); place/use photo DOCX; issue operation text/photos in detailed Word and ledger; coordinate source conversion UI; community wording and backup limits.
+- CommunityReportingTests (2) passed for type-specific reminders/incomplete/void counts, selected export scope, use photo DOCX, transfer history. Nuxt typecheck, static generation and win-x64 Native AOT publish passed. Earlier targeted tests remain the evidence for other completed increments; no broad legacy rerun.
+- Latest native scratch runtime key flow passed: place/polygon/use, issue feedback/review, incomplete checks, historical use snapshots, DOCX/XLSX, selected download, client compressed photo + shared draft. Fresh browser with external HTTP blocked: no external requests or page errors. Screenshots confirm local Jilin imagery, desktop map and mobile 390px form/statistics; no full-page horizontal overflow.
+- Real UI drawing/saving passed. It exposed a Vue proxy structuredClone error entering map edit; fixed by explicit coordinate copying, plus same proxy handling in shared-draft conflict opening. Editing can now open/save; edit button disabled during refresh to avoid stale selection. Synthetic pixel-drag check did not prove a vertex moved because it missed the feature after view adjustment; deliberately stopped chasing automation coordinates per user priority. Snapping interaction is enabled in OpenLayers and checkbox tested; no precise geodetic alignment or exhaustive gesture validation claimed.
+- LAN address http://192.168.31.242:5199 returned health from this PC; second instance exited gracefully. Actual phone and router/firewall access need user's LAN, not simulated as a completed physical-device test.
+- Office exports checked structurally/content-wise and downloaded through UI; exhaustive Word/WPS rendering is not done. Map covers only copied cache region; no online map download/geocoding/navigation. No login/role model or disconnected-phone sync, consistent with hbtool local LAN scope. ZIP backups include business data/photos, tiles are copied separately.
+- Historical checkpoint "remaining" bullets below are superseded by this delivery section.
 
 ## Progress
 - Repository cloned to Desktop/CommunityGIS; .NET SDK 10.0.302 and native build tools found.

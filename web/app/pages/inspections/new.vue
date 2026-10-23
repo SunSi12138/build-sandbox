@@ -228,7 +228,7 @@ async function initialize() {
       const record = await $fetch<CommunityRecord<InspectionDraft>>(`/api/records/draft/${shared}`)
       if (record.archived) throw new Error('这份草稿已提交或移除，请返回草稿箱。')
       if (restored.value && (draft.submissionKey !== record.data.submissionKey || draft.sharedRevision !== record.revision)) { pendingShared.value = record; sharedConflictOpen.value = true; return }
-      Object.assign(draft, emptyDraft(), structuredClone(record.data), { sharedId: record.id, sharedRevision: record.revision })
+      Object.assign(draft, emptyDraft(), structuredClone(toRaw(record.data)), { sharedId: record.id, sharedRevision: record.revision })
       nextIssueKey = Math.max(0, ...draft.issues.map(x => x.key)) + 1; restored.value = true
     }
     if (!restored.value && queryText(route.query.typeId)) draft.scope.inspectionTypeId = queryText(route.query.typeId)
@@ -252,7 +252,7 @@ async function acceptShared() {
   catch { saveError.value = '无法保留本机草稿，请先保存当前草稿再打开其他草稿'; return }
   const record = pendingShared.value
   draftLoaded = false
-  Object.assign(draft, emptyDraft(), structuredClone(record.data), { sharedId: record.id, sharedRevision: record.revision })
+  Object.assign(draft, emptyDraft(), structuredClone(toRaw(record.data)), { sharedId: record.id, sharedRevision: record.revision })
   nextIssueKey = Math.max(0, ...draft.issues.map(x => x.key)) + 1
   draftLoaded = true; sharedConflictOpen.value = false; pendingShared.value = null; persistDraft()
   await Promise.all([fetchPointOptions(), draft.pointMode === 'regular' ? fetchSelectedPoint(draft.pointId) : Promise.resolve()])
@@ -450,7 +450,7 @@ onBeforeUnmount(() => {
             <div v-else class="field-grid">
               <UFormField name="newPoint.name" label="名称" required class="field-full"><UInput v-model="draft.newPoint.name" data-testid="temporary-point-name" :maxlength="200" class="w-full"  :disabled="formDisabled" /></UFormField>
               <UFormField name="newPoint.communityId" label="网格" required><USelect v-model="draft.newPoint.communityId" :items="communities" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.typeId" label="类型" required><USelect v-model="draft.newPoint.typeId" :items="pointTypes" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField>
-              <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="位置" required class="field-full"><LocationPicker v-model="draft.tempShape" :disabled="formDisabled" @picked="shape => { draft.newPoint.coordinates = shape.coordinates[0]!.join(',') }" /><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" :disabled="formDisabled" @update:model-value="draft.tempShape = null" /></UFormField>
+              <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="位置" required class="field-full"><LocationPicker v-model="draft.tempShape" :disabled="formDisabled" @picked="shape => { draft.newPoint.coordinates = shape.coordinates[0]!.join(',') }" /><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" :disabled="formDisabled" @update:model-value="draft.tempShape = null" /><CoordinateConverter v-model="draft.newPoint.coordinates" :disabled="formDisabled" @converted="shape=>{draft.tempShape=shape}" /></UFormField>
             </div>
           </section>
           <InspectionScope v-model="draft.scope" :point-id="draft.pointMode === 'regular' ? draft.pointId : ''" :disabled="formDisabled" />

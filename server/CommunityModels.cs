@@ -18,6 +18,7 @@ public sealed record HistoryDto(string Id, string Kind, string RecordId, string 
 [JsonSerializable(typeof(MapLayerDto[]))]
 [JsonSerializable(typeof(MapFeatureDto))]
 [JsonSerializable(typeof(ShapeWrite))]
+[JsonSerializable(typeof(GeoShape))]
 [JsonSerializable(typeof(CommunityRecord))]
 [JsonSerializable(typeof(CommunityRecord[]))]
 [JsonSerializable(typeof(CommunityWrite))]

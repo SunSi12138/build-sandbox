@@ -78,7 +78,7 @@ function startEdit() {
   map.addInteraction(modify); addSnap()
 }
 function cancel() { clearInteractions(); editing.clear(); shape.value = null; mode.value = 'view' }
-function edit(value: GeoShape) { cancel(); shape.value = structuredClone(value); editing.addFeature(new Feature(geometry(value))); startEdit() }
+function edit(value: GeoShape) { const copy: GeoShape = { type: value.type, coordinates: value.coordinates.map(x => [...x]) }; cancel(); shape.value = copy; editing.addFeature(new Feature(geometry(copy))); startEdit() }
 function locate(lon: number, lat: number) { map?.getView().animate({ center: fromLonLat([lon, lat]), zoom: Math.max(map.getView().getZoom() ?? 16, 17), duration: 250 }) }
 function focus(value: GeoShape) { if (!map) return; map.getView().fit(geometry(value).getExtent(), { padding: [60,60,60,60], maxZoom: 18, duration: 200 }) }
 defineExpose({ start, cancel, edit, locate, focus })
@@ -127,7 +127,7 @@ onBeforeUnmount(() => { resizing?.disconnect(); map?.setTarget(undefined); map?.
       <span v-if="mode === 'edit'" class="text-sm text-muted">拖动节点调整</span>
     </div>
     <div ref="mapElement" class="offline-map" :style="{ height }" tabindex="0" aria-label="社区地图" />
-    <div class="map-footer"><span>{{ coordinate }}</span><span v-if="missing">部分区域暂无缓存</span><span v-else>本地地图</span></div>
+    <div class="map-footer"><span>{{ coordinate }} WGS84</span><span v-if="missing">部分区域暂无缓存</span><span v-else>本地地图</span></div>
   </div>
 </template>
 <style scoped>

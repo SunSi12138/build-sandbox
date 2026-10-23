@@ -9,8 +9,17 @@ public static class CommunityApi
         store.MapHandoffApi(app);
         store.MapArchiveApi(app);
         store.MapCacheImportApi(app);
+        store.MapStatisticsApi(app);
         RequestDelegate map = context => Api.Write(context, store.GetMapState(), CommunityJsonContext.Default.MapStateDto);
         app.MapGet("/api/map", map);
+        RequestDelegate coordinates = context =>
+        {
+            if (!double.TryParse(context.Request.Query["lon"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var lon) || !double.TryParse(context.Request.Query["lat"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var lat) || !double.IsFinite(lon) || !double.IsFinite(lat) || Math.Abs(lon)>180 || Math.Abs(lat)>85) throw new ApiException(400, "请填写正确的经度、纬度。");
+            var system = context.Request.Query["system"].ToString();
+            if (system is not ("wgs84" or "gcj02")) throw new ApiException(400, "请选择坐标来源。");
+            return Api.Write(context, new GeoShape("Point", [system == "gcj02" ? CoordinateConversion.ToWgs84([lon, lat]) : [lon, lat]]), CommunityJsonContext.Default.GeoShape);
+        };
+        app.MapGet("/api/map/coordinates", coordinates);
         RequestDelegate shape = async context => await Api.Write(context, store.SaveShape((string)context.Request.RouteValues["kind"]!, Api.Id(context), await Api.Read(context, CommunityJsonContext.Default.ShapeWrite)), CommunityJsonContext.Default.MapFeatureDto);
         app.MapPut("/api/map/shapes/{kind}/{id}", shape);
         RequestDelegate layers = context => Api.Write(context, store.GetMapLayers(), CommunityJsonContext.Default.MapLayerDtoArray);

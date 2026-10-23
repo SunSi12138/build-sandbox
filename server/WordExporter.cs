@@ -6,6 +6,7 @@ using System.Xml;
 namespace StreetEcoTool;
 
 public sealed record WordPhoto(PhotoDto Photo, string FilePath);
+public sealed record WordUseRecord(CommunityRecord Record, string UnitName, WordPhoto[] Photos);
 public sealed record WordIssueHistory(string IssueId, IssueActionDto[] Actions);
 public sealed record WordLedger(string From, string To, string CommunityName, IssueDto[] Issues, WordPhoto[] Photos, bool IncludePhotos, WordIssueHistory[]? History = null, string? PreparedDate = null, string? PointScope = null);
 public sealed record WordInspectionLedger(string From, string To, string CommunityName, InspectionDto[] Inspections, string PreparedDate, string? PointScope = null);
@@ -14,6 +15,26 @@ public sealed record WordCampaignLedger(string From, string To, string Community
 /// <summary>Writes an OPC/WordprocessingML package with BCL APIs only. No image or Office SDK is loaded.</summary>
 public static class WordExporter
 {
+    public static void WritePlaceRecord(Stream destination, PointDto point, WordUseRecord[] uses, WordPhoto[] photos, SettingsDto settings)
+    {
+        using var document = new Document(destination, false, "场所档案", settings.StreetName);
+        document.Paragraph("场所档案", "Title");
+        document.Table(null, [["编号", point.Id], ["名称", point.Name], ["网格", point.CommunityName], ["形态", point.TypeName], ["地址", point.Address], ["联系人", point.Contact], ["电话", point.Phone], ["状态", point.Disabled ? "已停用" : "使用中"]], [24, 76], labelColumn: true);
+        document.Gallery(photos.Select(x => (x, "")).ToArray(), "场所照片");
+        foreach (var use in uses)
+        {
+            var r = use.Record;
+            string Text(string key) => r.Data.TryGetProperty(key, out var v) ? v.ToString() : "";
+            document.Section("经营使用：" + r.Name);
+            var purposes = r.Data.TryGetProperty("purposes", out var p) ? string.Join("、", p.EnumerateArray().Select(x => x.GetString())) : "";
+            var values = new List<string[]> { new[] { "编号", r.Id }, new[] { "所在单元", use.UnitName }, new[] { "用途", purposes } };
+            foreach (var field in new[] { ("state", "状态"), ("startDate", "开始日期"), ("endDate", "结束日期"), ("contact", "联系人"), ("phone", "联系电话"), ("business", "经营内容"), ("owner", "房东"), ("ownerPhone", "房东电话"), ("tenantCount", "居住人数"), ("storedGoods", "存放物品"), ("area", "使用面积"), ("notes", "备注") })
+                if (Text(field.Item1).Length > 0) values.Add([field.Item2, Text(field.Item1)]);
+            document.Table(null, values, [24, 76], labelColumn: true);
+            document.Gallery(use.Photos.Select(x => (x, "")).ToArray(), r.Name + " · 照片");
+        }
+        document.Paragraph("资料日期：" + Store.Today);
+    }
     public static void WriteCommunityReport(Stream destination, ReportDto report, SettingsDto settings)
     {
         using var document = new Document(destination, true, report.Title, settings.StreetName);
@@ -32,9 +53,21 @@ public static class WordExporter
         foreach (var item in detail.Inspection.Checklist ?? []) document.Paragraph(item.Name + "：" + (item.Result switch { "normal" => "正常", "issues" => "发现问题", "na" => "不适用", _ => "未检查" }) + (item.Notes.Length > 0 ? "；" + item.Notes : ""));
         document.Section("发现问题");
         if (detail.Inspection.Result == "incomplete") document.Paragraph("本次未完成检查：" + detail.Inspection.IncompleteReason);
-        if (detail.Issues.Length == 0 && detail.Inspection.Result != "incomplete") document.Paragraph("本次检查未发现问题。");
+        if (detail.Issues.Length == 0 && detail.Inspection.Result != "incomplete") document.Paragraph(detail.Inspection.Result == "normal" ? "本次检查未发现问题。" : "原登记问题均已作废。");
         else WriteIssues(document, detail.Issues);
-        WriteSitePhotos(document, detail, photos, false);
+        var operationIds = (detail.IssueDetails ?? []).SelectMany(x => x.Actions).Where(x => x.Kind is "progress" or "transfer" or "extend" or "assign").SelectMany(x => x.Photos).Select(x => x.Id).ToHashSet();
+        WriteSitePhotos(document, detail, photos.Where(x => !operationIds.Contains(x.Photo.Id)).ToArray(), false);
+        foreach (var item in detail.IssueDetails ?? [])
+        {
+            if (item.Actions.Length == 0) continue;
+            document.Section("办理过程：" + item.Issue.Description);
+            foreach (var action in item.Actions)
+            {
+                document.Paragraph($"{action.Date}　{ActionName(action.Kind)}：{action.Notes}");
+                var ids = action.Photos.Select(x => x.Id).ToHashSet();
+                document.Gallery(photos.Where(x => ids.Contains(x.Photo.Id)).Select(x => (x, ActionName(action.Kind) + " · " + action.Date)).ToArray());
+            }
+        }
         if (!string.IsNullOrWhiteSpace(detail.Inspection.Notes))
         {
             document.Section("备注");
@@ -63,7 +96,7 @@ public static class WordExporter
             result.Append(token switch
             {
                 "{日期}" => ChineseDate(inspection.Date), "{点位}" or "{场所}" => inspection.PointName,
-                "{期限}" => ChineseDate(deadline), "{街道全称}" => settings.StreetName,
+                "{期限}" => ChineseDate(deadline), "{街道全称}" or "{单位名称}" => settings.StreetName,
                 "{社区}" => inspection.CommunityName, _ => token
             });
             position = end + 1;
@@ -107,7 +140,7 @@ public static class WordExporter
         if (open > 0) throw new ApiException(400, $"尚有 {open} 项问题未闭环");
         if (detail.Issues.Length == 0) throw new ApiException(400, "本次排查无需整改");
         using var document = new Document(destination, false, "整改记录单", settings.StreetName);
-        document.Paragraph("生态环保问题整改记录单", "Title");
+        document.Paragraph("问题整改记录单", "Title");
         var completed = detail.Issues.Select(issue => issue.ClosedDate ?? issue.ReviewDate ?? "").Order(StringComparer.Ordinal).Last();
         WriteInspectionInfo(document, detail.Inspection, completed);
         document.Paragraph("一、整改情况", "Heading1");
@@ -123,7 +156,7 @@ public static class WordExporter
                 new[] { "复查结论", WithDate(issue.ReviewDate, issue.ReviewConclusion) }
             };
             var actions = detail.IssueDetails?.FirstOrDefault(item => item.Issue.Id == issue.Id)?.Actions ?? [];
-            if (actions.Any(action => action.Kind == "return"))
+            if (actions.Length > 0)
                 values.Add(["办理过程", string.Join("\n", actions.Select(action => $"{action.Date}　{ActionName(action.Kind)}：{action.Notes}"))]);
             var context = PhotoContext(issue, index + 1);
             document.Table(null, values, [20, 80], labelColumn: true, context: context);
@@ -175,21 +208,22 @@ public static class WordExporter
     public static void WriteLedger(Stream destination, WordLedger ledger, SettingsDto settings)
     {
         using var document = new Document(destination, true, "整改台账", settings.StreetName);
-        document.Paragraph("生态环保问题整改台账", "Title");
+        document.Paragraph("问题整改台账", "Title");
         WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate ?? ledger.To, ledger.PointScope);
         var histories = (ledger.History ?? []).ToDictionary(item => item.IssueId, item => item.Actions, StringComparer.Ordinal);
         var rows = ledger.Issues.Select((issue, index) => new[]
         {
             Number(index + 1), issue.InspectionDate, issue.PointName, issue.CommunityName, issue.Description, issue.Deadline, Status(issue.Status),
             HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], true, WithDate(issue.FeedbackDate, issue.FeedbackNotes)),
-            HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], false, WithDate(issue.ReviewDate, issue.ReviewConclusion))
+            HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], false, WithDate(issue.ReviewDate, issue.ReviewConclusion)),
+            string.Join("\n", (histories.GetValueOrDefault(issue.Id) ?? []).Where(x => x.Kind is "progress" or "transfer" or "extend" or "assign").Select(x => x.Date + "　" + ActionName(x.Kind) + "：" + x.Notes))
         });
         var closed = ledger.Issues.Count(issue => issue.Status == "closed");
         var feedback = ledger.Issues.Count(issue => issue.Status == "feedback");
         var pending = ledger.Issues.Count(issue => issue.Status == "pending");
         var overdue = ledger.Issues.Count(issue => issue.Status != "closed" && issue.Overdue);
-        document.Table(["序号", "排查日期", "点位名称", "所属社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论"], rows,
-            [5, 9, 13, 9, 22, 9, 8, 13, 12], centeredColumns: [0, 1, 5, 6], repeatColumns: [1, 2, 3],
+        document.Table(["序号", "检查日期", "场所名称", "所属网格", "问题描述", "整改期限", "状态", "反馈情况", "复查结论", "跟进过程"], rows,
+            [5, 9, 13, 9, 22, 9, 8, 13, 12, 16], centeredColumns: [0, 1, 5, 6], repeatColumns: [1, 2, 3],
             summary: $"共 {ledger.Issues.Length} 条，已闭环 {closed}，待复查 {feedback}，待整改 {pending}，其中逾期 {overdue}");
         if (!ledger.IncludePhotos) return;
         var attachments = ledger.Issues.Select((issue, index) => (Issue: issue, Index: index, Photos: IssuePhotos(ledger.Photos, issue)))
@@ -207,17 +241,17 @@ public static class WordExporter
     public static void WriteInspectionLedger(Stream destination, WordInspectionLedger ledger, SettingsDto settings)
     {
         using var document = new Document(destination, true, "排查台账", settings.StreetName);
-        document.Paragraph("生态环保排查台账", "Title");
+        document.Paragraph("检查台账", "Title");
         WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate, ledger.PointScope);
         var rows = ledger.Inspections.Select((inspection, index) => new[]
         {
             Number(index + 1), inspection.Date, inspection.PointName, inspection.CommunityName, inspection.TypeName, inspection.Inspector,
-            inspection.Result == "normal" ? "正常" : "发现问题", Number(inspection.IssueCount), RectifyStatus(inspection), inspection.NoticeNumber
+            inspection.Result == "normal" ? "正常" : inspection.Result == "incomplete" ? "未完成检查" : "发现问题", Number(inspection.IssueCount), RectifyStatus(inspection), inspection.NoticeNumber
         });
         var normal = ledger.Inspections.Count(inspection => inspection.Result == "normal");
         document.Table(["序号", "排查日期", "点位名称", "所属社区", "点位类型", "排查人", "排查结果", "问题数", "整改情况", "通知单编号"],
             rows, [5, 10, 18, 11, 10, 8, 9, 7, 12, 10], centeredColumns: [0, 1, 6, 7, 8], repeatColumns: [1, 2, 3],
-            summary: $"共 {ledger.Inspections.Length} 次排查，正常 {normal}，发现问题 {ledger.Inspections.Length - normal}；问题共 {ledger.Inspections.Sum(item => item.IssueCount)} 项，已闭环 {ledger.Inspections.Sum(item => item.ClosedCount)}");
+            summary: $"共 {ledger.Inspections.Length} 次排查，正常 {normal}，发现问题 {ledger.Inspections.Count(x => x.Result == "issues")}，未完成检查 {ledger.Inspections.Count(x => x.Result == "incomplete")}；问题共 {ledger.Inspections.Sum(item => item.IssueCount)} 项，已闭环 {ledger.Inspections.Sum(item => item.ClosedCount)}");
     }
 
     public static void WriteCampaignLedger(Stream destination, WordCampaignLedger ledger, SettingsDto settings)
@@ -271,7 +305,7 @@ public static class WordExporter
             [new("点位名称", Header: true), new(inspection.PointName), new("点位类型", Header: true), new(inspection.TypeName)],
             [new("所属社区", Header: true), new(inspection.CommunityName), new("排查日期", Header: true), new(inspection.Date, Align: "center")],
             [new("详细地址", Header: true), new(inspection.Address, Span: 3)],
-            [new("排查人", Header: true), new(inspection.Inspector), new("排查结果", Header: true), new(inspection.Result == "normal" ? "正常" : "发现问题", Align: "center")]
+            [new("排查人", Header: true), new(inspection.Inspector), new("排查结果", Header: true), new(inspection.Result == "normal" ? "正常" : inspection.Result == "incomplete" ? "未完成检查" : "发现问题", Align: "center")]
         ];
         var contact = string.Join("　", new[] { inspection.Contact, inspection.Phone }.Where(value => !string.IsNullOrWhiteSpace(value)));
         if (contact.Length > 0) rows.Add([new("联系人及电话", Header: true), new(contact, Span: 3)]);
@@ -309,7 +343,7 @@ public static class WordExporter
         return value.ToString(CultureInfo.InvariantCulture);
     }
     private static string WithDate(string? date, string text) => string.IsNullOrWhiteSpace(date) ? text : date + "\n" + text;
-    private static string ActionName(string kind) => kind switch { "feedback" => "反馈", "review" => "复查", "return" => "退回", _ => kind };
+    private static string ActionName(string kind) => kind switch { "feedback" => "反馈", "review" => "复查", "return" => "退回", "progress" => "跟进", "transfer" => "转交单位", "extend" => "调整期限", "assign" => "安排跟进人员", _ => kind };
     private static string HistoryText(IssueActionDto[] actions, bool feedback, string current)
     {
         var selected = actions.Where(action => feedback ? action.Kind == "feedback" : action.Kind is "review" or "return").ToArray();
@@ -321,7 +355,7 @@ public static class WordExporter
     private static string Status(string status) => status switch { "pending" => "待整改", "feedback" => "社区已反馈", "closed" => "已复查闭环", _ => status };
     private static string RectifyStatus(InspectionDto inspection) => inspection.RectifyStatus switch
     {
-        "pending" => "待整改", "feedback" => "待复查", "closed" => "已闭环", _ => inspection.Result == "normal" ? "无需整改" : inspection.OpenIssueCount == 0 ? "已闭环" : "待整改"
+        "voided" => "问题已作废", "incomplete" => "未完成检查", "pending" => "待整改", "feedback" => "待复查", "closed" => "已闭环", _ => inspection.Result == "normal" ? "无需整改" : inspection.OpenIssueCount == 0 ? "已闭环" : "待整改"
     };
     private static string CampaignSummary(CampaignDto campaign)
     {
@@ -349,7 +383,14 @@ public static class WordExporter
 
     private static void WriteIssuePhotoTables(Document document, WordPhoto[] photos, string context, IssueActionDto[] actions)
     {
-        var site = photos.Where(photo => photo.Photo.Phase == "site").ToArray();
+        var operations = actions.Where(x => x.Kind is "progress" or "transfer" or "extend" or "assign").ToArray();
+        var operationPhotoIds = operations.SelectMany(x => x.Photos).Select(x => x.Id).ToHashSet();
+        var site = photos.Where(photo => photo.Photo.Phase == "site" && !operationPhotoIds.Contains(photo.Photo.Id)).ToArray();
+        foreach (var operation in operations)
+        {
+            var ids = operation.Photos.Select(x => x.Id).ToHashSet();
+            document.Gallery(photos.Where(x => ids.Contains(x.Photo.Id)).Select(x => (x, "")).ToArray(), ActionName(operation.Kind) + " · " + operation.Date);
+        }
         var assigned = new HashSet<string>(StringComparer.Ordinal);
         var feedbackRound = 0;
         var reviewRound = 0;
