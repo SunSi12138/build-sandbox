@@ -33,7 +33,7 @@ public sealed partial class Store
 
     public BootstrapDto GetBootstrap()
     {
-        lock (_gate) return new(GetSettings(), GetCommunities(), GetPointTypes(), Today, GetCampaignTypes(), GetIssueTypes(), GetActivityTypes());
+        lock (_gate) return new(GetSettings(), GetCommunities(), GetPointTypes(), Today, GetCampaignTypes(), GetIssueTypes(), GetActivityTypes(), GetTags());
     }
 
     public CommunityDto[] GetCommunities()
@@ -79,7 +79,7 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            using (var used = Command("SELECT (SELECT COUNT(*) FROM points WHERE community_id=$id)+(SELECT COUNT(*) FROM inspections WHERE community_id=$id)+(SELECT COUNT(*) FROM campaigns WHERE community_id=$id);", null, ("$id", id)))
+            using (var used = Command("SELECT (SELECT COUNT(*) FROM points WHERE community_id=$id)+(SELECT COUNT(*) FROM inspections WHERE community_id=$id)+(SELECT COUNT(*) FROM activities WHERE community_id=$id);", null, ("$id", id)))
                 if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该社区已被记录引用，不能删除。");
             using var command = Command("DELETE FROM communities WHERE id=$id;", null, ("$id", id));
             RequireChanged(command.ExecuteNonQuery(), "社区");

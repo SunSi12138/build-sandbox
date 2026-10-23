@@ -153,7 +153,7 @@ public static class WordExporter
             document.Section("备注");
             document.Paragraph(campaign.Notes);
         }
-        var selected = SortPhotos(photos.Where(photo => photo.Photo.CampaignId == campaign.Id));
+        var selected = SortPhotos(photos.Where(photo => photo.Photo.ActivityId == campaign.Id));
         if (selected.Length > 0)
         {
             document.Section("整治照片");
@@ -225,7 +225,7 @@ public static class WordExporter
             summary: $"共 {ledger.Campaigns.Length} 次整治，累计参加 {ledger.Campaigns.Sum(item => (long)(item.ParticipantCount ?? 0))} 人、出动车辆 {ledger.Campaigns.Sum(item => (long)(item.VehicleCount ?? 0))} 辆、清运垃圾 {DecimalNumber(ledger.Campaigns.Sum(item => item.GarbageTons ?? 0))} 吨、清理面积 {DecimalNumber(ledger.Campaigns.Sum(item => item.AreaSqm ?? 0))} ㎡");
         if (!ledger.IncludePhotos) return;
         var attachments = ledger.Campaigns.Select((campaign, index) => (Campaign: campaign, Index: index,
-            Photos: SortPhotos(ledger.Photos.Where(photo => photo.Photo.CampaignId == campaign.Id)))).Where(item => item.Photos.Length > 0).ToArray();
+            Photos: SortPhotos(ledger.Photos.Where(photo => photo.Photo.ActivityId == campaign.Id)))).Where(item => item.Photos.Length > 0).ToArray();
         if (attachments.Length == 0) return;
         document.Paragraph("附：照片", "Heading1", pageBreak: true);
         foreach (var item in attachments)

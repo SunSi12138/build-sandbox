@@ -20,9 +20,9 @@ public sealed partial class Store
         AND ($q='' OR n.point_name LIKE $like OR x.description LIKE $like OR x.responsible_unit LIKE $like)
         """;
 
-    private static IssueDto ReadIssue(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
+    private IssueDto ReadIssue(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10), row.GetString(11),
-        NullableString(row, 12), row.GetString(13), NullableString(row, 14), row.GetString(15), NullableString(row, 16), row.GetInt32(17) != 0, row.GetString(18), row.GetString(19));
+        NullableString(row, 12), row.GetString(13), NullableString(row, 14), row.GetString(15), NullableString(row, 16), row.GetInt32(17) != 0, row.GetString(18), row.GetString(19)) { Matters = ReadMatterLinks("issue", row.GetString(0)) };
 
     private IssueDto[] ReadIssueList(string suffix, string today, (string Name, object? Value)[] parameters)
     {
@@ -89,7 +89,7 @@ public sealed partial class Store
             to = DateText(to, "结束日期");
             CheckDateRange(from, to);
             var parameters = InspectionParameters((filters ?? new()) with { CommunityId = communityId, From = from, To = to });
-            return ReadIssueList("JOIN points pt ON pt.id=n.point_id " + InspectionWhere + """
+            return ReadIssueList("JOIN points pt ON pt.id=n.point_id " + InspectionWhere + TagFilterSql("inspection", "n.id", filters?.TagIds) + """
                  AND ($issueType='' OR x.issue_type_id=$issueType)
                  AND ($overdue=0 OR (x.status<>'closed' AND x.deadline<$today))
                  AND ($soon=0 OR (x.status<>'closed' AND x.deadline>=$today AND x.deadline<=$through))
@@ -106,11 +106,14 @@ public sealed partial class Store
             PrepareWrite();
             var issue = GetIssue(id);
             if (issue.Status != "pending") throw new ApiException(409, "只有待整改问题可以修改；如需继续整改，请先退回待整改。");
-            var kind = RequireIssueType(request.IssueTypeId);
-            using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit,issue_type_id=$type,issue_type_name=$typeName WHERE id=$id;", null,
+            using var tx = _db.BeginTransaction();
+            var kind = RequireIssueType(request.IssueTypeId, tx);
+            using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit,issue_type_id=$type,issue_type_name=$typeName WHERE id=$id;", tx,
                 ("$id", id), ("$type", kind.Id), ("$typeName", kind.Name), ("$description", Text(request.Description, "问题描述", 8000, true)), ("$requirement", Text(request.Requirement, "整改要求", 8000)),
                 ("$deadline", DateText(request.Deadline, "整改期限")), ("$unit", Text(request.ResponsibleUnit, "责任单位", 200, true)));
             command.ExecuteNonQuery();
+            ReplaceMatterLinks("issue", id, request.MatterIds, tx);
+            tx.Commit();
             return GetIssueDetail(id);
         }
     }

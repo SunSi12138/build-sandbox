@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { expect } from 'playwright/test'
 
-export async function verifyUsability({ browser, origin, api, test, bootstrap, activityId, evidence }) {
+export async function verifyUsability({ browser, origin, api, test, bootstrap, activityId, evidence, directOrigin, fixtureJpeg }) {
   const context = await browser.newContext({ viewport: { width: 375, height: 812 }, locale: 'zh-CN', reducedMotion: 'reduce' })
   const page = await context.newPage()
   const errors = []
@@ -27,6 +27,56 @@ export async function verifyUsability({ browser, origin, api, test, bootstrap, a
     return execFileSync('python3', ['-c', "import sys,zipfile,xml.etree.ElementTree as E; z=zipfile.ZipFile(sys.argv[1]); print(''.join(E.fromstring(z.read('word/document.xml')).itertext()))", file], { encoding: 'utf8' })
   }
   try {
+    await test('UX removing persisted activity photos is deferred until save across all templates and phases', async () => {
+      for (const template of ['general', 'remediation']) {
+        const phases = template === 'general' ? ['activity'] : ['before', 'process', 'after']
+        const photos = []
+        for (const phase of phases) {
+          const uploaded = await fetch(directOrigin + '/api/photos?phase=' + phase, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: fixtureJpeg })
+          assert.equal(uploaded.status, 201)
+          photos.push(await uploaded.json())
+        }
+        const body = { name: '取消编辑保留原照片-' + template, typeId: bootstrap.activityTypes.find(type => type.template === template).id, date: bootstrap.today, content: '保存时才删除原照片。' }
+        if (template === 'general') body.photoIds = photos.map(photo => photo.id)
+        else {
+          body.pointId = (await api('/points?pageSize=1')).items[0].id
+          body.remediation = { typeId: bootstrap.remediationTypes[0].id, beforePhotoIds: [photos[0].id], processPhotoIds: [photos[1].id], afterPhotoIds: [photos[2].id] }
+        }
+        const fixture = await api('/activities', { method: 'POST', body })
+        async function removeVisible() {
+          for (const photo of photos) {
+            await page.locator(`[data-photo-id="${photo.id}"]`).getByRole('button', { name: '删除第 1 张照片', exact: true }).click()
+            const dialog = page.getByRole('dialog', { name: '移除照片？', exact: true })
+            await expect(dialog).toContainText('保存活动后移除，取消编辑会保留原照片')
+            await dialog.getByRole('button', { name: '移除', exact: true }).click()
+            await expect(dialog).toBeHidden()
+            const originalPhoto = await fetch(directOrigin + '/photos/' + photo.id)
+            assert.equal(originalPhoto.status, 200)
+            assert.deepEqual(Buffer.from(await originalPhoto.arrayBuffer()), fixtureJpeg)
+          }
+          await expect(page.getByTestId('photo-uploaded')).toHaveCount(0)
+        }
+        await go('/activities/new?edit=' + fixture.activity.id)
+        await removeVisible()
+        await page.getByRole('link', { name: '取消', exact: true }).click()
+        await page.getByRole('dialog', { name: '放弃未保存的修改？', exact: true }).getByRole('button', { name: '离开', exact: true }).click()
+        await page.waitForURL('**/#/activities/' + fixture.activity.id)
+        assert.deepEqual((await api('/activities/' + fixture.activity.id)).photos.map(photo => photo.id).sort(), photos.map(photo => photo.id).sort())
+        await go('/activities/new?edit=' + fixture.activity.id)
+        await removeVisible()
+        const saved = savedResponse('/activities/' + fixture.activity.id, 'PUT')
+        await page.getByTestId('activity-save').click()
+        assert.equal((await saved).status(), 200)
+        await page.waitForURL('**/#/activities/' + fixture.activity.id)
+        assert.equal((await api('/activities/' + fixture.activity.id)).photos.length, 0)
+        for (const photo of photos) {
+          const removedPhoto = await fetch(directOrigin + '/photos/' + photo.id)
+          assert.equal(removedPhoto.status, 404)
+          await removedPhoto.arrayBuffer()
+        }
+      }
+    })
+
     await test('UX activity edit protects unsaved changes and optional fields remain editable', async () => {
       const original = (await api('/activities/' + activityId)).activity
       await go('/activities/new?edit=' + activityId)
@@ -111,7 +161,7 @@ export async function verifyUsability({ browser, origin, api, test, bootstrap, a
     })
 
     await test('UX activity search is debounced and exports current results or a custom range', async () => {
-      const typeId = bootstrap.activityTypes[0].id
+      const typeId = bootstrap.activityTypes.find(type => type.template === 'general').id
       await api('/activities', { method: 'POST', body: { name: '专用活动筛选结果', typeId, date: bootstrap.today, content: '活动命中正文' } })
       await api('/activities', { method: 'POST', body: { name: '其他活动排除', typeId, date: bootstrap.today, content: '活动排除正文' } })
       await go('/activities')

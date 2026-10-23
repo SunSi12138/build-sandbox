@@ -25,7 +25,7 @@ public sealed partial class Store
                 .ThenBy(item => item.NearestDeadline, StringComparer.Ordinal).Take(5).ToArray();
             var recent = ReadInspectionList("ORDER BY n.inspection_date DESC,n.rowid DESC LIMIT 5;", [], today);
             return new(today, new(overdue.Length, overdue.Take(8).ToArray()), new(soon.Length, soon.Take(8).ToArray()),
-                new(awaiting.Length, awaiting.Take(8).ToArray()), new(missed.Length, missed.Take(5).ToArray()), todo, recent);
+                new(awaiting.Length, awaiting.Take(8).ToArray()), new(missed.Length, missed.Take(5).ToArray()), todo, recent, GetMatterReminders());
         }
     }
 

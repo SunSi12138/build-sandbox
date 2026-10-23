@@ -13,39 +13,39 @@ export interface CommunityWriteRequest { name: string; title: string }
 export interface PointTypeDto { id: string; name: string }
 export interface PointTypeWriteRequest { name: string }
 export interface IssueTypeDto { id: string; name: string }
-export interface ActivityTypeDto { id: string; name: string }
-export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto[]; pointTypes: PointTypeDto[]; campaignTypes?: CampaignTypeDto[]; issueTypes?: IssueTypeDto[]; activityTypes?: ActivityTypeDto[]; today: string }
+export interface ActivityTypeDto { id: string; name: string; template: 'general' | 'remediation'; builtIn: boolean }
+export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto[]; pointTypes: PointTypeDto[]; remediationTypes: RemediationTypeDto[]; issueTypes: IssueTypeDto[]; activityTypes: ActivityTypeDto[]; tags: TagDto[]; today: string }
 
 export interface PointWriteRequest {
   name: string; communityId: string; typeId: string; address: string
   contact?: string | null; phone?: string | null; frequency: Frequency; notes?: string | null; disabled: boolean
-  longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]
+  longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]; tagIds?: string[]
 }
 export interface PointDto {
   id: string; name: string; communityId: string; communityName: string; typeId: string; typeName: string
   address: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean
   lastInspectionDate: string | null; openIssueCount: number
-  longitude: number | null; latitude: number | null; temporary: boolean; coverPhotoId: string | null; photoCount: number
+  longitude: number | null; latitude: number | null; temporary: boolean; coverPhotoId: string | null; photoCount: number; tags: TagDto[]
 }
-export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[]; campaigns?: CampaignDto[] }
+export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[]; activities: ActivityDto[]; attachments: AttachmentDto[]; matters: MatterLinkDto[] }
 export interface InspectionCreateRequest {
   pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; inspector: string; result: InspectionResult; notes?: string | null
-  noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]
+  noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]; source?: 'routine' | 'matter' | 'other'; matterIds?: string[]; tagIds?: string[]
 }
-export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[]; issueTypeId?: string }
-export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string; issueTypeId: string }
+export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[]; issueTypeId?: string; matterIds?: string[] }
+export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string; issueTypeId: string; matterIds?: string[] }
 export interface InspectionDto {
   id: string; pointId: string; pointName: string; communityId: string; communityName: string; communityTitle: string
   typeId: string; typeName: string; address: string; contact: string; phone: string; date: string
   inspector: string; result: InspectionResult; notes: string; noticeNumber: string; issueCount: number; openIssueCount: number
   rectifyStatus: RectifyStatus; closedCount: number; overdueCount: number; nearestDeadline: string | null
-  pointTemporary: boolean; longitude: number | null; latitude: number | null
+  pointTemporary: boolean; longitude: number | null; latitude: number | null; source: 'routine' | 'matter' | 'other'; tags: TagDto[]; matters: MatterLinkDto[]
 }
 export interface InspectionDetailDto { inspection: InspectionDto; issues: IssueDto[]; photos: PhotoDto[]; issueDetails?: IssueDetailDto[] }
 export interface IssueDto {
   id: string; inspectionId: string; pointId: string; pointName: string; communityId: string; communityName: string
   inspectionDate: string; description: string; requirement: string; deadline: string; responsibleUnit: string; status: IssueStatus
-  feedbackDate: string | null; feedbackNotes: string; reviewDate: string | null; reviewConclusion: string; closedDate: string | null; overdue: boolean; issueTypeId: string; issueTypeName: string
+  feedbackDate: string | null; feedbackNotes: string; reviewDate: string | null; reviewConclusion: string; closedDate: string | null; overdue: boolean; issueTypeId: string; issueTypeName: string; matters: MatterLinkDto[]
 }
 export interface IssueDetailDto { issue: IssueDto; inspection: InspectionDto; photos: PhotoDto[]; actions: IssueActionDto[] }
 export interface IssueActionDto { id: string; kind: 'feedback' | 'review' | 'return'; date: string; notes: string; photos: PhotoDto[] }
@@ -55,7 +55,7 @@ export interface ReturnIssueRequest { reason?: string }
 export interface PhotoDto {
   id: string; width: number; height: number; phase: PhotoPhase; url: string; uploadedAt: string
   inspectionId: string | null; issueId: string | null; actionId: string | null
-  pointId: string | null; campaignId: string | null; activityId: string | null; hasThumb: boolean
+  pointId: string | null; activityId: string | null; hasThumb: boolean
 }
 export interface PhotoUploadDto { id: string; width: number; height: number }
 export interface IssueReminderGroupDto { count: number; items: IssueDto[] }
@@ -63,7 +63,7 @@ export interface PointReminderGroupDto { count: number; items: PointDto[] }
 export interface DashboardDto {
   today: string; overdue: IssueReminderGroupDto; dueSoon: IssueReminderGroupDto
   awaitingReview: IssueReminderGroupDto; missedInspections: PointReminderGroupDto
-  todos?: InspectionDto[]; recentInspections?: InspectionDto[]
+  todos?: InspectionDto[]; recentInspections?: InspectionDto[]; matters: { pendingCount: number; overdueCount: number; items: MatterDto[] }
 }
 
 export interface NetworkInterfaceDto { name: string; address: string; other: boolean }
@@ -74,7 +74,7 @@ export interface BackupOverviewDto { items: BackupEntryDto[]; retentionCount: nu
 export interface BackupManifest { formatVersion: number; schemaVersion: number; createdAt: string; application: string }
 export interface RestorePreviewDto {
   token: string; createdAt: string; schemaVersion: number; photoCount: number; pointCount: number
-  inspectionCount: number; issueCount: number; campaignCount: number; activityCount: number; expandedBytes: number; expiresAt: string
+  inspectionCount: number; issueCount: number; remediationCount: number; activityCount: number; matterCount: number; attachmentCount: number; tagCount: number; expandedBytes: number; expiresAt: string
 }
 export interface RestoreRequest { token: string; confirm: boolean }
 export interface RestoreResultDto { ok: boolean; preservedBackup: string; message: string }
@@ -84,7 +84,7 @@ export interface PointQuery {
   page?: number; pageSize?: number; recent?: boolean; missed?: boolean; temporary?: 'false' | 'true' | 'all'
 }
 export interface InspectionQuery { pointId?: string; communityId?: string; from?: string; to?: string; q?: string; page?: number; pageSize?: number; rectify?: RectifyStatus; overdue?: boolean; dueSoon?: boolean; typeId?: string; temporary?: boolean; issueTypeId?: string }
-export interface InspectionUpdateRequest { date: string; inspector: string; noticeNumber?: string; notes?: string }
+export interface InspectionUpdateRequest { date: string; inspector: string; noticeNumber?: string; notes?: string; source?: string }
 export interface InspectionCountsDto { all: number; none: number; pending: number; feedback: number; closed: number; issueCount: number }
 export interface InspectionFeedbackRequest { date: string; items: { issueId: string; notes: string; photoIds: string[] }[] }
 export interface InspectionReviewRequest { date: string; items: { issueId: string; conclusion: string; photoIds: string[] }[] }
@@ -93,32 +93,34 @@ export interface IssueQuery {
   overdue?: boolean; dueSoon?: boolean; from?: string; to?: string; q?: string; page?: number; pageSize?: number
 }
 
-export interface CampaignTypeDto { id: string; name: string }
+export interface RemediationTypeDto { id: string; name: string }
 export interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
-export interface CampaignWriteRequest {
-  name: string; typeId: string; pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; content: string
-  endDate?: string | null; organizer?: string | null; participants?: string | null; participantCount?: number | null; vehicleCount?: number | null
-  garbageTons?: number | null; areaSqm?: number | null; outcome?: string | null; notes?: string | null
-  beforePhotoIds?: string[]; processPhotoIds?: string[]; afterPhotoIds?: string[]
-}
-export interface CampaignDto {
-  id: string; name: string; pointId: string; pointName: string; pointTemporary: boolean; typeId: string; typeName: string; communityId: string; communityName: string; location: string; date: string
-  endDate: string | null; organizer: string; participants: string; participantCount: number | null; vehicleCount: number | null
-  garbageTons: number | null; areaSqm: number | null; content: string; outcome: string; notes: string; photoCount: number
-}
-export interface CampaignDetailDto { campaign: CampaignDto; photos: PhotoDto[] }
-export interface CampaignQuery { pointId?: string; q?: string; communityId?: string; typeId?: string; from?: string; to?: string; page?: number; pageSize?: number }
-
+export interface RemediationWriteRequest { typeId: string; vehicleCount: number | null; garbageTons: number | null; areaSqm: number | null; beforePhotoIds: string[]; processPhotoIds: string[]; afterPhotoIds: string[] }
+export interface RemediationDto { typeId: string; typeName: string; vehicleCount: number | null; garbageTons: number | null; areaSqm: number | null }
 export interface ActivityWriteRequest {
-  name: string; typeId: string; date: string; content: string
-  communityId?: string | null; endDate?: string | null; location?: string | null; organizer?: string | null
-  participants?: string | null; participantCount?: number | null
-  outcome?: string | null; notes?: string | null; photoIds?: string[]
+  name: string; typeId: string; date: string; content: string; communityId?: string | null; endDate?: string | null; location?: string;
+  organizer?: string; participants?: string; participantCount?: number | null; outcome?: string; notes?: string; photoIds?: string[];
+  pointId?: string | null; newPoint?: PointWriteRequest | null; remediation?: RemediationWriteRequest | null; tagIds?: string[]; matterIds?: string[]; issueIds?: string[]
 }
 export interface ActivityDto {
-  id: string; name: string; typeId: string; typeName: string; communityId: string | null
-  communityName: string; location: string; date: string; endDate: string | null; organizer: string
-  participants: string; participantCount: number | null; content: string; outcome: string; notes: string; photoCount: number
+  id: string; name: string; typeId: string; typeName: string; date: string; content: string; communityId: string | null; communityName: string;
+  endDate: string | null; location: string; organizer: string; participants: string; participantCount: number | null; outcome: string; notes: string; photoCount: number;
+  template: 'general' | 'remediation'; pointId: string | null; pointName: string; pointTemporary: boolean; remediation: RemediationDto | null;
+  tags: TagDto[]; matters: MatterLinkDto[]; relatedIssues: IssueDto[]
 }
 export interface ActivityDetailDto { activity: ActivityDto; photos: PhotoDto[] }
-export interface ActivityQuery { q?: string; communityId?: string; typeId?: string; from?: string; to?: string; page?: number; pageSize?: number }
+export interface TagDto { id: string; name: string; disabled: boolean; usageCount: number }
+export type MatterStatus = 'pending' | 'processing' | 'closed'
+export interface MatterLinkDto { id: string; title: string; status: MatterStatus }
+export interface MatterWriteRequest {
+  title: string; source: string; receivedDate: string; content: string; pointId?: string | null; location?: string; deadline?: string | null;
+  handler?: string; referenceNumber?: string; contact?: string; phone?: string; tagIds?: string[]
+}
+export interface MatterDto extends MatterWriteRequest {
+  id: string; pointId: string | null; pointName: string; location: string; deadline: string | null; handler: string; referenceNumber: string;
+  contact: string; phone: string; status: MatterStatus; closedDate: string | null; outcome: string; conclusion: string;
+  inspectionCount: number; issueCount: number; openIssueCount: number; activityCount: number; overdue: boolean; tags: TagDto[]
+}
+export interface MatterActionDto { id: string; kind: string; date: string; handler: string; notes: string; outcome: string }
+export interface MatterDetailDto { matter: MatterDto; actions: MatterActionDto[]; inspections: InspectionDto[]; issues: IssueDto[]; activities: ActivityDto[] }
+export interface AttachmentDto { id: string; pointId: string; name: string; notes: string; size: number; contentType: string; uploadedAt: string; sha256: string; canPreview: boolean }

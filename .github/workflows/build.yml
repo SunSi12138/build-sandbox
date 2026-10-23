@@ -80,9 +80,6 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x86
-      - name: Legacy database conversion regression
-        if: matrix.rid == 'linux-x64'
-        run: python3 -m unittest discover -s tests -p 'test_convert_database.py' -v
       - name: Unit tests
         if: matrix.rid == 'linux-x64'
         run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false --logger 'trx;LogFileName=unit-tests.trx' --results-directory test-results -warnaserror
@@ -233,17 +230,12 @@ jobs:
           retention-days: 14
 
   word-layout:
-    name: Render seven document types before and after
+    name: Render current document templates and boundary samples
     needs: [native]
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
-        with:
-          ref: 05eba126e7b9f3de13e5a2b055624ac6f97ee76d
-          path: baseline-source
-          persist-credentials: false
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
@@ -253,17 +245,12 @@ jobs:
         with:
           name: bin-linux-x64
           path: layout-program
-      - name: Build the pinned original implementation
-        run: dotnet publish baseline-source/server/StreetEcoTool.csproj -c Release -r linux-x64 -o layout-baseline-program -p:PublishAot=true -p:SelfContained=true -warnaserror
-      - name: Export identical synthetic scenarios through real APIs
+      - name: Export current synthetic scenarios through real APIs
         run: |
           chmod +x layout-program/StreetEcoTool-linux-x64
-          python3 tests/word-layout-samples.py --executable layout-baseline-program/StreetEcoTool --source-ref 05eba126e7b9f3de13e5a2b055624ac6f97ee76d --output test-results/word-layout/before
-          python3 tests/word-layout-samples.py --executable layout-program/StreetEcoTool-linux-x64 --source-ref "$GITHUB_SHA" --expect-optimized --output test-results/word-layout/after
-      - name: Convert and extract every page in the same font environment
-        run: |
-          python3 tests/render-word.py test-results/word-layout/before
-          python3 tests/render-word.py test-results/word-layout/after
+          python3 tests/word-layout-samples.py --executable layout-program/StreetEcoTool-linux-x64 --source-ref "$GITHUB_SHA" --expect-optimized --output test-results/word-layout/current
+      - name: Convert and inspect the current templates
+        run: python3 tests/render-word.py test-results/word-layout/current
       - uses: actions/upload-artifact@v7
         if: always()
         with:

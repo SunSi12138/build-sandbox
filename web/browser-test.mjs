@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { once } from 'node:events'
@@ -12,6 +13,7 @@ import { verifyWordDownloads } from './word-browser-test.mjs'
 import { verifyOptimization } from './optimization-browser-test.mjs'
 import { verifyRound3 } from './round3-browser-test.mjs'
 import { verifyUsability } from './ux-browser-test.mjs'
+import { verifyFreshArchitecture } from './fresh-architecture-browser-test.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const executableArgument = process.argv.indexOf('--executable')
@@ -197,10 +199,10 @@ async function waitForVisualPage(name, title) {
       case 'inspections': return count('.mobile-records [data-testid="inspection-row"]') > 0
       case 'inspection-new': return Boolean(input('inspection-date')?.value && (input('inspection-inspector')?.value || input('inspection-inspector')?.closest('.names-editor')?.querySelector('.name-edit-tag')) && count('[data-testid="inspection-point-option"]') > 0)
       case 'inspection-detail': return count('.issue-block') >= 2 && Boolean(input('batch-review'))
-      case 'campaigns': return count('[data-testid="campaign-row"]') > 0
+      case 'matters': return Boolean(document.querySelector('main'))
       case 'activities': return count('[data-testid="activity-row"]') > 0
+      case 'matter-new': return Boolean(input('matter-save') && !input('matter-save').disabled)
       case 'activity-new': return Boolean(input('activity-save') && !input('activity-save').disabled)
-      case 'campaign-new': return Boolean(input('campaign-save') && !input('campaign-save').disabled)
       case 'settings': return Boolean(content.querySelector('#settings-basic input')?.value)
       default: return false
     }
@@ -266,7 +268,7 @@ async function visualAssertions(name, width) {
   })
   assert(value.scrollWidth <= width + 1, `${name}: horizontal overflow ${value.scrollWidth} > ${width}`)
   assert.deepEqual(value.smallText, [], `${name}: text smaller than 12 px`)
-  if (name === 'inspections' || name === 'campaigns' || name === 'activities') {
+  if (name === 'inspections' || name === 'activities') {
     assert.equal(value.dateInputs.length, 2, `${name}: both date filters must render`)
     assert(value.dateInputs.every(input => input.visible === (width >= 768)), `${name}: date filters must be visible on desktop and initially collapsed on mobile`)
     assert.equal(value.dateToggleVisible, width < 768, `${name}: mobile date toggle must remain accessible`)
@@ -290,7 +292,7 @@ async function visualAssertions(name, width) {
     }
   } else {
     assert(value.headerHeight <= 64, `${name}: desktop header exceeds 64 px`)
-    if (['points', 'inspections', 'campaigns'].includes(name)) {
+    if (['points', 'inspections'].includes(name)) {
       assert(value.tableRows.length > 0, `${name}: desktop data rows must render`)
       assert(value.tableRows.every(row => Math.abs(row.height - 44) <= 0.5), `${name}: standard fixture rows must be 44 px: ${JSON.stringify(value.tableRows)}`)
     }
@@ -317,6 +319,9 @@ try {
   page.on('requestfailed', request => { report.failedRequests ??= []; report.failedRequests.push({ url: request.url(), error: request.failure()?.errorText, case: activeCase }) })
   page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push({ text: message.text(), location: message.location(), case: activeCase, expectedWasmFailure }) })
 
+  if (process.argv.includes('--fresh-only')) {
+    await verifyFreshArchitecture({ browser, origin, api, test, bootstrap, point, evidence })
+  } else {
   await test('Fresh HTTP page: offline resources, six navigation items and hash query persistence', async () => {
     await page.goto(origin + '/', { waitUntil: 'networkidle' }); await waitForText('逾期')
     report.secureContext = await page.evaluate(() => isSecureContext); assert.equal(report.secureContext, false)
@@ -358,8 +363,8 @@ try {
     report.homeFilterChecks = { mixedInspectionId: mixed.inspection.id, awaitingReview: { inspectionCount: awaiting.total, issueCount: awaiting.matchingIssueCount }, openOnly: { inspectionCount: open.total, issueCount: open.matchingIssueCount } }
   })
 
-  let inspectionId, issueId, closedInspectionId, campaignId, fixtureJpeg
-  await test('Regular mobile inspection: worker JPEG, thumbnail, WASM fallback and version-3 draft', async () => {
+  let inspectionId, issueId, closedInspectionId, remediationId, fixtureJpeg
+  await test('Regular mobile inspection: worker JPEG, thumbnail, WASM fallback and version-4 draft', async () => {
     await page.goto(origin + '/#/inspections/new', { waitUntil: 'networkidle' })
     await page.getByTestId('inspection-point-search').fill(point.name)
     await page.getByTestId('inspection-point-option').filter({ hasText: point.name }).click()
@@ -394,8 +399,8 @@ try {
     assert.equal(await page.locator('[data-compression-engine="canvas-fallback"]').count(), 1)
     report.compression.canvasFallbackBytes = fallback.response.request().postDataBuffer().length
     await context.unroute('**/*.wasm'); expectedWasmFailure = false
-    const draft = await page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v3')))
-    assert.equal(draft.version, 3)
+    const draft = await page.evaluate(() => JSON.parse(localStorage.getItem('street-eco.inspection-draft.v4')))
+    assert.equal(draft.version, 4)
     assert.deepEqual(draft.draft.issues[0].photos.map(photo => photo.id), [first.photo.id, fallback.photo.id])
     await page.reload({ waitUntil: 'networkidle' })
     assert.equal(await page.getByTestId('inspection-issue-description').first().inputValue(), description)
@@ -405,7 +410,7 @@ try {
     await page.getByTestId('inspection-save').click()
     const record = await (await saved).json(); inspectionId = record.inspection.id; issueId = record.issues[0].id
     await page.waitForURL('**/#/inspections/' + inspectionId)
-    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.inspection-draft.v3')), null)
+    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.inspection-draft.v4')), null)
     assert.equal((await api('/issues/' + issueId)).photos.length, 2)
     await assertMobileActionLayout('已保存')
   })
@@ -539,31 +544,36 @@ try {
     assert.equal((await api('/inspections/' + result.inspection.id)).inspection.noticeNumber, '补录-2026-01')
   })
 
-  await test('Campaign creation: local draft, three photo stages and quantity fields', async () => {
-    await page.goto(origin + '/#/campaigns/new', { waitUntil: 'networkidle' })
-    await page.getByTestId('campaign-name').fill('东河沿岸卫生整治')
-    await selectOption(page.getByTestId('campaign-type'), bootstrap.campaignTypes[0].name)
-    await page.getByTestId('campaign-point-search').fill(point.name)
-    await page.getByTestId('campaign-point-option').filter({ hasText: point.name }).click()
-    await page.getByTestId('campaign-people').fill('12'); await page.getByTestId('campaign-garbage').fill('1.25')
-    await page.getByTestId('campaign-content').fill('清理河岸和道路两侧垃圾，疏通排水沟。')
-    for (const phase of ['before', 'process', 'after']) await uploadIn(page.getByTestId('campaign-' + phase).getByTestId('photo-file-input'), `campaign-${phase}.jpg`, fixtureJpeg)
+  await test('Remediation activity creation: local draft, three photo stages and quantity fields', async () => {
+    await page.goto(origin + '/#/activities/new?template=remediation', { waitUntil: 'networkidle' })
+    await page.getByTestId('activity-name').fill('东河沿岸卫生整治')
+    await selectOption(page.getByTestId('activity-remediation-type'), bootstrap.remediationTypes[0].name)
+    await page.getByTestId('activity-point-search').fill(point.name)
+    await page.getByTestId('activity-point-option').filter({ hasText: point.name }).click()
+    await page.getByRole('button', { name: '更多信息', exact: true }).click()
+    await page.getByLabel('参加人数', { exact: true }).fill('12'); await page.getByTestId('activity-garbage-tons').fill('1.25')
+    await page.getByTestId('activity-vehicle-count').fill('0')
+    await page.getByTestId('activity-content').fill('清理河岸和道路两侧垃圾，疏通排水沟。')
+    for (const phase of ['before', 'process', 'after']) await uploadIn(page.getByTestId('activity-' + phase + '-photos').getByTestId('photo-file-input'), `activity-${phase}.jpg`, fixtureJpeg)
     await page.reload({ waitUntil: 'networkidle' })
-    assert.equal(await page.getByTestId('campaign-name').inputValue(), '东河沿岸卫生整治'); assert.equal(await page.getByTestId('photo-uploaded').count(), 3)
-    const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/campaigns' && response.request().method() === 'POST' && response.status() === 201)
-    await page.getByTestId('campaign-save').click()
-    const result = await (await response).json(); campaignId = result.campaign.id
-    await page.waitForURL('**/#/campaigns/' + campaignId)
-    assert.equal(result.campaign.participantCount, 12); assert.equal(result.campaign.garbageTons, 1.25)
+    assert.equal(await page.getByTestId('activity-name').inputValue(), '东河沿岸卫生整治'); assert.equal(await page.getByTestId('photo-uploaded').count(), 3)
+    assert.equal(await page.getByLabel('参加人数', { exact: true }).inputValue(), '12')
+    assert.equal(await page.getByTestId('activity-garbage-tons').inputValue(), '1.25')
+    assert.equal(await page.getByTestId('activity-vehicle-count').inputValue(), '0')
+    const response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/activities' && response.request().method() === 'POST' && response.status() === 201)
+    await page.getByTestId('activity-save').click()
+    const result = await (await response).json(); remediationId = result.activity.id
+    await page.waitForURL('**/#/activities/' + remediationId)
+    assert.equal(result.activity.participantCount, 12); assert.equal(result.activity.remediation.garbageTons, 1.25); assert.equal(result.activity.remediation.vehicleCount, 0)
     assert.deepEqual(result.photos.map(photo => photo.phase).sort(), ['after', 'before', 'process'])
-    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco-campaign-draft-v3')), null)
+    assert.equal(await page.evaluate(() => localStorage.getItem('street-eco.activity-draft.v2')), null)
   })
 
   let activityId
   await test('Activity creation: type management, local photo compression, draft and Word record', async () => {
     await page.goto(origin + '/#/activities/new', { waitUntil: 'networkidle' })
     await page.getByTestId('activity-name').fill('环保工作部署会议')
-    await selectOption(page.getByTestId('activity-type'), bootstrap.activityTypes[0].name)
+    await selectOption(page.getByTestId('activity-type'), bootstrap.activityTypes.find(type => type.template === 'general').name)
     await page.getByTestId('activity-content').fill('安排近期环保专项宣传和重点问题排查工作。')
     await uploadIn(page.getByTestId('photo-file-input'), 'meeting.jpg', fixtureJpeg)
     await page.reload({ waitUntil: 'networkidle' })
@@ -581,7 +591,7 @@ try {
   })
 
   await test('Nine Word exports download through the current UI', async () => {
-    await verifyWordDownloads({ page, origin, evidence, inspectionId: closedInspectionId, campaignId, activityId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
+    await verifyWordDownloads({ page, origin, evidence, inspectionId: closedInspectionId, remediationId, activityId, communityId: point.communityId, today: bootstrap.today, report, screenshot })
   })
 
   await test('Local listen popover: mutually exclusive all-interfaces selection and live rebind', async () => {
@@ -602,6 +612,8 @@ try {
     await page.keyboard.press('Escape')
   })
 
+  const fresh = await verifyFreshArchitecture({ browser, origin, api, test, bootstrap, point, evidence })
+
   await test('Backup restore: preview leaves live data intact, confirmation is required, photographs survive', async () => {
     const response = await fetch(directOrigin + '/api/backups/download'); assert.equal(response.status, 200)
     const backup = Buffer.from(await response.arrayBuffer())
@@ -619,12 +631,21 @@ try {
     await waitForDialogsClosed()
     assert(!(await api('/communities')).some(community => community.id === extra.id))
     assert.equal((await api('/issues/' + issueId)).photos.length, 3)
-    assert.equal((await api('/campaigns/' + campaignId)).photos.length, 3)
+    assert.equal((await api('/activities/' + remediationId)).photos.length, 3)
+    assert.equal((await api('/matters/' + fresh.matterId)).actions.length, 3)
+    assert.equal((await api('/tags')).find(tag => tag.id === fresh.tagId).usageCount, 2)
+    const attachment = (await api('/points/' + point.id)).attachments.find(item => item.id === fresh.attachmentId)
+    assert.equal(attachment.name, fresh.attachmentName)
+    const original = await fetch(directOrigin + '/api/attachments/' + fresh.attachmentId)
+    assert.equal(original.status, 200)
+    const restoredBytes = Buffer.from(await original.arrayBuffer())
+    assert.equal(restoredBytes.length, fresh.attachmentSize)
+    assert.equal(createHash('sha256').update(restoredBytes).digest('hex'), fresh.attachmentSha256.toLowerCase())
   })
 
   await test('Thirty-three screenshots and responsive design assertions across eleven pages', async () => {
     for (let index = 0; index < 6; index++) await api('/inspections', { method: 'POST', body: { pointId: point.id, date: bootstrap.today, inspector: '列表验收员 ' + (index + 1), result: 'normal' } })
-    const pages = [ ['home', '/', '首页'], ['points', '/points', '点位管理'], ['point-detail', '/points/' + point.id, point.name], ['inspections', '/inspections', '排查记录'], ['inspection-new', '/inspections/new', '新增排查'], ['inspection-detail', '/inspections/' + closedInspectionId, '临时河岸排查点'], ['campaigns', '/campaigns', '整治记录'], ['campaign-new', '/campaigns/new', '新增整治'], ['activities', '/activities', '活动记录'], ['activity-new', '/activities/new', '新增活动'], ['settings', '/settings?tab=basic', '工具设置'] ]
+    const pages = [ ['home', '/', '首页'], ['points', '/points', '点位管理'], ['point-detail', '/points/' + point.id, point.name], ['inspections', '/inspections', '排查记录'], ['inspection-new', '/inspections/new', '新增排查'], ['inspection-detail', '/inspections/' + closedInspectionId, '临时河岸排查点'], ['matters', '/matters', '事项办理'], ['matter-new', '/matters/new', '登记事项'], ['activities', '/activities', '活动记录'], ['activity-new', '/activities/new', '新增活动'], ['settings', '/settings?tab=basic', '工具设置'] ]
     report.screenshots = []
     for (const [width, height] of [[375, 812], [768, 1024], [1440, 900]]) {
       await page.setViewportSize({ width, height })
@@ -661,7 +682,8 @@ try {
   })
   await verifyOptimization({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg })
   await verifyRound3({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg, evidence })
-  await verifyUsability({ browser, origin, api, test, bootstrap, activityId, evidence })
+  await verifyUsability({ browser, origin, api, test, bootstrap, activityId, evidence, directOrigin, fixtureJpeg })
+  }
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')
   assert.deepEqual(report.pageErrors, [], 'Unhandled browser errors occurred')
   assert.deepEqual(report.consoleErrors.filter(entry => !entry.expectedWasmFailure), [], 'Unexpected browser console errors occurred')

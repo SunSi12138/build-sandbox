@@ -95,7 +95,7 @@ onMounted(fetchBackups)
       <EmptyState v-else title="暂无自动备份" icon="i-lucide-database" />
     </section>
   </div>
-  <UModal v-model:open="confirmOpen" title="恢复备份？" description="将覆盖当前数据库和照片，覆盖前保留旧数据。" :dismissible="!restoring" :close="!restoring">
+  <UModal v-model:open="confirmOpen" title="恢复备份？" description="将覆盖当前数据库、照片和附件，覆盖前保留旧数据。" :dismissible="!restoring" :close="!restoring">
     <template #body>
       <div v-if="preview" class="space-y-3">
         <UAlert v-if="restoreError" :description="restoreError" color="error" variant="subtle" />
@@ -104,8 +104,11 @@ onMounted(fetchBackups)
           <div><dt>点位</dt><dd>{{ preview.pointCount }}</dd></div>
           <div><dt>排查</dt><dd>{{ preview.inspectionCount }}</dd></div>
           <div><dt>问题</dt><dd>{{ preview.issueCount }}</dd></div>
-          <div><dt>整治</dt><dd data-testid="restore-campaign-count">{{ preview.campaignCount }}</dd></div>
+          <div><dt>整治</dt><dd data-testid="restore-remediation-count">{{ preview.remediationCount }}</dd></div>
           <div><dt>活动</dt><dd data-testid="restore-activity-count">{{ preview.activityCount }}</dd></div>
+          <div><dt>事项</dt><dd data-testid="restore-matter-count">{{ preview.matterCount }}</dd></div>
+          <div><dt>附件</dt><dd data-testid="restore-attachment-count">{{ preview.attachmentCount }}</dd></div>
+          <div><dt>标签</dt><dd>{{ preview.tagCount }}</dd></div>
           <div><dt>照片</dt><dd>{{ preview.photoCount }}</dd></div>
           <div><dt>解压大小</dt><dd>{{ formatBytes(preview.expandedBytes) }}</dd></div>
           <div class="detail-wide"><dt>确认截止</dt><dd>{{ dateTime(preview.expiresAt) }}</dd></div>

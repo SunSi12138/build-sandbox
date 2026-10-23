@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { errorMessage, todayLocal } from '~/utils/format'
 import type { PageDto, PointDto } from '~/types/api'
-import { currentLedgerFilters, ledgerDates, ledgerFilterSummary, ledgerRanges } from '~/utils/ledger'
+import { ledgerSearchParams, currentLedgerFilters, ledgerDates, ledgerFilterSummary, ledgerRanges } from '~/utils/ledger'
 import { downloadWord } from '~/utils/wordDownload'
 
 const open = defineModel<boolean>('open', { default: false })
-const props = defineProps<{ kind: 'inspection' | 'campaign' | 'point'; communityId?: string; typeId?: string; currentQuery?: Record<string, unknown> }>()
+const props = defineProps<{ kind: 'inspection' | 'point'; communityId?: string; typeId?: string; currentQuery?: Record<string, unknown> }>()
 const { bootstrap, load } = useAppData()
-const kind = ref<'inspection' | 'rectification' | 'campaign'>('inspection')
-const ledgerKind = computed(() => props.kind === 'campaign' ? 'campaign' : kind.value)
+const kind = ref<'inspection' | 'rectification' | 'remediation'>('inspection')
+const ledgerKind = computed(() => kind.value)
 const kindOptions = computed(() => [
   { label: '排查台账', value: 'inspection' as const }, { label: '整改台账', value: 'rectification' as const },
-  ...(props.kind === 'point' ? [{ label: '整治台账', value: 'campaign' as const }] : []),
+  ...(props.kind === 'point' ? [{ label: '整治台账', value: 'remediation' as const }] : []),
 ])
 const pointSearch = ref('')
 const pointOptions = ref<PointDto[]>([])
@@ -25,14 +25,14 @@ const range = ref('month')
 const from = ref('')
 const to = ref('')
 const community = ref('all')
-const campaignType = ref('all')
+const remediationType = ref('all')
 const photos = ref(false)
 const busy = ref(false)
 const loading = ref(false)
 const error = ref('')
 const disabled = computed(() => busy.value || loading.value)
 const communities = computed(() => [{ label: '全部', value: 'all' }, ...(bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id }))])
-const campaignTypes = computed(() => [{ label: '全部', value: 'all' }, ...(bootstrap.value?.campaignTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
+const remediationTypes = computed(() => [{ label: '全部', value: 'all' }, ...(bootstrap.value?.remediationTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
 const ranges = ledgerRanges
 const scope = ref<'current' | 'custom'>('custom')
 const canIncludePhotos = computed(() => ledgerKind.value !== 'inspection')
@@ -40,7 +40,7 @@ const query = computed(() => {
   if (scope.value === 'current' && props.kind !== 'point') return currentLedgerFilters(props.kind, props.currentQuery)
   const result: Record<string, string> = { from: from.value, to: to.value }
   if (community.value !== 'all') result.communityId = community.value
-  if (ledgerKind.value === 'campaign' && campaignType.value !== 'all') result.typeId = campaignType.value
+  if (ledgerKind.value === 'remediation' && remediationType.value !== 'all') result.remediationTypeId = remediationType.value
   return result
 })
 const summary = computed(() => ledgerFilterSummary(props.kind === 'point' ? 'inspection' : props.kind, query.value, bootstrap.value))
@@ -63,7 +63,7 @@ async function loadPreview() {
   previewBusy.value = true
   const controller = new AbortController(); previewRequest = controller
   try {
-    const data = await $fetch<PageDto<unknown>>(`/api/${props.kind === 'campaign' ? 'campaigns' : 'inspections'}`, { signal: controller.signal, query: { ...query.value, page: 1, pageSize: 1 } })
+    const data = await $fetch<PageDto<unknown>>('/api/inspections', { signal: controller.signal, query: { ...query.value, page: 1, pageSize: 1 } })
     if (version === previewVersion) preview.value = ledgerKind.value === 'rectification' ? data.matchingIssueCount ?? 0 : data.total
   } catch (cause) { if (version === previewVersion && !controller.signal.aborted) previewError.value = errorMessage(cause) }
   finally { if (version === previewVersion) previewBusy.value = false }
@@ -82,7 +82,7 @@ watch(open, async value => {
   kind.value = 'inspection'
   scope.value = props.currentQuery !== undefined && props.kind !== 'point' ? 'current' : 'custom'
   community.value = props.communityId || 'all'
-  campaignType.value = props.typeId || 'all'
+  remediationType.value = props.typeId || 'all'
   photos.value = false
   loading.value = true
   try { await load(); selectRange('month'); if (props.kind === 'point') await listPoints() }
@@ -95,9 +95,9 @@ async function exportLedger() {
   if (props.kind === 'point' && !selectedPoints.value.length) { error.value = '请选择点位'; return }
   busy.value = true
   error.value = ''
-  const name = ledgerKind.value === 'campaign' ? '整治台账' : kind.value === 'inspection' ? '排查台账' : '整改台账'
+  const name = ledgerKind.value === 'remediation' ? '整治台账' : kind.value === 'inspection' ? '排查台账' : '整改台账'
   const route = `${ledgerKind.value}-ledger`
-  const parameters = new URLSearchParams({ ...query.value, scope: scope.value })
+  const parameters = ledgerSearchParams({ ...query.value, scope: scope.value })
   if (props.kind === 'point') for (const point of selectedPoints.value) parameters.append('pointId', point.id)
   if (canIncludePhotos.value) parameters.set('photos', String(photos.value))
   try { await downloadWord(`/api/exports/${route}?${parameters}`, `${name}.docx`); open.value = false }
@@ -136,7 +136,7 @@ onBeforeUnmount(() => { clearTimeout(pointTimer); pointSequence++ })
         <UFormField v-if="currentQuery !== undefined && props.kind !== 'point'" label="导出范围">
           <div class="chip-row"><UButton label="当前筛选" :aria-pressed="scope === 'current'" color="neutral" variant="ghost" class="filter-chip" :disabled="disabled" @click="scope = 'current'" /><UButton label="自定义范围" :aria-pressed="scope === 'custom'" color="neutral" variant="ghost" class="filter-chip" :disabled="disabled" @click="scope = 'custom'" /></div>
         </UFormField>
-        <UFormField v-if="props.kind !== 'campaign'" label="台账类型">
+        <UFormField label="台账类型">
           <div class="chip-row">
             <UButton v-for="option in kindOptions" :key="option.value" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="kind === option.value" :data-testid="`ledger-kind-${option.value}`" :disabled="disabled" @click="kind = option.value">{{ option.label }}</UButton>
           </div>
@@ -160,7 +160,7 @@ onBeforeUnmount(() => { clearTimeout(pointTimer); pointSequence++ })
           <UFormField label="结束日期"><UInput v-model="to" type="date" class="w-full" :min="from || undefined" :disabled="disabled" data-testid="ledger-to" /></UFormField>
         </div>
         <UFormField label="所属社区"><USelect v-model="community" :items="communities" class="w-full" :disabled="disabled" data-testid="ledger-community" /></UFormField>
-        <UFormField v-if="ledgerKind === 'campaign'" label="整治类型"><USelect v-model="campaignType" :items="campaignTypes" class="w-full" :disabled="disabled" data-testid="ledger-campaign-type" /></UFormField>
+        <UFormField v-if="ledgerKind === 'remediation'" label="整治类型"><USelect v-model="remediationType" :items="remediationTypes" class="w-full" :disabled="disabled" data-testid="ledger-remediation-type" /></UFormField>
         </template>
         <p class="text-sm text-muted" data-testid="ledger-summary">{{ summary }}</p>
         <p v-if="props.kind !== 'point'" class="text-sm" aria-live="polite" data-testid="ledger-preview">{{ previewBusy ? '正在核对记录…' : preview === null ? '' : `预计 ${preview} ${ledgerKind === 'rectification' ? '项问题' : '条记录'}` }}</p>

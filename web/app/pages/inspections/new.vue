@@ -5,6 +5,7 @@ import { errorMessage, queryText, todayLocal, parseCoordinates } from '~/utils/f
 interface IssueDraft {
   key: number
   issueTypeId: string
+  matterIds: string[]
   description: string
   requirement: string
   deadline: string
@@ -23,11 +24,14 @@ interface InspectionDraft {
   noticeNumber: string
   photos: PhotoUploadDto[]
   issues: IssueDraft[]
+  source: 'routine' | 'matter' | 'other'
+  matterIds: string[]
+  tagIds: string[]
 }
 
 definePageMeta({ formPage: true })
 useHead({ title: '新增排查 · 街道生态环保' })
-const DRAFT_KEY = 'street-eco.inspection-draft.v3'
+const DRAFT_KEY = 'street-eco.inspection-draft.v4'
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
@@ -43,9 +47,10 @@ let leaveDecision: ((leave: boolean) => void) | undefined
 
 function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
 function emptyDraft(pointId = ''): InspectionDraft {
-  return { pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
+  return { pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [], source: 'routine', matterIds: [], tagIds: [] }
 }
 const draft = reactive<InspectionDraft>(emptyDraft())
+const sourceChoice = computed({ get: () => draft.matterIds.length ? 'matter' : draft.source, set: (value: 'routine' | 'matter' | 'other') => { draft.source = value; if (value !== 'matter') draft.matterIds = [] } })
 const initializing = ref(true)
 const loadError = ref('')
 const saving = ref(false)
@@ -75,6 +80,9 @@ const destructiveAction = ref<'clear' | 'normal' | 'issue'>('clear')
 const issueToRemove = ref<number | null>(null)
 const conflictOpen = ref(false)
 const requestedPoint = ref('')
+const requestedMatter = ref('')
+const sourceOptions = [{ label: '日常巡查', value: 'routine' }, { label: '事项核查', value: 'matter' }, { label: '其他', value: 'other' }]
+watch(() => draft.matterIds.slice(), (ids, before) => { if (ids.length) draft.source = 'matter'; if (ids.length === 1 && !before.length) for (const issue of draft.issues) if (!issue.matterIds.length) issue.matterIds = [...ids] })
 const leaveOpen = ref(false)
 
 const overallPhotosFailed = ref(false)
@@ -116,8 +124,8 @@ function loadLocalDraft() {
     const raw = localStorage.getItem(DRAFT_KEY)
     if (!raw) return
     const envelope: unknown = JSON.parse(raw)
-    if (envelope && typeof envelope === 'object' && 'version' in envelope && envelope.version !== 3) { localStorage.removeItem(DRAFT_KEY); return }
-    if (!envelope || typeof envelope !== 'object' || !('version' in envelope) || envelope.version !== 3 || !('draft' in envelope)
+    if (envelope && typeof envelope === 'object' && 'version' in envelope && envelope.version !== 4) { localStorage.removeItem(DRAFT_KEY); return }
+    if (!envelope || typeof envelope !== 'object' || !('version' in envelope) || envelope.version !== 4 || !('draft' in envelope)
       || !envelope.draft || typeof envelope.draft !== 'object') throw new Error('草稿格式无法读取。')
     const value = envelope.draft as Record<string, unknown>
     const text = (key: string) => typeof value[key] === 'string' ? value[key] as string : ''
@@ -127,9 +135,12 @@ function loadLocalDraft() {
       newPoint: Object.fromEntries(Object.keys(emptyNewPoint()).map(key => [key, value.newPoint && typeof value.newPoint === 'object' && typeof (value.newPoint as Record<string, unknown>)[key] === 'string' ? (value.newPoint as Record<string, unknown>)[key] : ''])),
       pointId: text('pointId'), date: text('date') || today.value, inspector: text('inspector'),
       result: value.result === 'issues' ? 'issues' : 'normal', notes: text('notes'), noticeNumber: text('noticeNumber'),
+      source: value.source === 'matter' ? 'matter' : value.source === 'other' ? 'other' : 'routine',
+      matterIds: Array.isArray(value.matterIds) ? value.matterIds.filter(id => typeof id === 'string').slice(0, 20) : [],
+      tagIds: Array.isArray(value.tagIds) ? value.tagIds.filter(id => typeof id === 'string').slice(0, 20) : [],
       photos: readPhotoList(value.photos),
       issues: issues.filter(issue => issue && typeof issue === 'object').slice(0, 50).map((issue: Record<string, unknown>) => ({
-        key: nextIssueKey++, issueTypeId: typeof issue.issueTypeId === 'string' ? issue.issueTypeId : '', description: typeof issue.description === 'string' ? issue.description : '',
+        key: nextIssueKey++, matterIds: Array.isArray(issue.matterIds) ? issue.matterIds.filter(id => typeof id === 'string').slice(0, 20) : [], issueTypeId: typeof issue.issueTypeId === 'string' ? issue.issueTypeId : '', description: typeof issue.description === 'string' ? issue.description : '',
         requirement: typeof issue.requirement === 'string' ? issue.requirement : '', deadline: typeof issue.deadline === 'string' ? issue.deadline : '',
         responsibleUnit: typeof issue.responsibleUnit === 'string' ? issue.responsibleUnit : '', photos: readPhotoList(issue.photos),
       })),
@@ -147,7 +158,7 @@ function persistDraft() {
   try {
     if (!hasDraft.value) { localStorage.removeItem(DRAFT_KEY); lastSavedAt.value = null; return }
     const savedAt = Date.now()
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 3, savedAt, draft }))
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 4, savedAt, draft }))
     lastSavedAt.value = savedAt
     storageError.value = ''
   } catch {
@@ -221,6 +232,11 @@ async function initialize() {
       if (restored.value && (draft.pointMode === 'temporary' || (draft.pointId && draft.pointId !== fromPoint))) { requestedPoint.value = fromPoint; conflictOpen.value = true }
       else draft.pointId = fromPoint
     }
+    const fromMatter = queryText(route.query.matterId)
+    if (!draftLoaded && fromMatter) {
+      if (restored.value && !draft.matterIds.includes(fromMatter)) { requestedMatter.value = fromMatter; requestedPoint.value = fromPoint; conflictOpen.value = true }
+      else { draft.matterIds = [fromMatter]; draft.source = 'matter' }
+    }
     draftLoaded = true
     await Promise.all([fetchPointOptions(), draft.pointMode === 'regular' ? fetchSelectedPoint(draft.pointId) : Promise.resolve()])
     persistDraft()
@@ -247,7 +263,7 @@ function defaultDeadline() {
 
 function addIssue() {
   if (draft.issues.length >= 50) return
-  draft.issues.push({ key: nextIssueKey++, issueTypeId: '', description: '', requirement: '', deadline: defaultDeadline(), responsibleUnit: selectedCommunity.value, photos: [] })
+  draft.issues.push({ key: nextIssueKey++, issueTypeId: '', matterIds: draft.matterIds.length === 1 ? [...draft.matterIds] : [], description: '', requirement: '', deadline: defaultDeadline(), responsibleUnit: selectedCommunity.value, photos: [] })
 }
 
 function chooseResult(result: InspectionResult) {
@@ -278,6 +294,7 @@ function confirmDestructiveAction() {
 
 async function startRequestedPoint() {
   clearDraft(requestedPoint.value)
+  if (requestedMatter.value) { draft.matterIds = [requestedMatter.value]; draft.source = 'matter' }
   conflictOpen.value = false
   await fetchSelectedPoint(requestedPoint.value)
 }
@@ -300,6 +317,7 @@ function validate(state: InspectionDraft) {
   else if (selectedPoint.value?.disabled) errors.push({ name: 'pointId', message: '该点位已停用，请选择其他点位或先启用。' })
   if (!dateIsValid(state.date)) errors.push({ name: 'date', message: '请选择有效的排查日期。' })
   else if (state.date > today.value) errors.push({ name: 'date', message: '排查日期不能晚于今天。' })
+  if (state.source === 'matter' && !state.matterIds.length) errors.push({ name: 'matterIds', message: '请选择关联事项' })
   if (!state.inspector.trim()) errors.push({ name: 'inspector', message: '请填写排查人。' })
   if (state.result === 'issues') {
     if (!state.issues.length) errors.push({ name: 'result', message: '发现问题时，请至少登记一条问题。' })
@@ -331,10 +349,11 @@ async function saveInspection() {
   const body: InspectionCreateRequest = {
     pointId: draft.pointMode === 'regular' ? draft.pointId : null,
     newPoint: draft.pointMode === 'temporary' ? { name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
+    source: draft.matterIds.length ? 'matter' : draft.source, matterIds: draft.matterIds, tagIds: draft.tagIds,
     notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: draft.photos.map(photo => photo.id),
     issues: draft.result === 'issues' ? draft.issues.map(issue => ({
       issueTypeId: issue.issueTypeId, description: issue.description.trim(), requirement: issue.requirement, deadline: issue.deadline,
-      responsibleUnit: issue.responsibleUnit, photoIds: issue.photos.map(photo => photo.id),
+      matterIds: issue.matterIds, responsibleUnit: issue.responsibleUnit, photoIds: issue.photos.map(photo => photo.id),
     })) : [],
   }
   try {
@@ -407,8 +426,9 @@ onBeforeUnmount(() => {
             </div>
           </section>
           <section class="form-section"><h2>排查信息</h2><div class="field-grid"><UFormField name="date" label="排查日期" required><UInput v-model="draft.date" type="date" :max="today" class="w-full" :disabled="formDisabled" data-testid="inspection-date" /></UFormField><UFormField name="inspector" label="排查人" required><NameTagsInput v-model="draft.inspector" :maxlength="100" class="w-full" :disabled="formDisabled" data-testid="inspection-inspector" /></UFormField><UFormField name="noticeNumber" label="通知单编号" class="field-full"><UInput v-model="draft.noticeNumber" :maxlength="100" class="w-full" :disabled="formDisabled" /></UFormField></div></section>
+          <section class="form-section"><h2>来源与标签</h2><div class="field-grid"><UFormField label="排查来源" class="field-full"><USelect v-model="sourceChoice" :items="sourceOptions" class="w-full" :disabled="formDisabled" /></UFormField><UFormField v-if="draft.source === 'matter' || draft.matterIds.length" label="关联事项" name="matterIds" class="field-full"><MatterPicker v-model="draft.matterIds" :disabled="formDisabled" /></UFormField><UFormField label="标签" class="field-full"><TagPicker v-model="draft.tagIds" :disabled="formDisabled" /></UFormField></div></section>
           <section class="form-section"><h2>排查结果</h2><UFormField name="result"><div class="chip-row"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'normal'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-normal" @click="chooseResult('normal')">正常</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'issues'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-issues" @click="chooseResult('issues')">发现问题</UButton></div></UFormField>
-            <template v-if="draft.result === 'issues'"><div v-for="(issue, index) in draft.issues" :key="issue.key" class="problem-form"><div class="mb-2 flex items-center justify-between"><h3 class="text-sm font-semibold">问题 {{ index + 1 }}</h3><UButton type="button" label="移除" color="error" variant="link" :disabled="formDisabled || uploadsBusy" @click="issueToRemove = issue.key; destructiveAction = 'issue'; destructiveOpen = true" /></div><div class="field-grid"><UFormField :name="`issues.${index}.issueTypeId`" label="问题类型" required class="field-full"><USelect v-model="issue.issueTypeId" :items="issueTypes" placeholder="请选择问题类型" data-testid="inspection-issue-type" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.description`" label="问题描述" required class="field-full"><UTextarea v-model="issue.description" data-testid="inspection-issue-description" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.requirement`" label="整改要求" class="field-full"><UTextarea v-model="issue.requirement" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.deadline`" label="整改期限" class="field-full"><template #label><span class="deadline-label">整改期限<span class="text-error">*</span><span class="text-xs font-normal text-muted">默认排查日后7天</span></span></template><UInput v-model="issue.deadline" type="date" data-testid="inspection-issue-deadline" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.responsibleUnit`" label="责任单位"><NameTagsInput v-model="issue.responsibleUnit" :maxlength="200" class="w-full" :disabled="formDisabled" /></UFormField><UFormField label="问题照片" class="field-full"><PhotoUploader v-model="issue.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="issuePhotosBusy[issue.key] = $event" @failed="issuePhotosFailed[issue.key] = $event" /></UFormField></div></div><UButton type="button" label="添加问题" icon="i-lucide-plus" variant="outline" class="mt-3" :disabled="formDisabled || draft.issues.length >= 50" @click="addIssue" /></template>
+            <template v-if="draft.result === 'issues'"><div v-for="(issue, index) in draft.issues" :key="issue.key" class="problem-form"><div class="mb-2 flex items-center justify-between"><h3 class="text-sm font-semibold">问题 {{ index + 1 }}</h3><UButton type="button" label="移除" color="error" variant="link" :disabled="formDisabled || uploadsBusy" @click="issueToRemove = issue.key; destructiveAction = 'issue'; destructiveOpen = true" /></div><div class="field-grid"><UFormField :name="`issues.${index}.issueTypeId`" label="问题类型" required class="field-full"><USelect v-model="issue.issueTypeId" :items="issueTypes" placeholder="请选择问题类型" data-testid="inspection-issue-type" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.description`" label="问题描述" required class="field-full"><UTextarea v-model="issue.description" data-testid="inspection-issue-description" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.requirement`" label="整改要求" class="field-full"><UTextarea v-model="issue.requirement" :rows="2" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.deadline`" label="整改期限" class="field-full"><template #label><span class="deadline-label">整改期限<span class="text-error">*</span><span class="text-xs font-normal text-muted">默认排查日后7天</span></span></template><UInput v-model="issue.deadline" type="date" data-testid="inspection-issue-deadline" class="w-full" :disabled="formDisabled" /></UFormField><UFormField :name="`issues.${index}.responsibleUnit`" label="责任单位"><NameTagsInput v-model="issue.responsibleUnit" :maxlength="200" class="w-full" :disabled="formDisabled" /></UFormField><UFormField label="关联事项" class="field-full"><MatterPicker v-model="issue.matterIds" :disabled="formDisabled" /></UFormField><UFormField label="问题照片" class="field-full"><PhotoUploader v-model="issue.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="issuePhotosBusy[issue.key] = $event" @failed="issuePhotosFailed[issue.key] = $event" /></UFormField></div></div><UButton type="button" label="添加问题" icon="i-lucide-plus" variant="outline" class="mt-3" :disabled="formDisabled || draft.issues.length >= 50" @click="addIssue" /></template>
           </section>
           <section class="form-section"><h2>现场照片</h2><PhotoUploader v-model="draft.photos" phase="site" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="overallPhotosBusy = $event" @failed="overallPhotosFailed = $event" /></section>
           <section class="form-section"><UFormField name="notes" label="备注"><UTextarea v-model="draft.notes" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField></section>

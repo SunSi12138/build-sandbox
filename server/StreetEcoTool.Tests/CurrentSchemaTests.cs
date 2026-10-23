@@ -19,6 +19,9 @@ public sealed class CurrentSchemaTests
             Assert.Equal(Store.SchemaVersion, V2Environment.Number(store.DatabasePath, "PRAGMA user_version;"));
             Assert.Equal(Store.DatabaseApplicationId, V2Environment.Number(store.DatabasePath, "PRAGMA application_id;"));
             Assert.Equal(7, store.GetCampaignTypes().Length);
+            Assert.Single(store.GetActivityTypes(), type => type.Template == "remediation" && type.BuiltIn);
+            Assert.Equal(0, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('campaigns','campaign_types');"));
+            Assert.Equal(5, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('activities','activity_remediations','matters','tags','attachments');"));
             var point = environment.CreatePoint(store); pointId = point.Id;
             var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
             store.AttachPointPhotos(point.Id, new([photo.Id]));
@@ -77,7 +80,7 @@ public sealed class CurrentSchemaTests
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(3)]
-    public async Task CurrentBackupPreviewIncludesCampaignCountAndFormatOneRemainsAccepted(int count)
+    public async Task CurrentBackupPreviewIncludesRemediationCountAndRestoresUnifiedActivities(int count)
     {
         using var environment = new V2Environment();
         using var store = environment.Open();
@@ -85,7 +88,7 @@ public sealed class CurrentSchemaTests
         for (var i = 0; i < count; i++) store.SaveCampaign(null, new("活动" + i, store.GetCampaignTypes()[0].Id, point.Id, Store.Today, "内容"));
         using var input = File.OpenRead(store.CreateBackupZip());
         var preview = await store.PrepareRestoreAsync(input, CancellationToken.None);
-        Assert.Equal(count, preview.CampaignCount);
+        Assert.Equal(count, preview.RemediationCount);
         Assert.Equal(Store.SchemaVersion, preview.SchemaVersion);
         var result = store.Restore(new(preview.Token, true));
         Assert.True(result.Ok);

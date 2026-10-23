@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   max?: number
   label?: string
+  deferDeleteIds?: string[]
 }>(), { quality: DEFAULT_JPEG_QUALITY, disabled: false, max: 100 })
 
 const emit = defineEmits<{
@@ -43,6 +44,7 @@ const jobs = ref<UploadJob[]>([])
 const notice = ref('')
 const removeOpen = ref(false)
 const removal = ref<Removal | null>(null)
+const deferredRemoval = computed(() => removal.value?.kind === 'uploaded' && !!props.deferDeleteIds?.includes(removal.value.photo.id))
 const deleting = ref(false)
 const deleteError = ref('')
 const previewPhoto = ref<PhotoUploadDto | null>(null)
@@ -189,7 +191,7 @@ async function confirmRemove() {
   deleteError.value = ''
   try {
     if (target.kind === 'uploaded') {
-      await deleteServerPhoto(target.photo)
+      if (!props.deferDeleteIds?.includes(target.photo.id)) await deleteServerPhoto(target.photo)
       updatePhotos(localPhotos.value.filter(value => value.id !== target.photo.id))
     } else {
       // Invalidate FIRST, then wait for the task's final ID, then remove it.
@@ -255,9 +257,9 @@ onBeforeUnmount(() => {
         <UButton type="button" icon="i-lucide-x" color="neutral" variant="ghost" :disabled="disabled || deleting" aria-label="移除未上传照片" @click="askRemove({ kind: 'pending', job })" />
       </div><p v-if="failedCount" class="text-xs text-error">{{ failedCount }} 张未完成，请重试或移除</p>
     </div>
-    <UModal v-model:open="removeOpen" title="删除照片？" description="删除后无法恢复" :dismissible="!deleting" :close="!deleting">
+    <UModal v-model:open="removeOpen" :title="deferredRemoval ? '移除照片？' : '删除照片？'" :description="deferredRemoval ? '保存活动后移除，取消编辑会保留原照片' : '删除后无法恢复'" :dismissible="!deleting" :close="!deleting">
       <template #body><UAlert v-if="deleteError" :description="deleteError" color="error" variant="subtle" /></template>
-      <template #footer><UButton type="button" color="neutral" variant="outline" :disabled="deleting" @click="removeOpen = false">取消</UButton><UButton type="button" color="error" :loading="deleting" @click="confirmRemove">删除</UButton></template>
+      <template #footer><UButton type="button" color="neutral" variant="outline" :disabled="deleting" @click="removeOpen = false">取消</UButton><UButton type="button" color="error" :loading="deleting" @click="confirmRemove">{{ deferredRemoval ? '移除' : '删除' }}</UButton></template>
     </UModal>
     <UModal v-model:open="previewOpen" title="照片预览" :ui="{ content: 'max-w-3xl' }"><template #body><img v-if="previewPhoto" :src="imageUrl(previewPhoto.id, true)" :alt="`${label || phaseLabel(phase)}照片`" class="mx-auto max-h-[70dvh] max-w-full object-contain"></template><template #footer><UButton type="button" icon="i-lucide-chevron-left" color="neutral" variant="outline" aria-label="上一张" :disabled="!previewPhoto || localPhotos.findIndex(p => p.id === previewPhoto?.id) <= 0" @click="previewPhoto = localPhotos[localPhotos.findIndex(p => p.id === previewPhoto?.id) - 1] ?? null" /><UButton type="button" icon="i-lucide-chevron-right" color="neutral" variant="outline" aria-label="下一张" :disabled="!previewPhoto || localPhotos.findIndex(p => p.id === previewPhoto?.id) >= localPhotos.length - 1" @click="previewPhoto = localPhotos[localPhotos.findIndex(p => p.id === previewPhoto?.id) + 1] ?? null" /></template></UModal>
   </div>

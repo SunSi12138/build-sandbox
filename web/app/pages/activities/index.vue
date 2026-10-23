@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import type { ActivityDto, PageDto } from '~/types/api'
-import { errorMessage } from '~/utils/format'
+import { errorMessage, queryText } from '~/utils/format'
 useHead({ title: '活动记录 · 街道生态环保' })
 const route = useRoute()
 const { bootstrap, load: loadAppData } = useAppData()
-const { field, page, setPage, flush } = useQueryFilters()
+const { field, page, setPage, tagIds, flush } = useQueryFilters()
 const q = field('q')
 const communityId = field('communityId', 'all')
 const typeId = field('typeId', 'all')
+const remediationTypeId = field('remediationTypeId', 'all')
 const from = field('from')
 const to = field('to')
 const result = ref<PageDto<ActivityDto> | null>(null)
@@ -16,6 +17,8 @@ const error = ref('')
 const datesOpen = ref(false)
 const exportOpen = ref(false)
 const communities = computed(() => [{ label: '全部社区', value: 'all' }, ...(bootstrap.value?.communities ?? []).map(v => ({ label: v.name, value: v.id }))])
+const isRemediationFilter = computed(() => bootstrap.value?.activityTypes.find(item => item.id === typeId.value)?.template === 'remediation' || queryText(route.query.template) === 'remediation')
+const remediationTypes = computed(() => [{ label: '全部整治类别', value: 'all' }, ...(bootstrap.value?.remediationTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
 const types = computed(() => [{ label: '全部类型', value: 'all' }, ...(bootstrap.value?.activityTypes ?? []).map(v => ({ label: v.name, value: v.id }))])
 let sequence = 0
 let request: AbortController | undefined
@@ -30,6 +33,7 @@ async function refresh() {
     const value = await $fetch<PageDto<ActivityDto>>('/api/activities', { signal: controller.signal, query: {
       q: q.value || undefined, communityId: communityId.value === 'all' ? undefined : communityId.value,
       typeId: typeId.value === 'all' ? undefined : typeId.value,
+      pointId: queryText(route.query.pointId) || undefined, template: queryText(route.query.template) || undefined, remediationTypeId: isRemediationFilter.value && remediationTypeId.value !== 'all' ? remediationTypeId.value : undefined, tagId: tagIds.value, matterId: queryText(route.query.matterId) || undefined,
       from: from.value || undefined, to: to.value || undefined, page: page.value, pageSize: 30
     } })
     if (current === sequence) result.value = value
@@ -51,11 +55,12 @@ async function openExport() { await flush(); exportOpen.value = true }
     <div class="filter-box compact" data-testid="list-filters">
       <div class="filter-search">
         <UInput v-model="q" type="search" placeholder="搜索名称、地点、内容" icon="i-lucide-search" aria-label="搜索活动" class="w-full" />
-        <UButton color="neutral" variant="outline" :aria-expanded="datesOpen" class="filter-date-toggle" @click="datesOpen = !datesOpen">日期</UButton>
+        <UButton color="neutral" variant="outline" :aria-expanded="datesOpen" class="filter-date-toggle" @click="datesOpen = !datesOpen">筛选</UButton>
       </div>
       <div class="filter-field"><label>社区</label><USelect v-model="communityId" :items="communities" class="w-full" aria-label="社区筛选" /></div>
       <div class="filter-field"><label>类型</label><USelect v-model="typeId" :items="types" class="w-full" aria-label="类型筛选" /></div>
-      <div class="filter-dates" :class="{ 'is-open': datesOpen }">
+      <div v-if="isRemediationFilter" class="filter-field"><label>整治类别</label><USelect v-model="remediationTypeId" :items="remediationTypes" class="w-full" aria-label="整治类别筛选" /></div>
+      <div class="filter-dates" :class="{ 'is-open': datesOpen }"><div class="filter-field"><label>标签</label><TagPicker v-model="tagIds" placeholder="按标签筛选" /></div>
         <div class="filter-field"><label>开始日期</label><UInput v-model="from" type="date" aria-label="开始日期" class="w-full" /></div>
         <div class="filter-field"><label>结束日期</label><UInput v-model="to" type="date" aria-label="结束日期" class="w-full" /></div>
       </div>
@@ -70,7 +75,7 @@ async function openExport() { await flush(); exportOpen.value = true }
             <NuxtLink :to="link(record)" class="list-row" data-testid="activity-row">
               <div class="row-body">
                 <div class="row-title"><span class="font-semibold">{{ record.name }}</span></div>
-                <p class="text-xs text-muted">{{ record.communityName || '跨社区' }} · {{ record.typeName }} · {{ record.location || '—' }}</p>
+                <p class="text-xs text-muted">{{ record.communityName || '跨社区' }} · {{ record.remediation ? `${record.typeName} / ${record.remediation.typeName}` : record.typeName }} · {{ record.location || '—' }}</p>
                 <p v-if="record.participantCount !== null" class="text-xs text-muted">参加 {{ record.participantCount }} 人</p>
               </div>
               <div class="shrink-0 text-right text-xs text-muted">{{ record.date }}<UIcon name="i-lucide-chevron-right" class="ml-1" /></div>

@@ -17,6 +17,7 @@ const tabs = [
   { value: 'basic', label: '基本信息' },
   { value: 'template', label: '通知单模板' },
   { value: 'dictionaries', label: '社区与分类' },
+  { value: 'tags', label: '标签管理' },
   { value: 'backup', label: '备份与恢复' }
 ]
 const active = ref<string | number>(tabs.some(t => t.value === route.query.tab) ? String(route.query.tab) : 'basic')
@@ -27,15 +28,15 @@ const defaultTemplate = '经我街道于{日期}对你社区辖区内{点位}开
 const advancedQuality = ref(false)
 const qualityOptions = [{ label: '节省空间', value: '60' }, { label: '标准', value: '75' }, { label: '清晰', value: '90' }, { label: '自定义', value: 'custom' }]
 const qualityPreset = computed({ get: () => [60, 75, 90].includes(Number(form.jpegQuality)) ? String(form.jpegQuality) : 'custom', set: (value: string) => { if (value === 'custom') advancedQuality.value = true; else { form.jpegQuality = Number(value); advancedQuality.value = false } } })
-const dictionaryKind = ref<'communities' | 'point-types' | 'campaign-types' | 'issue-types' | 'activity-types'>('communities')
+const dictionaryKind = ref<'communities' | 'point-types' | 'remediation-types' | 'issue-types' | 'activity-types'>('communities')
 const dictionaryOptions = computed(() => [
   { label: '社区', value: 'communities' }, { label: '点位类型', value: 'point-types' },
-  { label: '问题类型', value: 'issue-types' }, { label: '整治类型', value: 'campaign-types' }, { label: '活动类型', value: 'activity-types' }
+  { label: '问题类型', value: 'issue-types' }, { label: '整治类别', value: 'remediation-types' }, { label: '活动类型', value: 'activity-types' }
 ])
 const dictionaryItems = computed(() => {
   const data = bootstrap.value
   if (!data) return []
-  return ({ communities: data.communities, 'point-types': data.pointTypes, 'issue-types': data.issueTypes, 'campaign-types': data.campaignTypes, 'activity-types': data.activityTypes })[dictionaryKind.value] ?? []
+  return ({ communities: data.communities, 'point-types': data.pointTypes, 'issue-types': data.issueTypes, 'remediation-types': data.remediationTypes, 'activity-types': data.activityTypes })[dictionaryKind.value] ?? []
 })
 const templateHost = ref<HTMLElement | null>(null)
 const templateError = ref('')
@@ -131,6 +132,7 @@ onMounted(() => { void fetchSettings() })
         <UFormField label="分类管理"><USelect v-model="dictionaryKind" :items="dictionaryOptions" class="w-full sm:max-w-xs" aria-label="选择分类组" /></UFormField>
         <SettingsDictionary :key="dictionaryKind" :kind="dictionaryKind" :items="dictionaryItems" @changed="dictionaryChanged" />
       </div>
+      <SettingsTags v-else-if="active === 'tags'" />
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
     </template>
   </div>

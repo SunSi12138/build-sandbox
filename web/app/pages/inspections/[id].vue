@@ -190,6 +190,7 @@ function openEdit() {
   Object.assign(editState, {
     date: detail.value.inspection.date,
     inspector: detail.value.inspection.inspector,
+    source: detail.value.inspection.source,
     noticeNumber: detail.value.inspection.noticeNumber,
     notes: detail.value.inspection.notes,
   })
@@ -383,6 +384,7 @@ watch(() => route.query.issue, revealIssue)
             >逾期 {{ overdueDays(detail.inspection.nearestDeadline) }} 天</StatusBadge
           >
         </div>
+        <RecordRelations kind="inspection" :id="detail.inspection.id" :tags="detail.inspection.tags" :matters="detail.inspection.matters" @changed="load" />
         <section class="panel">
           <div class="panel-head">
             <h2 class="section-title">基本信息</h2>
@@ -439,6 +441,9 @@ watch(() => route.query.issue, revealIssue)
                   >{{ detail.inspection.phone }}</a
                 ><span v-else>—</span>
               </dd>
+            </div>
+            <div>
+              <dt>排查来源</dt><dd>{{ detail.inspection.source === 'matter' ? '事项核查' : detail.inspection.source === 'other' ? '其他' : '日常巡查' }}</dd>
             </div>
             <div>
               <dt>排查日期</dt>
@@ -526,6 +531,7 @@ watch(() => route.query.issue, revealIssue)
                   <dd><NameTags :value="issue.responsibleUnit" /></dd>
                 </div>
               </dl>
+              <RecordRelations kind="issue" :id="issue.id" :matters="issue.matters" @changed="load" />
               <IssuePhotoGroups :photos="issueDetails.get(issue.id)?.photos ?? []" />
               <UCollapsible v-model:open="historyOpen[issue.id]"
                 ><UButton
@@ -634,6 +640,7 @@ watch(() => route.query.issue, revealIssue)
               :maxlength="100"
               class="w-full"
               :disabled="editing" /></UFormField
+          ><UFormField name="source" label="排查来源" class="field-full"><USelect v-model="editState.source" :items="detail?.inspection.matters.length ? [{ label: '事项核查', value: 'matter' }] : [{ label: '日常巡查', value: 'routine' }, { label: '其他', value: 'other' }]" :disabled="editing || !!detail?.inspection.matters.length" class="w-full" /></UFormField
           ><UFormField name="noticeNumber" label="通知单编号" class="field-full"
             ><UInput
               v-model="editState.noticeNumber"
@@ -763,7 +770,7 @@ watch(() => route.query.issue, revealIssue)
       title="删除排查？"
       :description="
         detail?.inspection.pointTemporary
-          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查或整治，该临时点位及其点位照片也将删除。'
+          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查或整治，该临时点位及其没有其他活动、事项或附件时，点位照片也将删除。'
           : '删除后，问题、办理记录和照片无法恢复'
       "
       :dismissible="!deleting"

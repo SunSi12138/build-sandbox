@@ -102,12 +102,12 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            (from, to) = LedgerDates(from, to, "campaigns", "campaign_date", filters is not null);
+            (from, to) = LedgerDates(from, to, "activities", "activity_date", filters is not null);
             CheckDateRange(from, to);
             var community = string.IsNullOrEmpty(communityId) ? null : RequireCommunity(Text(communityId, "所属社区", 100, true));
             var selectedPoints = ExportPoints(pointIds);
             var campaigns = GetLedgerCampaigns(from, to, community?.Id, typeId, selectedPoints.Select(p => p.Id).ToArray(), filters);
-            var photos = includePhotos ? ResolveWordPhotos(campaigns.SelectMany(campaign => ReadPhotos(campaignId: campaign.Id))) : [];
+            var photos = includePhotos ? ResolveWordPhotos(campaigns.SelectMany(campaign => ReadPhotos(activityId: campaign.Id))) : [];
             var name = community?.Name ?? "全部社区";
             var ledger = new WordCampaignLedger(from, to, name, campaigns, photos, includePhotos, Today, selectedPoints.Length == 0 ? null : string.Join("、", selectedPoints.Select(p => p.Name)));
             var settings = GetSettings();
@@ -120,6 +120,7 @@ public sealed partial class Store
         lock (_gate)
         {
             var detail = GetActivityDetail(id);
+            if (detail.Activity.Template == "remediation") return ExportCampaignWord(id);
             var photos = ResolveWordPhotos(detail.Photos);
             var settings = GetSettings();
             return WriteWordTemporary(WordExporter.FileName("活动开展情况记录单", detail.Activity.Name, detail.Activity.Date),
@@ -210,7 +211,6 @@ public sealed partial class Store
         RequestDelegate record = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), false));
         RequestDelegate notice = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), true));
         RequestDelegate rectification = async context => await SendWordAsync(context, ExportRectificationWord(Api.Id(context)));
-        RequestDelegate campaign = async context => await SendWordAsync(context, ExportCampaignWord(Api.Id(context)));
         RequestDelegate activity = async context => await SendWordAsync(context, ExportActivityWord(Api.Id(context)));
         RequestDelegate activityLedger = async context => await SendWordAsync(context, ExportActivityLedgerWord(
             context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(),
@@ -220,16 +220,15 @@ public sealed partial class Store
         RequestDelegate inspectionLedger = async context => await SendWordAsync(context, ExportInspectionLedgerWord(
             context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), ExportPointIds(context), CurrentExport(context) ? Api.InspectionFilters(context) : null));
         RequestDelegate campaignLedger = async context => await SendWordAsync(context, ExportCampaignLedgerWord(
-            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), context.Request.Query["typeId"].ToString(), WordPhotoOption(context), ExportPointIds(context), CurrentExport(context) ? Api.CampaignFilters(context) : null));
+            context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), context.Request.Query["remediationTypeId"].ToString(), WordPhotoOption(context), ExportPointIds(context), CurrentExport(context) ? Api.CampaignFilters(context) : null));
         app.MapGet("/api/inspections/{id}/export/record", record);
         app.MapGet("/api/inspections/{id}/export/notice", notice);
         app.MapGet("/api/inspections/{id}/export/rectification", rectification);
-        app.MapGet("/api/campaigns/{id}/export/record", campaign);
         app.MapGet("/api/activities/{id}/export/record", activity);
         app.MapGet("/api/exports/activity-ledger", activityLedger);
         app.MapGet("/api/exports/rectification-ledger", ledger);
         app.MapGet("/api/exports/inspection-ledger", inspectionLedger);
-        app.MapGet("/api/exports/campaign-ledger", campaignLedger);
+        app.MapGet("/api/exports/remediation-ledger", campaignLedger);
     }
 
     private static bool CurrentExport(HttpContext context) => context.Request.Query["scope"].ToString() switch

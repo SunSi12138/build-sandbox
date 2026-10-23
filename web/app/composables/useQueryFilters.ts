@@ -6,7 +6,7 @@ export function useQueryFilters() {
   const pending = reactive<Record<string, string>>({})
   let updating = 0
   let timer: ReturnType<typeof setTimeout> | undefined
-  function replace(values: Record<string, string | undefined>, resetPage = true) {
+  function replace(values: Record<string, string | string[] | undefined>, resetPage = true) {
     clearTimeout(timer)
     const query = { ...route.query, ...Object.fromEntries(Object.entries(pending).map(([key, value]) => [key, value || undefined])), ...values }
     if (resetPage) query.page = undefined
@@ -31,6 +31,7 @@ export function useQueryFilters() {
   onBeforeRouteUpdate(() => { if (!updating) { clearTimeout(timer); for (const key of Object.keys(pending)) delete pending[key] } })
   watch(() => route.path, () => { clearTimeout(timer); for (const key of Object.keys(pending)) delete pending[key] })
   onBeforeUnmount(() => clearTimeout(timer))
+  const tagIds = computed({ get: () => { const value = route.query.tagId; return (Array.isArray(value) ? value : value ? [value] : []).filter((id): id is string => typeof id === 'string' && !!id) }, set: (value: string[]) => { void replace({ tagId: value.length ? value : undefined }) } })
   const page = computed(() => Math.max(1, Number.parseInt(queryText(route.query.page) || '1', 10) || 1))
-  return { field, set, page, flush: () => Object.keys(pending).length ? replace({}) : Promise.resolve(), setPage: (value: number) => set('page', value === 1 ? '' : String(value), false) }
+  return { field, set, page, tagIds, flush: () => Object.keys(pending).length ? replace({}) : Promise.resolve(), setPage: (value: number) => set('page', value === 1 ? '' : String(value), false) }
 }

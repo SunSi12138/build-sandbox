@@ -527,7 +527,7 @@ public sealed class WordExporterTests
         using var files = new TemporaryFiles();
         var campaign = Campaign();
         WordPhoto[] photos = [files.Photo('a', "before", 1600, 900), files.Photo('b', "after", 900, 1600), files.Photo('c', "process", 800, 600)];
-        photos = photos.Select(photo => photo with { Photo = photo.Photo with { CampaignId = campaign.Id, HasThumb = true } }).ToArray();
+        photos = photos.Select(photo => photo with { Photo = photo.Photo with { ActivityId = campaign.Id, HasThumb = true } }).ToArray();
         using var package = new Package(Render(stream => WordExporter.WriteCampaignLedger(stream,
             new("2026-10-01", "2026-10-31", "全部社区", [campaign], photos, true, "2026-10-12"), Settings())));
         ValidatePackage(package);
@@ -575,7 +575,7 @@ public sealed class WordExporterTests
         using var files = new TemporaryFiles();
         var campaign = Campaign() with { Outcome = outcome ? "成效原文" : "", ParticipantCount = quantities ? 0 : null, VehicleCount = null, GarbageTons = null, AreaSqm = null, Notes = "现场设置垃圾收集点。" };
         var photo = files.Photo('a', "before", 800, 600);
-        photo = photo with { Photo = photo.Photo with { CampaignId = campaign.Id } };
+        photo = photo with { Photo = photo.Photo with { ActivityId = campaign.Id } };
         using var package = new Package(Render(stream => WordExporter.WriteCampaignRecord(stream, new(campaign, []), Settings(), photos ? [photo] : [])));
         ValidatePackage(package);
         var document = package.Xml("word/document.xml");
