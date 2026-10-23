@@ -10,6 +10,7 @@ public sealed record WordIssueHistory(string IssueId, IssueActionDto[] Actions);
 public sealed record WordLedger(string From, string To, string CommunityName, IssueDto[] Issues, WordPhoto[] Photos, bool IncludePhotos, WordIssueHistory[]? History = null, string? PreparedDate = null, string? PointScope = null);
 public sealed record WordInspectionLedger(string From, string To, string CommunityName, InspectionDto[] Inspections, string PreparedDate, string? PointScope = null);
 public sealed record WordCampaignLedger(string From, string To, string CommunityName, CampaignDto[] Campaigns, WordPhoto[] Photos, bool IncludePhotos, string PreparedDate, string? PointScope = null);
+public sealed record WordActivityLedger(string From, string To, string CommunityName, ActivityDto[] Activities, WordPhoto[] Photos, bool IncludePhotos, string PreparedDate);
 
 /// <summary>Writes an OPC/WordprocessingML package with BCL APIs only. No image or Office SDK is loaded.</summary>
 public static class WordExporter
@@ -105,7 +106,7 @@ public static class WordExporter
             document.Paragraph($"（{ChineseNumber(index + 1)}）问题 {index + 1}", "Heading2");
             var values = new List<string[]>
             {
-                new[] { "问题描述", issue.Description }, new[] { "整改要求", issue.Requirement },
+                new[] { "问题类型", issue.IssueTypeName }, new[] { "问题描述", issue.Description }, new[] { "整改要求", issue.Requirement },
                 new[] { "整改期限", issue.Deadline }, new[] { "责任单位", issue.ResponsibleUnit },
                 new[] { "整改反馈", WithDate(issue.FeedbackDate, issue.FeedbackNotes) },
                 new[] { "复查结论", WithDate(issue.ReviewDate, issue.ReviewConclusion) }
@@ -168,7 +169,7 @@ public static class WordExporter
         var histories = (ledger.History ?? []).ToDictionary(item => item.IssueId, item => item.Actions, StringComparer.Ordinal);
         var rows = ledger.Issues.Select((issue, index) => new[]
         {
-            Number(index + 1), issue.InspectionDate, issue.PointName, issue.CommunityName, issue.Description, issue.Deadline, Status(issue.Status),
+            Number(index + 1), issue.InspectionDate, issue.PointName, issue.CommunityName, issue.IssueTypeName, issue.Description, issue.Deadline, Status(issue.Status),
             HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], true, WithDate(issue.FeedbackDate, issue.FeedbackNotes)),
             HistoryText(histories.GetValueOrDefault(issue.Id) ?? [], false, WithDate(issue.ReviewDate, issue.ReviewConclusion))
         });
@@ -176,8 +177,8 @@ public static class WordExporter
         var feedback = ledger.Issues.Count(issue => issue.Status == "feedback");
         var pending = ledger.Issues.Count(issue => issue.Status == "pending");
         var overdue = ledger.Issues.Count(issue => issue.Status != "closed" && issue.Overdue);
-        document.Table(["序号", "排查日期", "点位名称", "所属社区", "问题描述", "整改期限", "状态", "反馈情况", "复查结论"], rows,
-            [5, 9, 13, 9, 22, 9, 8, 13, 12], centeredColumns: [0, 1, 5, 6], repeatColumns: [1, 2, 3],
+        document.Table(["序号", "排查日期", "点位名称", "所属社区", "问题类型", "问题描述", "整改期限", "状态", "反馈情况", "复查结论"], rows,
+            [4, 9, 12, 9, 9, 19, 9, 7, 11, 11], centeredColumns: [0, 1, 6, 7], repeatColumns: [1, 2, 3],
             summary: $"共 {ledger.Issues.Length} 条，已闭环 {closed}，待复查 {feedback}，待整改 {pending}，其中逾期 {overdue}");
         if (!ledger.IncludePhotos) return;
         var attachments = ledger.Issues.Select((issue, index) => (Issue: issue, Index: index, Photos: IssuePhotos(ledger.Photos, issue)))
@@ -231,6 +232,66 @@ public static class WordExporter
         {
             document.Paragraph($"（{ChineseNumber(item.Index + 1)}）{item.Campaign.Name}", "Heading2");
             WriteCampaignPhotoTables(document, item.Photos, item.Campaign.Name + " · " + item.Campaign.Date);
+        }
+    }
+
+    public static void WriteActivityRecord(Stream destination, ActivityDetailDto detail, SettingsDto settings, WordPhoto[] photos)
+    {
+        using var document = new Document(destination, false, "活动开展情况记录单", settings.StreetName);
+        var activity = detail.Activity;
+        document.Paragraph("生态环保活动开展情况记录单", "Title");
+        var information = new List<string[]>
+        {
+            ["活动名称", activity.Name], ["活动类型", activity.TypeName], ["开展日期", DateRange(activity.Date, activity.EndDate)],
+            ["活动地点", activity.Location], ["组织单位", activity.Organizer], ["所属社区", activity.CommunityName],
+            ["参加单位及人员", activity.Participants]
+        };
+        if (activity.ParticipantCount is not null) information.Add(["参加人数", Number(activity.ParticipantCount) + "人"]);
+        document.Table(null, information, [24, 76], labelColumn: true);
+        document.Section("开展情况");
+        document.Paragraph(activity.Content);
+        if (!string.IsNullOrWhiteSpace(activity.Outcome))
+        {
+            document.Section("活动成效");
+            document.Paragraph(activity.Outcome);
+        }
+        if (!string.IsNullOrWhiteSpace(activity.Notes))
+        {
+            document.Section("备注");
+            document.Paragraph(activity.Notes);
+        }
+        var selected = SortPhotos(photos.Where(photo => photo.Photo.ActivityId == activity.Id));
+        if (selected.Length > 0)
+        {
+            document.Section("活动照片");
+            WriteCampaignPhotoTables(document, selected, activity.Name + " · " + activity.Date);
+        }
+    }
+
+    public static void WriteActivityLedger(Stream destination, WordActivityLedger ledger, SettingsDto settings)
+    {
+        using var document = new Document(destination, true, "活动台账", settings.StreetName);
+        document.Paragraph("生态环保活动开展情况台账", "Title");
+        WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate, null);
+        var rows = ledger.Activities.Select((activity, index) => new[]
+        {
+            Number(index + 1), DateRange(activity.Date, activity.EndDate), activity.Name, activity.TypeName,
+            activity.CommunityName, activity.Location, activity.Organizer, Number(activity.ParticipantCount),
+            activity.Content, activity.Outcome
+        });
+        document.Table(["序号", "开展日期", "活动名称", "活动类型", "所属社区", "地点", "组织单位", "参加人数", "开展情况", "活动成效"],
+            rows, [5, 10, 14, 10, 9, 10, 10, 8, 14, 10], centeredColumns: [0, 1], rightAlignedColumns: [7],
+            repeatColumns: [1, 2, 4], summary: $"共 {ledger.Activities.Length} 次活动，累计参加 {ledger.Activities.Sum(item => (long)(item.ParticipantCount ?? 0))} 人");
+        if (!ledger.IncludePhotos) return;
+        var withPhotos = ledger.Activities.Select((activity, index) => (Activity: activity, Index: index,
+            Photos: SortPhotos(ledger.Photos.Where(photo => photo.Photo.ActivityId == activity.Id))))
+            .Where(item => item.Photos.Length > 0).ToArray();
+        if (withPhotos.Length == 0) return;
+        document.Paragraph("附：照片", "Heading1", pageBreak: true);
+        foreach (var item in withPhotos)
+        {
+            document.Paragraph($"（{ChineseNumber(item.Index + 1)}）{item.Activity.Name}", "Heading2");
+            WriteCampaignPhotoTables(document, item.Photos, item.Activity.Name + " · " + item.Activity.Date);
         }
     }
 
@@ -324,9 +385,9 @@ public static class WordExporter
         return runes.Length <= 60 ? text : string.Concat(runes.Take(60).Select(rune => rune.ToString())) + "…";
     }
     private static void WriteIssues(Document document, IssueDto[] issues) => document.Table(
-        ["序号", "问题描述", "整改要求", "整改期限", "责任单位"],
-        issues.Select((issue, index) => new[] { Number(index + 1), issue.Description, issue.Requirement, issue.Deadline, issue.ResponsibleUnit }),
-        [7, 31, 27, 16, 19], centeredColumns: [0, 3]);
+        ["序号", "问题类型", "问题描述", "整改要求", "整改期限", "责任单位"],
+        issues.Select((issue, index) => new[] { Number(index + 1), issue.IssueTypeName, issue.Description, issue.Requirement, issue.Deadline, issue.ResponsibleUnit }),
+        [6, 15, 28, 23, 13, 15], centeredColumns: [0, 4]);
 
     private static WordPhoto[] SortPhotos(IEnumerable<WordPhoto> photos) => photos.OrderBy(photo => photo.Photo.UploadedAt, StringComparer.Ordinal)
         .ThenBy(photo => photo.Photo.Id, StringComparer.Ordinal).ToArray();
