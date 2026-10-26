@@ -79,7 +79,6 @@ async function remove() {
     <template #body><UForm :id="`dictionary-${kind}-form`" :state="form" :validate="validate" class="space-y-3" @submit="save">
       <UAlert v-if="error" :description="error" color="error" variant="subtle" />
       <UFormField :label="`${label}名称`" name="name" required><UInput v-model="form.name" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
-      <details v-if="kind === 'communities'"><summary class="cursor-pointer text-sm text-muted">通知单抬头（可选）</summary><UFormField label="通知单抬头" name="title" class="mt-3"><UInput v-model="form.title" placeholder="留空使用网格名称" :maxlength="150" class="w-full" :disabled="saving" /></UFormField></details>
     </UForm></template>
     <template #footer><UButton color="neutral" variant="outline" :disabled="saving" @click="editOpen = false">取消</UButton><UButton :form="`dictionary-${kind}-form`" type="submit" :loading="saving">保存</UButton></template>
   </UModal>

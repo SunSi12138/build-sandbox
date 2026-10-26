@@ -44,15 +44,15 @@ public sealed partial class Store
             }
             else if (query.Kind == "uses")
             {
-                title = "经营使用台账"; headers = ["编号", "场所", "名称", "用途", "联系人", "电话", "开始日期", "结束日期", "状态"];
+                title = "经营使用台账"; headers = ["编号", "场所", "位置", "名称", "用途", "联系人", "电话", "开始日期", "结束日期", "状态"];
                 foreach (var record in ListCommunityRecords("use", includeArchived: true))
                 {
                     var point = GetPointInternal(record.ParentId);
                     if (query.CommunityId.Length > 0 && point.CommunityId != query.CommunityId || !Match(record.Name + point.Name)) continue;
                     var state = JsonText(record.Data, "state");
                     if (query.Status.Length > 0 && query.Status != state) continue;
-                    var purposes = record.Data.TryGetProperty("purposes", out var p) ? string.Join("、", p.EnumerateArray().Select(x => x.GetString())) : "";
-                    rows.Add([record.Id, point.Name, record.Name, purposes, JsonText(record.Data,"contact"),JsonText(record.Data,"phone"),JsonText(record.Data,"startDate"),JsonText(record.Data,"endDate"),state]);
+                    var purposes = PurposeName(record.Data);
+                    rows.Add([record.Id, point.Name, JsonText(record.Data,"position"), record.Name, purposes, JsonText(record.Data,"contact"),JsonText(record.Data,"phone"),JsonText(record.Data,"startDate"),JsonText(record.Data,"endDate"),state]);
                 }
             }
             else if (query.Kind == "inspections")

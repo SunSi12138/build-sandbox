@@ -37,6 +37,8 @@ button:disabled { cursor:default; }
 .app-shell { min-height:100dvh; }
 .desktop-sidebar { display:none; }
 .workspace-content { max-width:1200px; margin:0 auto; padding:0 12px calc(68px + env(safe-area-inset-bottom)); outline:none; }
+.map-page .workspace-content { max-width:none!important;margin:0!important;padding:0!important;height:calc(100dvh - 56px - env(safe-area-inset-bottom));overflow:hidden; }
+@media(min-width:768px){.map-page .workspace-content{height:100dvh}}
 .page-stack { display:flex; flex-direction:column; gap:12px; min-width:0; }
 .page-header { position:sticky; top:0; z-index:30; display:flex; align-items:center; justify-content:space-between; gap:8px; height:48px; min-height:48px; margin:0 -12px; padding:0 12px; background:var(--surface); border-bottom:1px solid var(--border); }
 .page-title-wrap { display:flex; align-items:center; min-width:0; gap:4px; }

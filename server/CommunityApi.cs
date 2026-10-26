@@ -9,6 +9,9 @@ public static class CommunityApi
         store.MapHandoffApi(app);
         store.MapArchiveApi(app);
         store.MapCacheImportApi(app);
+        store.MapTileUpdateApi(app);
+        RequestDelegate dossier = async c => await Api.Write(c, store.CreatePlaceDossier(await Api.Read(c, CommunityJsonContext.Default.PlaceDossierWrite)), AppJsonContext.Default.PointDto, 201);
+        app.MapPost("/api/place-dossiers", dossier);
         store.MapStatisticsApi(app);
         RequestDelegate map = context => Api.Write(context, store.GetMapState(), CommunityJsonContext.Default.MapStateDto);
         app.MapGet("/api/map", map);
@@ -29,9 +32,9 @@ public static class CommunityApi
         RequestDelegate tile = async context =>
         {
             if (!int.TryParse(context.Request.RouteValues["z"]?.ToString(), out var z) || !int.TryParse(context.Request.RouteValues["x"]?.ToString(), out var x) || !int.TryParse(context.Request.RouteValues["y"]?.ToString(), out var y)) throw new ApiException(400, "地图编号不正确。");
-            var path = store.FindTile((string)context.Request.RouteValues["layer"]!, z, x, y);
+            var path = await store.ResolveTile((string)context.Request.RouteValues["layer"]!, z, x, y, context.RequestAborted);
             if (path is null) { context.Response.StatusCode = 404; return; }
-            context.Response.Headers.CacheControl = "public,max-age=86400";
+            context.Response.Headers.CacheControl = "no-cache";
             context.Response.ContentType = Path.GetExtension(path) switch { ".jpg" => "image/jpeg", ".webp" => "image/webp", _ => "image/png" };
             await context.Response.SendFileAsync(path, context.RequestAborted);
         };

@@ -48,7 +48,7 @@ public sealed class CommunityReportingTests
     {
         using var env = new V2Environment(); using var store = env.Open(); var point = env.CreatePoint(store);
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
-        store.SaveCommunityRecord("use", null, new(point.Id, "便民商店", Data($$"""{"purposes":["商店"],"state":"使用中","photoIds":["{{photo.Id}}"]}""")));
+        store.SaveCommunityRecord("use", null, new(point.Id, "便民商店", Data($$"""{"position":"一楼东侧","purposeId":"purpose-shop","state":"使用中","photoIds":["{{photo.Id}}"]}""")));
         var place = store.ExportPlaceWord(point.Id);
         using (var zip = ZipFile.OpenRead(place.FilePath))
         {

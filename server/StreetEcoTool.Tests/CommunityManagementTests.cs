@@ -27,7 +27,7 @@ public sealed class CommunityManagementTests
     {
         using var environment = new V2Environment(); using var store = environment.Open(); var source = environment.CreatePoint(store);
         var target = store.SavePoint(null, new("保留场所", source.CommunityId, source.TypeId, "新地址"));
-        var use = store.SaveCommunityRecord("use", null, new(source.Id, "老商店", Data("""{"purposes":["商店"],"state":"使用中","photoIds":[]}""")));
+        var use = store.SaveCommunityRecord("use", null, new(source.Id, "老商店", Data("""{"position":"一楼东侧","purposeId":"purpose-shop","state":"使用中","photoIds":[]}""")));
         var inspection = store.CreateInspection(new(source.Id, Store.Today, "张三", "normal", UseId: use.Id));
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point"); store.AttachPointPhotos(source.Id, new([photo.Id]));
         var type = store.ListCommunityRecords("inspection-type")[0].Id;

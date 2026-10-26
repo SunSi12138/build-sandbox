@@ -166,8 +166,7 @@ public sealed partial class Store
         lock (_gate)
         {
             var detail = GetPointDetail(id);
-            var units = ListCommunityRecords("unit", id, true);
-            var uses = ListCommunityRecords("use", id, true).Select(x => new WordUseRecord(x, units.FirstOrDefault(u => u.Id == JsonText(x.Data, "unitId"))?.Name ?? "整个场所", ResolveWordPhotos(GetRecordPhotos(x.Id)))).ToArray();
+            var uses = ListCommunityRecords("use", id, true).Select(x => new WordUseRecord(x, JsonText(x.Data, "position"), ResolveWordPhotos(GetRecordPhotos(x.Id)), PurposeName(x.Data))).ToArray();
             var photos = ResolveWordPhotos(detail.Photos ?? []);
             return WriteWordTemporary(WordExporter.FileName("场所档案", detail.Point.Name, Today), stream => WordExporter.WritePlaceRecord(stream, detail.Point, uses, photos, GetSettings()));
         }
@@ -206,7 +205,7 @@ public sealed partial class Store
         RequestDelegate place = async context => await SendWordAsync(context, ExportPlaceWord(Api.Id(context)));
         app.MapGet("/api/points/{id}/export/record", place);
         RequestDelegate record = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), false));
-        RequestDelegate notice = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), true));
+
         RequestDelegate rectification = async context => await SendWordAsync(context, ExportRectificationWord(Api.Id(context)));
         RequestDelegate campaign = async context => await SendWordAsync(context, ExportCampaignWord(Api.Id(context)));
         RequestDelegate ledger = async context => await SendWordAsync(context, ExportLedgerWord(
@@ -216,7 +215,7 @@ public sealed partial class Store
         RequestDelegate campaignLedger = async context => await SendWordAsync(context, ExportCampaignLedgerWord(
             context.Request.Query["from"].ToString(), context.Request.Query["to"].ToString(), context.Request.Query["communityId"].ToString(), context.Request.Query["typeId"].ToString(), WordPhotoOption(context), ExportPointIds(context)));
         app.MapGet("/api/inspections/{id}/export/record", record);
-        app.MapGet("/api/inspections/{id}/export/notice", notice);
+
         app.MapGet("/api/inspections/{id}/export/rectification", rectification);
         app.MapGet("/api/campaigns/{id}/export/record", campaign);
         app.MapGet("/api/exports/rectification-ledger", ledger);

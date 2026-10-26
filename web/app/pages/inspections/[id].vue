@@ -94,16 +94,6 @@ const exportItems = computed(() => [
       void exportRecord('record')
     },
   },
-  ...(detail.value?.issues.some(issue => !issue.voided)
-    ? [
-        {
-          label: '导出整改通知单',
-          onSelect: () => {
-            void exportRecord('notice')
-          },
-        },
-      ]
-    : []),
   ...(allClosed.value
     ? [
         {
@@ -311,13 +301,6 @@ watch(() => route.query.issue, revealIssue)
             variant="outline"
             data-testid="export-record"
           /><UButton
-            v-if="detail.issues.length"
-            @click="exportRecord('notice')"
-            label="导出整改通知单"
-            color="neutral"
-            variant="outline"
-            data-testid="export-notice"
-          /><UButton
             v-if="allClosed"
             @click="exportRecord('rectification')"
             label="导出整改记录单"
@@ -425,10 +408,7 @@ watch(() => route.query.issue, revealIssue)
               <dt>检查人</dt>
               <dd><NameTags :value="detail.inspection.inspector" /></dd>
             </div>
-            <div>
-              <dt>通知单编号</dt>
-              <dd>{{ detail.inspection.noticeNumber || '—' }}</dd>
-            </div>
+
           </dl>
         </section>
         <section class="panel">
@@ -611,12 +591,6 @@ watch(() => route.query.issue, revealIssue)
           ><UFormField name="inspector" label="检查人" required
             ><NameTagsInput
               v-model="editState.inspector"
-              :maxlength="100"
-              class="w-full"
-              :disabled="editing" /></UFormField
-          ><UFormField name="noticeNumber" label="通知单编号" class="field-full"
-            ><UInput
-              v-model="editState.noticeNumber"
               :maxlength="100"
               class="w-full"
               :disabled="editing" /></UFormField

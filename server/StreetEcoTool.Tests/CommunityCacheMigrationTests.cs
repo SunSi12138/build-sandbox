@@ -18,7 +18,7 @@ public sealed class CommunityCacheMigrationTests
         var target = store.FindTile(job.LayerId!, 2, 1, 2); Assert.NotNull(target); Assert.Equal(bytes, File.ReadAllBytes(target!));
         Assert.True(File.Exists(Path.Combine(directory, "1.jpg")));
         var layer = store.GetMapLayers().Single(x => x.Id == job.LayerId);
-        store.SaveMapLayer(layer with { IsDefault = true }); Assert.False(store.GetMapLayers().Single(x => x.Id == "jlyh").Enabled);
+        store.SaveMapLayer(layer with { IsDefault = true }); Assert.True(store.GetMapLayers().Single(x => x.Id == "jlyh").Enabled);
     }
 
     [Fact]

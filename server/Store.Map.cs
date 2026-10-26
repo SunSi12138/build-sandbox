@@ -9,10 +9,10 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order FROM map_layers ORDER BY sort_order,id;");
+            using var command = Command("SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,source_mode,cache_version FROM map_layers ORDER BY sort_order,id;");
             using var rows = command.ExecuteReader();
             var items = new List<MapLayerDto>();
-            while (rows.Read()) items.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9)));
+            while (rows.Read()) items.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9), rows.GetString(10), rows.GetString(11), rows.GetString(12), rows.GetString(13), rows.GetInt32(14)));
             return [.. items];
         }
     }
@@ -21,7 +21,8 @@ public sealed partial class Store
     {
         if (!Regex.IsMatch(request.Id, "^[a-zA-Z0-9_-]{1,60}$") || !Regex.IsMatch(request.Folder, "^[a-zA-Z0-9_-]{1,60}$")) throw new ApiException(400, "图层目录只能包含英文字母、数字、短横线和下划线。");
         if (request.Scheme is not ("xyz" or "tms") || request.MinZoom < 0 || request.MaxZoom > 22 || request.MaxZoom < request.MinZoom || !double.IsFinite(request.Opacity) || request.Opacity < 0 || request.Opacity > 1) throw new ApiException(400, "图层参数不正确。");
-        var value = request with { Name = Text(request.Name, "图层名称", 100, true), Enabled = request.Enabled || request.IsDefault };
+        ValidateTileTemplate(request);
+        var value = request with { Name = Text(request.Name, "图层名称", 100, true) };
         lock (_gate)
         {
             PrepareWrite();
@@ -29,15 +30,18 @@ public sealed partial class Store
             if (value.IsDefault)
             {
                 using var current = Command("SELECT id FROM map_layers WHERE is_default=1 LIMIT 1;", transaction);
-                var changed = (current.ExecuteScalar() as string) != value.Id;
-                using var reset = Command(changed ? "UPDATE map_layers SET is_default=0,enabled=0;" : "UPDATE map_layers SET is_default=0;", transaction); reset.ExecuteNonQuery();
+
+                using var reset = Command("UPDATE map_layers SET is_default=0;", transaction); reset.ExecuteNonQuery();
             }
             using (var command = Command("""
-                INSERT INTO map_layers VALUES($id,$name,$folder,$scheme,$enabled,$default,$opacity,$min,$max,$order)
+                INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,source_mode)
+                VALUES($id,$name,$folder,$scheme,$enabled,$default,$opacity,$min,$max,$order,$url,$key,$subdomains,$mode)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,folder=excluded.folder,scheme=excluded.scheme,enabled=excluded.enabled,
-                  is_default=excluded.is_default,opacity=excluded.opacity,min_zoom=excluded.min_zoom,max_zoom=excluded.max_zoom,sort_order=excluded.sort_order;
+                  is_default=excluded.is_default,opacity=excluded.opacity,min_zoom=excluded.min_zoom,max_zoom=excluded.max_zoom,sort_order=excluded.sort_order,
+                  url_template=excluded.url_template,api_key=excluded.api_key,subdomains=excluded.subdomains,source_mode=excluded.source_mode;
                 """, transaction, ("$id", value.Id), ("$name", value.Name), ("$folder", value.Folder), ("$scheme", value.Scheme),
-                ("$enabled", value.Enabled ? 1 : 0), ("$default", value.IsDefault ? 1 : 0), ("$opacity", value.Opacity), ("$min", value.MinZoom), ("$max", value.MaxZoom), ("$order", value.SortOrder))) command.ExecuteNonQuery();
+                ("$enabled", value.Enabled ? 1 : 0), ("$default", value.IsDefault ? 1 : 0), ("$opacity", value.Opacity), ("$min", value.MinZoom), ("$max", value.MaxZoom), ("$order", value.SortOrder),
+                ("$url", value.UrlTemplate), ("$key", value.ApiKey), ("$subdomains", value.Subdomains), ("$mode", value.SourceMode))) command.ExecuteNonQuery();
             transaction.Commit(); return value;
         }
     }
@@ -62,7 +66,18 @@ public sealed partial class Store
             using (var command = Command("SELECT c.id,c.name,s.shape,s.revision FROM communities c JOIN map_shapes s ON s.kind='grid' AND s.record_id=c.id;"))
             using (var rows = command.ExecuteReader())
                 while (rows.Read()) features.Add(new(rows.GetString(0), "grid", rows.GetString(1), rows.GetString(0), JsonSerializer.Deserialize(rows.GetString(2), CommunityJsonContext.Default.GeoShape)!, rows.GetInt32(3)));
-            return new(GetMapLayers(), [.. features]);
+
+            var styles = ListCommunityRecords("point-style");
+            var uses = ListCommunityRecords("use").Where(x => JsonText(x.Data, "state") != "已结束").GroupBy(x => x.ParentId).ToDictionary(x => x.Key, x => x.ToArray());
+            return new(GetMapLayers(), features.Select(f =>
+            {
+                if (f.Kind == "grid") return f with { Icon = "🗺️" };
+                var point = GetPointInternal(f.Id);
+                var ids = uses.GetValueOrDefault(f.Id, []).Select(x => JsonText(x.Data, "purposeId")).Where(x => x.Length > 0).Distinct().ToArray();
+                var icon = styles.FirstOrDefault(x => x.ParentId == point.TypeId) is { } style ? JsonText(style.Data, "icon") : "";
+                if (icon.Length == 0) icon = point.TypeName.Contains("地", StringComparison.Ordinal) ? "🏞️" : "🏢";
+                return f with { TypeId = point.TypeId, Icon = icon, PurposeIds = ids };
+            }).ToArray());
         }
     }
 
@@ -70,7 +85,7 @@ public sealed partial class Store
     {
         if (kind is not ("point" or "grid")) throw new ApiException(400, "只能标记场所或网格。");
         ValidateShape(request.Shape);
-        if (kind == "grid" && request.Shape.Type != "Polygon") throw new ApiException(400, "请圈出网格范围。");
+        if (kind == "grid" && request.Shape.Type == "Point") throw new ApiException(400, "请圈出网格范围。");
         lock (_gate)
         {
             PrepareWrite();
@@ -97,6 +112,13 @@ public sealed partial class Store
 
     public static void ValidateShape(GeoShape shape)
     {
+        if (shape?.Type == "MultiPolygon")
+        {
+            if (shape.Areas is not { Length: >= 2 and <= 50 } || shape.Areas.Sum(x => x?.Length ?? 0) > 10000) throw new ApiException(400, "一个场所可画 2 至 50 个区域，总节点不超过 10000。");
+            foreach (var area in shape.Areas) ValidateShape(new GeoShape("Polygon", area));
+            if (shape.Coordinates is null || !shape.Coordinates.SelectMany(x => x).SequenceEqual(shape.Areas[0].SelectMany(x => x))) throw new ApiException(400, "多区域首块边界不一致。");
+            return;
+        }
         if (shape is null || shape.Type is not ("Point" or "Polygon") || shape.Coordinates is null || shape.Coordinates.Length > 10000) throw new ApiException(400, "地图标记格式不正确。");
         if (shape.Coordinates.Any(x => x is null || x.Length != 2 || !double.IsFinite(x[0]) || !double.IsFinite(x[1]) || x[0] < -180 || x[0] > 180 || x[1] < -85 || x[1] > 85)) throw new ApiException(400, "经纬度超出范围。");
         if (shape.Type == "Point" && shape.Coordinates.Length != 1) throw new ApiException(400, "请标记一个点。");

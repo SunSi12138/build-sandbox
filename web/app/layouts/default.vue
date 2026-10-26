@@ -19,7 +19,7 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshOn
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'form-page': formPage }">
+  <div class="app-shell" :class="{ 'form-page': formPage, 'map-page': route.path === '/map' }">
     <a href="#main-content" class="skip-link" @click.prevent="skipToContent">跳到主要内容</a>
     <aside class="desktop-sidebar">
       <NuxtLink to="/" class="brand" aria-label="社区管理首页"><UIcon name="i-lucide-leaf" /><strong>社区管理</strong></NuxtLink>

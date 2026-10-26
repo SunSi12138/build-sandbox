@@ -14,13 +14,13 @@ public sealed class CommunityWorkflowTests
         using var environment = new V2Environment(); using var store = environment.Open();
         var point = environment.CreatePoint(store);
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
-        var record = store.SaveCommunityRecord("use", null, new(point.Id, "便利店", Data($$"""{"unitId":"","purposes":["商店"],"state":"使用中","photoIds":["{{photo.Id}}"]}""")));
+        var record = store.SaveCommunityRecord("use", null, new(point.Id, "便利店", Data($$"""{"unitId":"","position":"一楼东侧","purposeId":"purpose-shop","state":"使用中","photoIds":["{{photo.Id}}"]}""")));
         Assert.Single(store.GetRecordPhotos(record.Id));
         Assert.Throws<ApiException>(() => store.AttachPointPhotos(point.Id, new([photo.Id])));
         Assert.Throws<ApiException>(() => store.DeletePhoto(photo.Id));
         Assert.Throws<ApiException>(() => store.DeletePoint(point.Id));
         V2Environment.Execute(store.DatabasePath, "UPDATE photos SET uploaded_at='2000-01-01T00:00:00';");
-        store.SaveCommunityRecord("use", record.Id, new(point.Id, "便利店", Data("""{"unitId":"","purposes":["商店"],"state":"已结束","endDate":"2026-10-01","photoIds":[]}"""), record.Revision));
+        store.SaveCommunityRecord("use", record.Id, new(point.Id, "便利店", Data("""{"unitId":"","position":"一楼东侧","purposeId":"purpose-shop","state":"已结束","endDate":"2026-10-01","photoIds":[]}"""), record.Revision));
         store.CleanupOrphanPhotos();
         Assert.Empty(store.GetRecordPhotos(record.Id));
         using var original = store.OpenPhoto(photo.Id); Assert.True(original.Length > 0);
