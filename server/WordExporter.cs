@@ -28,8 +28,9 @@ public static class WordExporter
             document.Section("经营使用：" + r.Name);
             var purposes = use.PurposeName;
             var values = new List<string[]> { new[] { "编号", r.Id }, new[] { "用途位置", use.UnitName }, new[] { "用途", purposes } };
-            foreach (var field in new[] { ("state", "状态"), ("startDate", "开始日期"), ("endDate", "结束日期"), ("contact", "联系人"), ("phone", "联系电话"), ("business", "经营内容"), ("owner", "房东"), ("ownerPhone", "房东电话"), ("tenantCount", "居住人数"), ("storedGoods", "存放物品"), ("area", "使用面积"), ("notes", "备注") })
+            foreach (var field in new[] { ("state", "状态"), ("startDate", "开始日期"), ("endDate", "结束日期"), ("contact", "联系人"), ("phone", "联系电话"), ("notes", "备注") })
                 if (Text(field.Item1).Length > 0) values.Add([field.Item2, Text(field.Item1)]);
+            values.AddRange(Store.UseFieldValues(r.Data).Select(field => new[] { field.Label, field.Value }));
             document.Table(null, values, [24, 76], labelColumn: true);
             document.Gallery(use.Photos.Select(x => (x, "")).ToArray(), r.Name + " · 照片");
         }

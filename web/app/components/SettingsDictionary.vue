@@ -13,10 +13,12 @@ const saving = ref(false)
 const error = ref('')
 const editingId = ref<string | null>(null)
 const deleting = ref<CommunityDto | PointTypeDto | null>(null)
-const form = reactive({ name: '', title: '' })
+const form = reactive({ name: '', title: '', parentId: '', color: '#64748b' })
 
 function beginEdit(item?: CommunityDto | PointTypeDto) {
   editingId.value = item?.id ?? null
+  form.color = item && 'color' in item ? item.color : '#64748b'
+  form.parentId = item && 'parentId' in item ? item.parentId : ''
   form.name = item?.name ?? ''
   form.title = item && 'title' in item ? item.title : ''
   error.value = ''
@@ -40,7 +42,7 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    const body = props.kind === 'communities' ? { name: form.name.trim(), title: form.title.trim() || form.name.trim() } : { name: form.name.trim() }
+    const body = props.kind === 'communities' ? { name: form.name.trim(), title: form.title.trim() || form.name.trim(), parentId: form.parentId, color: form.color } : { name: form.name.trim() }
     await $fetch(`/api/${props.kind}${editingId.value ? `/${editingId.value}` : ''}`, { method: editingId.value ? 'PUT' : 'POST', body })
     editOpen.value = false
     emit('changed')
@@ -79,6 +81,8 @@ async function remove() {
     <template #body><UForm :id="`dictionary-${kind}-form`" :state="form" :validate="validate" class="space-y-3" @submit="save">
       <UAlert v-if="error" :description="error" color="error" variant="subtle" />
       <UFormField :label="`${label}名称`" name="name" required><UInput v-model="form.name" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
+      <UFormField v-if="kind==='communities'" label="父网格"><GridTreeSelect v-model="form.parentId" allow-root :exclude-id="editingId??undefined" :disabled="saving" /></UFormField>
+      <UFormField v-if="kind==='communities'" label="网格颜色"><MapColorPicker v-model="form.color" :disabled="saving" /></UFormField>
     </UForm></template>
     <template #footer><UButton color="neutral" variant="outline" :disabled="saving" @click="editOpen = false">取消</UButton><UButton :form="`dictionary-${kind}-form`" type="submit" :loading="saving">保存</UButton></template>
   </UModal>

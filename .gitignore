@@ -22,3 +22,5 @@ tiles/
 release/
 work/
 运行版/
+
+map-providers.local.json

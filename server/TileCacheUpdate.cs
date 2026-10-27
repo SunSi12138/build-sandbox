@@ -20,12 +20,11 @@ public sealed partial class Store
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _tileLocks = new();
     public static void ValidateTileTemplate(MapLayerDto layer)
     {
-        if (layer.SourceMode is not ("offline" or "online" or "hybrid")) throw new ApiException(400, "请选择地图加载方式。");
-        if (layer.UrlTemplate.Length > 4000 || layer.ApiKey.Length > 1000 || layer.Subdomains.Length > 100) throw new ApiException(400, "图层链接或密钥过长。");
-        if (layer.UrlTemplate.Length == 0) { if (layer.SourceMode != "offline") throw new ApiException(400, "请填写瓦片链接。"); return; }
+        if (layer.UrlTemplate.Length > 4000 || layer.ApiKey.Length > 1000 || layer.MapKey.Length > 1000 || layer.Subdomains.Length > 100) throw new ApiException(400, "图层链接或密钥过长。");
+        if (layer.UrlTemplate.Length == 0) return;
         if (!layer.UrlTemplate.Contains("{quadkey}", StringComparison.Ordinal) && (!layer.UrlTemplate.Contains("{z}", StringComparison.Ordinal) || !layer.UrlTemplate.Contains("{x}", StringComparison.Ordinal) || !(layer.UrlTemplate.Contains("{y}", StringComparison.Ordinal) || layer.UrlTemplate.Contains("{-y}", StringComparison.Ordinal)))) throw new ApiException(400, "链接需包含 {z}、{x}、{y}（或 {-y}），或 {quadkey}。");
         var url = BuildTileUrl(layer, 1, 0, 0);
-        if (Regex.IsMatch(url, "[{}]") || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length > 0) throw new ApiException(400, "请填写有效 HTTP/HTTPS 链接；支持 {z} {x} {y} {-y} {quadkey} {s} {key}。");
+        if (Regex.IsMatch(url, "[{}]") || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.UserInfo.Length > 0) throw new ApiException(400, "请填写有效 HTTP/HTTPS 链接；支持 {z} {x} {y} {-y} {quadkey} {s} {key} {mk}。");
     }
     public static string BuildTileUrl(MapLayerDto layer, int z, int x, int y)
     {
@@ -35,7 +34,7 @@ public sealed partial class Store
             .Replace("{-y}", ((1 << z)-1-y).ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{y}", (layer.Scheme == "tms" ? (1 << z)-1-y : y).ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal)
             .Replace("{quadkey}", new string(quad), StringComparison.Ordinal).Replace("{s}", subdomains.Length > 0 ? subdomains[(x+y)%subdomains.Length] : "0", StringComparison.Ordinal)
-            .Replace("{key}", Uri.EscapeDataString(layer.ApiKey), StringComparison.Ordinal);
+            .Replace("{key}", Uri.EscapeDataString(layer.ApiKey), StringComparison.Ordinal).Replace("{mk}", Uri.EscapeDataString(layer.MapKey), StringComparison.Ordinal);
     }
     private async Task<string?> DownloadTile(MapLayerDto layer, int z, int x, int y, CancellationToken cancellation, bool replace)
     {
@@ -74,8 +73,8 @@ public sealed partial class Store
         var layer = GetMapLayers().FirstOrDefault(l => l.Id == id) ?? throw new ApiException(404,"图层不存在。");
         if (z < layer.MinZoom || z > layer.MaxZoom || x<0 || y<0 || x>=1<<z || y>=1<<z) return null;
         var existing = FindTile(id,z,x,y);
-        if (layer.SourceMode == "offline" || layer.SourceMode == "hybrid" && existing is not null) return existing;
-        try { return await DownloadTile(layer,z,x,y,cancellation,layer.SourceMode == "online"); }
+        if (!layer.UpdateCache && existing is not null) return existing;
+        try { return await DownloadTile(layer,z,x,y,cancellation,layer.UpdateCache); }
         catch (Exception e) when (e is HttpRequestException or IOException or TaskCanceledException) { return existing; }
     }
     public TileUpdateJob StartTileUpdate(TileUpdateRequest request)

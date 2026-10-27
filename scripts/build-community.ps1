@@ -16,6 +16,7 @@ if(-not $SkipBuild){
 }
 New-Item -ItemType Directory -Path $taskApp -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $taskRelease 'CommunityGIS.exe') -Destination $taskApp -Force
+if(Test-Path -LiteralPath (Join-Path $taskRoot 'map-providers.local.json')){Copy-Item -LiteralPath (Join-Path $taskRoot 'map-providers.local.json') -Destination $taskApp -Force}
 $taskWeb=Join-Path $taskApp 'wwwroot'
 New-Item -ItemType Directory -Path $taskWeb -Force | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $taskRoot 'web/.output/public') -Force | Copy-Item -Destination $taskWeb -Recurse -Force

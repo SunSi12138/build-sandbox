@@ -40,20 +40,20 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,name,title FROM communities ORDER BY name COLLATE NOCASE,rowid;");
+            using var command = Command("SELECT id,name,title,parent_id,color FROM communities ORDER BY name COLLATE NOCASE,rowid;");
             using var rows = command.ExecuteReader();
             var result = new List<CommunityDto>();
-            while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2)));
+            while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetString(4)));
             return result.ToArray();
         }
     }
 
     private CommunityDto RequireCommunity(string id, SqliteTransaction? transaction = null)
     {
-        using var command = Command("SELECT id,name,title FROM communities WHERE id=$id;", transaction, ("$id", id));
+        using var command = Command("SELECT id,name,title,parent_id,color FROM communities WHERE id=$id;", transaction, ("$id", id));
         using var row = command.ExecuteReader();
         if (!row.Read()) throw new ApiException(400, "所选社区不存在，请刷新后重新选择。");
-        return new(row.GetString(0), row.GetString(1), row.GetString(2));
+        return new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3), row.GetString(4));
     }
 
     public CommunityDto SaveCommunity(string? id, CommunityWriteRequest request)
@@ -61,16 +61,34 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            var name = Text(request.Name, "社区名称", 100, true);
-            var title = Text(request.Title, "通知单抬头全称", 150, true);
-            using (var duplicate = Command("SELECT COUNT(*) FROM communities WHERE name=$name AND id<>$id;", null, ("$name", name), ("$id", id ?? "")))
-                if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0) throw new ApiException(409, "已有同名社区。");
+            var name = Text(request.Name, "网格名称", 100, true);
+            var title = Text(request.Title, "网格名称", 150);
+            var parent = Text(request.ParentId, "父网格", 100);
+            var color = MapColor(request.Color);
+            var grids = GetCommunities();
+            if (parent.Length > 0 && !grids.Any(x => x.Id == parent)) throw new ApiException(400, "父网格不存在。");
+            var ancestor = parent;
+            while (ancestor.Length > 0)
+            {
+                if (ancestor == id) throw new ApiException(400, "父网格不能是自身或其子网格。");
+                ancestor = grids.FirstOrDefault(x => x.Id == ancestor)?.ParentId ?? "";
+            }
+            if (grids.Any(x => x.Id != id && x.Name == name)) throw new ApiException(409, "已有同名网格。");
+            if (request.Shape is not null) { ValidateShape(request.Shape); if (request.Shape.Type == "Point") throw new ApiException(400, "网格请圈画区域。"); }
+            if (id is not null && request.Shape is not null) throw new ApiException(400, "已有网格请通过地图更新边界。");
             var actualId = id ?? NewId();
-            using var command = id is null
-                ? Command("INSERT INTO communities(id,name,title) VALUES($id,$name,$title);", null, ("$id", actualId), ("$name", name), ("$title", title))
-                : Command("UPDATE communities SET name=$name,title=$title WHERE id=$id;", null, ("$id", actualId), ("$name", name), ("$title", title));
-            RequireChanged(command.ExecuteNonQuery(), "社区");
-            return new(actualId, name, title);
+            using var transaction = _db.BeginTransaction();
+            using (var command = id is null
+                ? Command("INSERT INTO communities(id,name,title,parent_id,color) VALUES($id,$name,$title,$parent,$color);", transaction, ("$id", actualId), ("$name", name), ("$title", title.Length == 0 ? name : title), ("$parent", parent), ("$color",color))
+                : Command("UPDATE communities SET name=$name,title=$title,parent_id=$parent,color=$color WHERE id=$id;", transaction, ("$id", actualId), ("$name", name), ("$title", title.Length == 0 ? name : title), ("$parent", parent), ("$color",color)))
+                RequireChanged(command.ExecuteNonQuery(), "网格");
+            if (request.Shape is not null)
+            {
+                using var shape = Command("INSERT INTO map_shapes(kind,record_id,shape,revision) VALUES('grid',$id,$shape,1);", transaction, ("$id", actualId), ("$shape", System.Text.Json.JsonSerializer.Serialize(request.Shape, CommunityJsonContext.Default.GeoShape)));
+                shape.ExecuteNonQuery();
+            }
+            transaction.Commit();
+            return new(actualId, name, title.Length == 0 ? name : title, parent, color);
         }
     }
 
@@ -81,6 +99,7 @@ public sealed partial class Store
             PrepareWrite();
             using (var used = Command("SELECT (SELECT COUNT(*) FROM points WHERE community_id=$id)+(SELECT COUNT(*) FROM inspections WHERE community_id=$id)+(SELECT COUNT(*) FROM campaigns WHERE community_id=$id);", null, ("$id", id)))
                 if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该社区已被记录引用，不能删除。");
+            if (GetCommunities().Any(x => x.ParentId == id)) throw new ApiException(409, "该网格还有子网格，请先调整子网格。");
             using var command = Command("DELETE FROM communities WHERE id=$id;", null, ("$id", id));
             RequireChanged(command.ExecuteNonQuery(), "社区");
         }

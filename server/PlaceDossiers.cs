@@ -10,13 +10,23 @@ public sealed partial class Store
         var columns = new HashSet<string>();
         using (var info = Command("PRAGMA table_info(map_layers);", transaction))
         using (var rows = info.ExecuteReader()) while (rows.Read()) columns.Add(rows.GetString(1));
-        foreach (var (name, definition) in new[] { ("url_template", "TEXT NOT NULL DEFAULT ''"), ("api_key", "TEXT NOT NULL DEFAULT ''"), ("subdomains", "TEXT NOT NULL DEFAULT '0,1,2,3'"), ("source_mode", "TEXT NOT NULL DEFAULT 'offline'"), ("cache_version", "INTEGER NOT NULL DEFAULT 0") })
+        foreach (var (name, definition) in new[] { ("url_template", "TEXT NOT NULL DEFAULT ''"), ("api_key", "TEXT NOT NULL DEFAULT ''"), ("subdomains", "TEXT NOT NULL DEFAULT '0,1,2,3'"), ("update_cache", "INTEGER NOT NULL DEFAULT 0"), ("annotation", "INTEGER NOT NULL DEFAULT 0"), ("map_key", "TEXT NOT NULL DEFAULT ''"), ("cache_version", "INTEGER NOT NULL DEFAULT 0") })
             if (!columns.Contains(name)) { using var add = Command($"ALTER TABLE map_layers ADD COLUMN {name} {definition};", transaction); add.ExecuteNonQuery(); }
-        foreach (var (id, name, icon, profile) in new[] { ("shop", "商店", "🏪", "business"), ("warehouse", "仓库", "📦", "storage"), ("factory", "生产加工", "🏭", "business"), ("rental", "出租房", "🔑", "housing"), ("home", "居住", "🏠", "housing"), ("office", "办公", "🏢", "general"), ("other", "其他", "📌", "general") })
+        InitializeGridAndProviderDefaults(transaction);
+        foreach (var (id, name, icon, extra) in new[] {
+            ("shop", "商店", "🏪", new[]{ new PurposeField("business","经营内容","text",false) }),
+            ("warehouse", "仓库", "📦", new[]{ new PurposeField("storedGoods","存放物品","text",false) }),
+            ("factory", "生产加工", "🏭", new[]{ new PurposeField("business","生产内容","text",false) }),
+            ("rental", "出租房", "🔑", new[]{ new PurposeField("owner","房东","text",false),new PurposeField("ownerPhone","房东电话","text",false),new PurposeField("tenantCount","居住人数","number",false) }),
+            ("home", "居住", "🏠", new[]{ new PurposeField("tenantCount","居住人数","number",false) }),
+            ("office", "办公", "🏢", Array.Empty<PurposeField>()), ("other", "其他", "📌", Array.Empty<PurposeField>()) })
         {
+            var fields = JsonSerializer.Serialize(extra, CommunityJsonContext.Default.PurposeFieldArray);
+            var body = "{\"icon\":\"" + icon + "\",\"fields\":" + fields + "}";
             using var add = Command("INSERT OR IGNORE INTO community_records(id,kind,parent_id,name,body,updated_at) VALUES($id,'purpose-type','',$name,$body,$at);", transaction,
-                ("$id", "purpose-" + id), ("$name", name), ("$body", $"{{\"icon\":\"{icon}\",\"profile\":\"{profile}\"}}"), ("$at", DateTimeOffset.Now.ToString("O")));
+                ("$id", "purpose-" + id), ("$name", name), ("$body", body), ("$at", DateTimeOffset.Now.ToString("O")));
             add.ExecuteNonQuery();
+            using var define = Command("UPDATE community_records SET body=json_set(json_remove(body,'$.profile'),'$.fields',json($fields)) WHERE id=$id AND json_type(body,'$.fields') IS NULL;", transaction,("$id","purpose-"+id),("$fields",fields)); define.ExecuteNonQuery();
         }
     }
 
@@ -35,6 +45,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             if (request.Point.Temporary || request.Uses is null || request.Uses.Length > 50) throw new ApiException(400, "场所用途最多登记 50 条。");
+            request = request with { Uses = request.Uses.Select(use => use with { Data = PrepareUseData(use.Data) }).ToArray() };
             foreach (var use in request.Uses)
             {
                 if (use.Data.ValueKind != JsonValueKind.Object || use.Data.GetRawText().Length > 200000) throw new ApiException(400, "使用情况内容过长或格式不正确。");

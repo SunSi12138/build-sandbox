@@ -165,7 +165,7 @@ public sealed partial class Store : IDisposable
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),
             ("$template", "于{日期}对{场所}开展检查，发现以下问题：\n{问题}\n请于{期限}前整改完毕，并反馈整改情况。"), ("$quality", 75))) settings.ExecuteNonQuery();
-        foreach (var name in new[] { "建筑物", "地块", "独立空间", "院落", "公共区域", "其他" })
+        foreach (var name in new[] { "永久建筑", "临时建筑" })
         {
             using var type = Command("INSERT INTO point_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
             type.ExecuteNonQuery();

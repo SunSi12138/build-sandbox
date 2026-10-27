@@ -12,7 +12,7 @@ public sealed partial class Store
         p.longitude,p.latitude,p.temporary,
         (SELECT ph.id FROM photos ph WHERE ph.point_id=p.id ORDER BY ph.uploaded_at,ph.rowid LIMIT 1),
         (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id),
-        (SELECT COUNT(*) FROM community_history h WHERE h.kind='point' AND h.record_id=p.id)
+        (SELECT COUNT(*) FROM community_history h WHERE h.kind='point' AND h.record_id=p.id),p.color
         FROM points p JOIN communities c ON c.id=p.community_id JOIN point_types t ON t.id=p.type_id
         """;
     private const string PointWhere = """
@@ -27,7 +27,7 @@ public sealed partial class Store
     private static PointDto ReadPoint(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetInt32(11) != 0, NullableString(row, 12), row.GetInt32(13), row.IsDBNull(14) ? null : row.GetDouble(14),
-        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), row.GetInt32(19));
+        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), row.GetInt32(19), row.GetString(20));
 
     public PointDto GetPoint(string id)
     {
@@ -142,10 +142,10 @@ public sealed partial class Store
             ("$address", Text(request.Address, "详细地址", 1000, true)), ("$contact", Text(request.Contact, "联系人", 100)),
             ("$phone", Text(request.Phone, "电话", 100)), ("$frequency", temporary ? "irregular" : request.Frequency),
             ("$notes", Text(request.Notes, "备注", 8000)), ("$disabled", request.Disabled ? 1 : 0),
-            ("$longitude", longitude), ("$latitude", latitude), ("$temporary", temporary ? 1 : 0)];
+            ("$longitude", longitude), ("$latitude", latitude), ("$temporary", temporary ? 1 : 0), ("$color",MapColor(request.Color))];
         using (var command = Command(id is null
-            ? "INSERT INTO points(id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary) VALUES($id,$name,$community,$type,$address,$contact,$phone,$frequency,$notes,$disabled,$longitude,$latitude,$temporary);"
-            : "UPDATE points SET name=$name,community_id=$community,type_id=$type,address=$address,contact=$contact,phone=$phone,frequency=$frequency,notes=$notes,disabled=$disabled,longitude=$longitude,latitude=$latitude,temporary=$temporary WHERE id=$id;", transaction, parameters))
+            ? "INSERT INTO points(id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,color) VALUES($id,$name,$community,$type,$address,$contact,$phone,$frequency,$notes,$disabled,$longitude,$latitude,$temporary,$color);"
+            : "UPDATE points SET name=$name,community_id=$community,type_id=$type,address=$address,contact=$contact,phone=$phone,frequency=$frequency,notes=$notes,disabled=$disabled,longitude=$longitude,latitude=$latitude,temporary=$temporary,color=$color WHERE id=$id;", transaction, parameters))
             RequireChanged(command.ExecuteNonQuery(), "点位");
         AttachPhotos(request.PhotoIds, "point", null, null, transaction, pointId: actualId);
         if (request.Shape is not null)

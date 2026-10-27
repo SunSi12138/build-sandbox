@@ -9,10 +9,10 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,source_mode,cache_version FROM map_layers ORDER BY sort_order,id;");
+            using var command = Command("SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,cache_version,annotation,map_key FROM map_layers ORDER BY sort_order,id;");
             using var rows = command.ExecuteReader();
             var items = new List<MapLayerDto>();
-            while (rows.Read()) items.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9), rows.GetString(10), rows.GetString(11), rows.GetString(12), rows.GetString(13), rows.GetInt32(14)));
+            while (rows.Read()) items.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9), rows.GetString(10), rows.GetString(11), rows.GetString(12), rows.GetInt32(13) != 0, rows.GetInt32(14), rows.GetInt32(15) != 0, rows.GetString(16)));
             return [.. items];
         }
     }
@@ -34,14 +34,14 @@ public sealed partial class Store
                 using var reset = Command("UPDATE map_layers SET is_default=0;", transaction); reset.ExecuteNonQuery();
             }
             using (var command = Command("""
-                INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,source_mode)
-                VALUES($id,$name,$folder,$scheme,$enabled,$default,$opacity,$min,$max,$order,$url,$key,$subdomains,$mode)
+                INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,annotation,map_key)
+                VALUES($id,$name,$folder,$scheme,$enabled,$default,$opacity,$min,$max,$order,$url,$key,$subdomains,$update,$annotation,$mk)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,folder=excluded.folder,scheme=excluded.scheme,enabled=excluded.enabled,
                   is_default=excluded.is_default,opacity=excluded.opacity,min_zoom=excluded.min_zoom,max_zoom=excluded.max_zoom,sort_order=excluded.sort_order,
-                  url_template=excluded.url_template,api_key=excluded.api_key,subdomains=excluded.subdomains,source_mode=excluded.source_mode;
+                  url_template=excluded.url_template,api_key=excluded.api_key,subdomains=excluded.subdomains,update_cache=excluded.update_cache,annotation=excluded.annotation,map_key=excluded.map_key;
                 """, transaction, ("$id", value.Id), ("$name", value.Name), ("$folder", value.Folder), ("$scheme", value.Scheme),
                 ("$enabled", value.Enabled ? 1 : 0), ("$default", value.IsDefault ? 1 : 0), ("$opacity", value.Opacity), ("$min", value.MinZoom), ("$max", value.MaxZoom), ("$order", value.SortOrder),
-                ("$url", value.UrlTemplate), ("$key", value.ApiKey), ("$subdomains", value.Subdomains), ("$mode", value.SourceMode))) command.ExecuteNonQuery();
+                ("$url", value.UrlTemplate), ("$key", value.ApiKey), ("$subdomains", value.Subdomains), ("$update", value.UpdateCache ? 1 : 0), ("$annotation", value.Annotation ? 1 : 0), ("$mk", value.MapKey))) command.ExecuteNonQuery();
             transaction.Commit(); return value;
         }
     }
@@ -67,16 +67,18 @@ public sealed partial class Store
             using (var rows = command.ExecuteReader())
                 while (rows.Read()) features.Add(new(rows.GetString(0), "grid", rows.GetString(1), rows.GetString(0), JsonSerializer.Deserialize(rows.GetString(2), CommunityJsonContext.Default.GeoShape)!, rows.GetInt32(3)));
 
-            var styles = ListCommunityRecords("point-style");
+            var purposes = ListCommunityRecords("purpose-type", includeArchived:true);
             var uses = ListCommunityRecords("use").Where(x => JsonText(x.Data, "state") != "已结束").GroupBy(x => x.ParentId).ToDictionary(x => x.Key, x => x.ToArray());
             return new(GetMapLayers(), features.Select(f =>
             {
-                if (f.Kind == "grid") return f with { Icon = "🗺️" };
+                if (f.Kind == "grid") return f with { Color = RequireCommunity(f.Id).Color, Uses = [] };
                 var point = GetPointInternal(f.Id);
                 var ids = uses.GetValueOrDefault(f.Id, []).Select(x => JsonText(x.Data, "purposeId")).Where(x => x.Length > 0).Distinct().ToArray();
-                var icon = styles.FirstOrDefault(x => x.ParentId == point.TypeId) is { } style ? JsonText(style.Data, "icon") : "";
-                if (icon.Length == 0) icon = point.TypeName.Contains("地", StringComparison.Ordinal) ? "🏞️" : "🏢";
-                return f with { TypeId = point.TypeId, Icon = icon, PurposeIds = ids };
+                var labels = uses.GetValueOrDefault(f.Id, []).Select(x => {
+                    var purpose = purposes.FirstOrDefault(p=>p.Id==JsonText(x.Data,"purposeId"));
+                    return new MapUseLabel(x.Id,x.Name,purpose?.Name??"未分类",purpose is null?"📌":JsonText(purpose.Data,"icon"));
+                }).ToArray();
+                return f with { TypeId = point.TypeId, Color = point.Color, PurposeIds = ids, Uses = labels };
             }).ToArray());
         }
     }

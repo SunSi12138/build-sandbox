@@ -9,8 +9,8 @@ const emit = defineEmits<{ saved: [point: PointDto] }>()
 const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false)
-interface PointState { name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
-const defaults = (): PointState => ({ name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
+interface PointState { color: string; name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
+const defaults = (): PointState => ({ color: '#087f70', name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
 const state = reactive<PointState>(defaults())
 const mapShape = ref<GeoShape|null>(null), shapeRevision = ref(0), revision = ref<number | undefined>()
 const inlineUses = ref<{ key: number; name: string; data: UseData; busy: boolean; failed: boolean }[]>([])
@@ -50,7 +50,7 @@ async function save() {
   if (inlineUses.value.some(x => !x.name.trim() || !x.data.position.trim() || !x.data.purposeId)) { error.value = '请补全每个用途位置、用途和使用名称，或移除空白项'; return }
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
-  const body: PointWriteRequest = { name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
+  const body: PointWriteRequest = { color: state.color, name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
   body.shape = mapShape.value; body.shapeRevision = shapeRevision.value; body.revision = revision.value
   try { const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/place-dossiers', { method: props.point ? 'PUT' : 'POST', body: props.point ? body : { point: body, uses: inlineUses.value.map(x => ({ name: x.name, parentId: '', data: x.data })) }, retry: 0 }); emit('saved', point); open.value = false }
   catch (value) { error.value = errorMessage(value) }
@@ -65,8 +65,9 @@ onBeforeUnmount(() => { overlayForm.value = false })
       <p v-if="!loading && (!communities.length || !types.length)" class="mb-3 text-sm text-warning">请先添加网格，再登记场所</p>
       <UForm id="point-editor-form" :state="state" :disabled="loading || saving" :validate="validate" class="field-grid" @submit="save">
         <UFormField label="名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="point-name" /></UFormField>
-        <UFormField label="网格" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /><QuickGridCreate :disabled="saving || loading" @created="grid=>{state.communityId=grid.id}" /></UFormField>
+        <UFormField label="网格" name="communityId" required><GridTreeSelect v-model="state.communityId" :disabled="saving || loading" /><QuickGridCreate :disabled="saving || loading" @created="grid=>{state.communityId=grid.id}" /></UFormField>
         <UFormField label="场所形态" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
+        <UFormField label="地图颜色" class="field-full"><MapColorPicker v-model="state.color" :disabled="saving || loading" /></UFormField>
         <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
         <UFormField label="地图位置" name="coordinates" class="field-full"><p v-if="mapShape" class="text-sm mb-2">{{ mapShape.type === 'Point' ? '已标记点位' : `已圈画 ${mapShape.type === 'MultiPolygon' ? mapShape.areas?.length : 1} 个区域` }}</p><LocationPicker v-model="mapShape" :disabled="saving" @picked="shape => {state.coordinates=shape.coordinates[0]!.join(',')}" /></UFormField>
         <UFormField label="联系人" name="contact"><NameTagsInput :disabled="loading || saving" v-model="state.contact" maxlength="100" class="w-full" /></UFormField>

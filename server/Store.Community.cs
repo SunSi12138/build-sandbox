@@ -6,7 +6,7 @@ namespace StreetEcoTool;
 
 public sealed partial class Store
 {
-    private static readonly HashSet<string> CommunityKinds = ["unit", "use", "purpose-type", "point-style", "inspection-type", "staff", "plan", "draft", "inspection-meta", "issue-meta"];
+    private static readonly HashSet<string> CommunityKinds = ["unit", "use", "purpose-type", "inspection-type", "staff", "plan", "draft", "inspection-meta", "issue-meta"];
 
     private void InitializeCommunityTables()
     {
@@ -44,7 +44,6 @@ public sealed partial class Store
               enabled INTEGER NOT NULL, is_default INTEGER NOT NULL, opacity REAL NOT NULL,
               min_zoom INTEGER NOT NULL, max_zoom INTEGER NOT NULL, sort_order INTEGER NOT NULL);
             INSERT OR IGNORE INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('jlyh','吉林一号','jlyh','tms',1,1,1,12,18,0);
-            INSERT OR IGNORE INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('tdt-vec','天地图街道','tdt-vec','xyz',0,0,1,0,18,1);
             INSERT OR IGNORE INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('tdt-cva','地名标注','tdt-cva','xyz',0,0,1,0,18,2);
             DROP VIEW IF EXISTS active_inspections;
             DROP VIEW IF EXISTS active_issues;
@@ -100,16 +99,11 @@ public sealed partial class Store
         {
             PrepareWrite();
             if (kind == "staff" && ListCommunityRecords("staff", includeArchived: true).Any(x => x.Id != id && x.Name == name)) throw new ApiException(409, "已有同名人员；同名时请在姓名后加岗位区分。");
-            if (kind is "purpose-type" or "point-style")
+            if (kind == "purpose-type")
             {
-                _ = Text(JsonText(request.Data, "icon"), "地图图标", 16, true);
-                if (kind == "purpose-type" && JsonText(request.Data, "profile") is not ("general" or "business" or "storage" or "housing")) throw new ApiException(400, "请选择用途信息类型。");
-                if (kind == "point-style")
-                {
-                    _ = RequirePointType(parent);
-                    if (ListCommunityRecords(kind, includeArchived: true).Any(x => x.Id != id && x.ParentId == parent)) throw new ApiException(409, "该场所形态已有图标设置，请修改原设置。");
-                }
-                if (ListCommunityRecords(kind).Any(x => x.Id != id && x.Name == name)) throw new ApiException(409, "已有同名分类。");
+                _ = Text(JsonText(request.Data,"icon"),"用途图标",16,true);
+                ValidatePurposeFields(request.Data);
+                if(ListCommunityRecords(kind).Any(x=>x.Id!=id&&x.Name==name))throw new ApiException(409,"已有同名分类。");
             }
             if (kind == "draft")
             {
@@ -139,6 +133,7 @@ public sealed partial class Store
             }
             if (kind == "use")
             {
+                request = request with { Data = PrepareUseData(request.Data) };
                 var unitId = JsonText(request.Data, "unitId");
                 var state = JsonText(request.Data, "state");
                 if (state is not ("使用中" or "暂停使用" or "已结束" or "待核实")) throw new ApiException(400, "请选择使用状态。");

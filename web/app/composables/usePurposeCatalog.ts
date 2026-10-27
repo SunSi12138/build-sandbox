@@ -5,4 +5,4 @@ export function usePurposeCatalog() {
   function purpose(id: string) { return purposes.value.find(x => x.id === id) }
   return { purposes, loadPurposes, purpose }
 }
-export function emptyUse(): UseData { return { position: '', purposeId: '', contact: '', phone: '', startDate: '', endDate: '', state: '使用中', notes: '', photoIds: [], business: '', owner: '', ownerPhone: '', tenantCount: '', storedGoods: '', area: '' } }
+export function emptyUse(): UseData { return { position: '', purposeId: '', contact: '', phone: '', startDate: '', endDate: '', state: '使用中', notes: '', photoIds: [], values: {} } }

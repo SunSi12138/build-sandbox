@@ -2,7 +2,7 @@
 import type { GeoShape, MapFeature, MapState } from '~/types/community'
 import { errorMessage } from '~/utils/format'
 interface ImportRow { row: number; sourceKey: string; kind: string; name: string; grid: string; type: string; address: string; contact: string; phone: string; notes: string; shape: GeoShape | null; error: string; warning: string; duplicate: boolean; selected?: boolean }
-const kind = ref('point'), coordinates = ref('wgs84'), file = ref<File | null>(null), rows = ref<ImportRow[]>([])
+const kind = ref(useRoute().query.kind === 'grid' ? 'grid' : 'point'), coordinates = ref('wgs84'), file = ref<File | null>(null), rows = ref<ImportRow[]>([])
 const error = ref(''), message = ref(''), busy = ref(false), mapOpen = ref(false), selectedRow = ref<ImportRow | null>(null), map = ref<MapState>({ layers: [], features: [] })
 const { bootstrap, load, refresh } = useAppData()
 const grids = computed(() => (bootstrap.value?.communities ?? []).map(x => x.name))

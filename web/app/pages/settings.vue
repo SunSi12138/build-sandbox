@@ -77,12 +77,14 @@ onMounted(() => { void fetchSettings() })
       </UForm>
       <div v-else-if="active === 'dictionaries'" class="space-y-4">
         <UAlert v-if="dictionaryError" :description="dictionaryError" color="error" variant="subtle"><template #actions><UButton color="neutral" variant="outline" @click="dictionaryChanged">重试</UButton></template></UAlert>
+        <div class="flex gap-3 flex-wrap"><UButton to="/imports?kind=grid" label="导入网格" icon="i-lucide-upload" variant="outline" /><UButton to="/imports?kind=point" label="导入场所" variant="outline" /></div>
         <SettingsDictionary kind="communities" :items="bootstrap?.communities ?? []" @changed="dictionaryChanged" />
         <SettingsDictionary kind="point-types" :items="bootstrap?.pointTypes ?? []" @changed="dictionaryChanged" /><MapCatalogSettings />
         <SettingsDictionary kind="campaign-types" :items="bootstrap?.campaignTypes ?? []" @changed="dictionaryChanged" />
       </div>
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
-      <details class="panel panel-body"><summary class="cursor-pointer">更多工具：导入、合并、恢复</summary><div class="flex gap-3 flex-wrap mt-3"><UButton to="/imports" label="导入场所、网格" variant="outline" /><UButton to="/management" label="重复资料合并、人员交接" variant="outline" /><UButton to="/archive" label="作废记录与恢复" variant="outline" /><UButton to="/campaigns" label="整治记录" variant="outline" /></div></details>
+      <section class="panel panel-body"><h2 class="section-title mb-3">导入地图缓存</h2><CacheImport /></section>
+      <details class="panel panel-body"><summary class="cursor-pointer">更多工具：导入、合并、恢复</summary><div class="flex gap-3 flex-wrap mt-3"><UButton to="/management" label="重复资料合并、人员交接" variant="outline" /><UButton to="/archive" label="作废记录与恢复" variant="outline" /><UButton to="/campaigns" label="整治记录" variant="outline" /></div></details>
     </template>
   </div>
 </template>

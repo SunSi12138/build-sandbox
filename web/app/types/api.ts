@@ -8,13 +8,14 @@ export interface ErrorDto { message: string }
 export interface OkDto { ok: boolean }
 export interface PageDto<T> { items: T[]; total: number; page: number; pageSize: number; matchingIssueCount?: number | null }
 export interface SettingsDto { streetName: string; issuingUnit: string; defaultInspector: string; noticeTemplate: string; jpegQuality: number }
-export interface CommunityDto { id: string; name: string; title: string }
-export interface CommunityWriteRequest { name: string; title: string }
+export interface CommunityDto { id: string; name: string; title: string; parentId: string; color: string }
+export interface CommunityWriteRequest { name: string; title: string; parentId: string; color: string }
 export interface PointTypeDto { id: string; name: string }
 export interface PointTypeWriteRequest { name: string }
 export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto[]; pointTypes: PointTypeDto[]; campaignTypes?: CampaignTypeDto[]; today: string }
 
 export interface PointWriteRequest {
+  color?: string
   revision?: number
   shape?: import('./community').GeoShape | null; shapeRevision?: number
   name: string; communityId: string; typeId: string; address: string
@@ -22,6 +23,7 @@ export interface PointWriteRequest {
   longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]
 }
 export interface PointDto {
+  color: string
   revision: number
   id: string; name: string; communityId: string; communityName: string; typeId: string; typeName: string
   address: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean
