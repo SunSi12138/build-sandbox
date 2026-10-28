@@ -172,7 +172,7 @@ export async function verifyRound3({ browser, origin, directOrigin, api, test, r
       const bounds = await label.evaluate(element => ({ h: element.getBoundingClientRect().height, text: element.textContent, wrap: getComputedStyle(element).whiteSpace }))
       assert(bounds.text.includes('默认排查日后7天')); assert.equal(bounds.wrap, 'nowrap'); assert(bounds.h < 30)
       await page.getByTestId('temporary-point-mode').click()
-      await expect(page.getByRole('link', { name: '选取', exact: true })).toHaveAttribute('href', 'https://ditu.gaode.com/ssr/coordinate-picker')
+      await expect(page.getByRole('button', { name: '地图选点 / 画区域', exact: true })).toBeVisible()
       await page.getByTestId('inspection-inspector').fill('最后未提交姓名')
       await page.reload({ waitUntil: 'networkidle' })
       await expect(namesRoot(page.getByTestId('inspection-inspector'))).toContainText('最后未提交姓名')
