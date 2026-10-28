@@ -4,7 +4,7 @@ import { errorMessage } from '~/utils/format'
 const mode = defineModel<'regular' | 'temporary'>('mode', { required: true })
 const pointId = defineModel<string>('pointId', { required: true })
 const newPoint = defineModel<NewPointDraft>('newPoint', { required: true })
-const props = withDefaults(defineProps<{ disabled?: boolean; prefix?: string }>(), { prefix: 'campaign' })
+const props = withDefaults(defineProps<{ disabled?: boolean; prefix?: string }>(), { prefix: 'activity' })
 const emit = defineEmits<{ selected: [point: PointDto | null]; busy: [value: boolean] }>()
 const { bootstrap } = useAppData()
 const selected = ref<PointDto | null>(null)

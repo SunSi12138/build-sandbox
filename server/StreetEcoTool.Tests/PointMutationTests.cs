@@ -15,9 +15,15 @@ public sealed class PointMutationTests
             Longitude: 88.893426, Latitude: 29.274331));
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
         var associated = store.AttachPointPhotos(point.Id, new([photo.Id]));
-        Assert.Equal(newer with { PhotoCount = 1, CoverPhotoId = photo.Id }, associated);
-        Assert.Equal(associated with { Disabled = false }, store.SetPointDisabled(point.Id, new(false)));
-        Assert.Equal(associated with { Disabled = false }, store.AttachPointPhotos(point.Id, new([photo.Id])));
+        Assert.Equal(newer with { PhotoCount = 1, CoverPhotoId = photo.Id, Shape = associated.Shape }, associated);
+        Assert.Equal(newer.Shape!.Type, associated.Shape!.Type);
+        Assert.Equal(newer.Shape.Coordinates[0], associated.Shape.Coordinates[0]);
+        var enabled = store.SetPointDisabled(point.Id, new(false));
+        Assert.Equal(associated with { Disabled = false, Shape = enabled.Shape }, enabled);
+        Assert.Equal(associated.Shape.Coordinates[0], enabled.Shape!.Coordinates[0]);
+        var repeated = store.AttachPointPhotos(point.Id, new([photo.Id]));
+        Assert.Equal(associated with { Disabled = false, Shape = repeated.Shape }, repeated);
+        Assert.Equal(associated.Shape.Coordinates[0], repeated.Shape!.Coordinates[0]);
         Assert.Throws<ApiException>(() => store.SetPointDisabled(point.Id, new(null)));
         V2Environment.AssertForeignKeys(store.DatabasePath);
     }

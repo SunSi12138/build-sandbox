@@ -19,19 +19,9 @@ class Samples(word.WordSmoke):
     def __init__(self, *args, optimized=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.optimized = optimized
-        self.baseline_contract = not optimized
         self.images = {}
         self.sample_manifest = []
         self.sequence = 0
-
-    def json(self, method, path, body=None, **kwargs):
-        if getattr(self, 'baseline_contract', False) and method in ('POST', 'PUT') and path.split('?')[0] == '/api/campaigns' and body:
-            body = dict(body)
-            point_id = body.pop('pointId', None)
-            if point_id:
-                point = super().json('GET', '/api/points/' + point_id)['point']
-                body['communityId'], body['location'] = point['communityId'], point['address']
-        return super().json(method, path, body, **kwargs)
 
     def picture(self, phase, width=960, height=640):
         self.sequence += 1
@@ -43,7 +33,12 @@ class Samples(word.WordSmoke):
                 n = (x * 13 + y * 7 + self.sequence * 29) % 29
                 pixels[x,y] = (min(255, 80 + x * 110 // width + n), min(255, 80 + y * 100 // height + n), 110 + n)
         draw = ImageDraw.Draw(image)
-        font = ImageFont.truetype('DejaVuSans.ttf', max(14, min(width, height)//9))
+        font_size = max(14, min(width, height)//9)
+        try:
+            font = ImageFont.truetype('DejaVuSans.ttf', font_size)
+        except OSError:
+            # Pillow's bundled ASCII font keeps synthetic image labels portable.
+            font = ImageFont.load_default(size=font_size)
         draw.rectangle((8,8,width-9,height-9), outline='white', width=4)
         for i in range(1,8):
             x = width*i//8
@@ -108,22 +103,24 @@ class Samples(word.WordSmoke):
                 for issue in issues: self.json('POST',f"/api/issues/{issue['id']}/return",{'reason':'现场重新堆放，退回后允许补录业务日期。'})
         self.check_sample(f'/api/inspections/{rid}/export/rectification','rectification-rounds',descriptions+history,allphotos,
                           ['第 1 次反馈','第 2 次反馈','第 2 次复查','问题 1','问题 2'])
-        types=self.json('GET','/api/campaign-types')
+        types=self.json('GET','/api/remediation-types')
+        remediation_type=next(item for item in self.bootstrap['activityTypes'] if item['template']=='remediation')
         photos={k:[self.picture(phase)] for k,phase in [('beforePhotoIds','before'),('processPhotoIds','process'),('afterPhotoIds','after')]}
-        campaign={'name':'整治短备注与三阶段照片','typeId':types[0]['id'],'pointId':pid,'date':iso,'content':'清理沿岸垃圾，检查排水口。','outcome':'','notes':'现场设置垃圾收集点。',**photos}
-        detail=self.json('POST','/api/campaigns',campaign,expected=201)
-        self.check_sample(f"/api/campaigns/{detail['campaign']['id']}/export/record",'campaign-short-note',[campaign['notes'],campaign['content']],[p for group in photos.values() for p in group],['二、备注','三、整治照片'])
-        campaign.update(name='长备注、零数量与未填写数量',notes=note+'\n'+('沿河逐段检查，清理垃圾并记录整改结果。'*50),participantCount=0,vehicleCount=None,garbageTons=0,areaSqm=None)
-        campaign['beforePhotoIds']=[self.picture('before',200,1600),self.picture('before',1600,200),self.picture('before')]
-        campaign['processPhotoIds']=[];campaign['afterPhotoIds']=[self.picture('after')]
-        detail=self.json('POST','/api/campaigns',campaign,expected=201)
-        self.check_sample(f"/api/campaigns/{detail['campaign']['id']}/export/record",'campaign-long-note',[campaign['notes'],'参加人数（人）','清运垃圾（吨）'],campaign['beforePhotoIds']+campaign['afterPhotoIds'])
+        campaign={'name':'整治短备注与三阶段照片','typeId':remediation_type['id'],'pointId':pid,'date':iso,'content':'清理沿岸垃圾，检查排水口。','outcome':'','notes':'现场设置垃圾收集点。','remediation':{'typeId':types[0]['id'],**photos}}
+        detail=self.json('POST','/api/activities',campaign,expected=201)
+        self.check_sample(f"/api/activities/{detail['activity']['id']}/export/record",'campaign-short-note',[campaign['notes'],campaign['content']],[p for group in photos.values() for p in group],['二、备注','三、整治照片'])
+        campaign.update(name='长备注、零数量与未填写数量',notes=note+'\n'+('沿河逐段检查，清理垃圾并记录整改结果。'*50),participantCount=0)
+        campaign['remediation'].update(vehicleCount=None,garbageTons=0,areaSqm=None)
+        campaign['remediation']['beforePhotoIds']=[self.picture('before',200,1600),self.picture('before',1600,200),self.picture('before')]
+        campaign['remediation']['processPhotoIds']=[];campaign['remediation']['afterPhotoIds']=[self.picture('after')]
+        detail=self.json('POST','/api/activities',campaign,expected=201)
+        self.check_sample(f"/api/activities/{detail['activity']['id']}/export/record",'campaign-long-note',[campaign['notes'],'参加人数（人）','清运垃圾（吨）'],campaign['remediation']['beforePhotoIds']+campaign['remediation']['afterPhotoIds'])
         query='?from='+date.isoformat()+'&to='+iso+'&communityId='+self.community['id']
         self.check_sample('/api/exports/inspection-ledger'+query,'inspection-mixed',['共 2 次排查，正常 1，发现问题 1；问题共 2 项，已闭环 2'])
         self.check_sample('/api/exports/rectification-ledger'+query+'&photos=true','ledger-rounds',descriptions,allphotos,['第 2 次反馈'])
-        self.check_sample('/api/exports/campaign-ledger'+query,'campaign-quantities',['共 2 次整治','0.00'],optimized_terms=['整治内容及成效（摘要）'])
-        for kind in ('inspection','rectification','campaign'):
-            self.check_sample('/api/exports/'+kind+'-ledger?from=1900-01-01&to=1900-01-02','empty-'+kind,['共 0'])
+        self.check_sample('/api/exports/remediation-ledger'+query,'campaign-quantities',['共 2 次整治','0.00'],optimized_terms=['整治内容及成效（摘要）'])
+        for kind, sample in (('inspection','inspection'),('rectification','rectification'),('remediation','campaign')):
+            self.check_sample('/api/exports/'+kind+'-ledger?from=1900-01-01&to=1900-01-02','empty-'+sample,['共 0'])
         settings={**self.settings,'noticeTemplate':'经{街道全称}于{日期}检查{社区}辖区{点位}。\n{问题}\n'+('请妥善保管现场记录并逐项落实整改。'*40)+'\n请于{期限}前反馈。'}
         self.json('PUT','/api/settings',settings)
         self.json('PUT','/api/inspections/'+rid,{'date':date.isoformat(),'inspector':'专项人员','noticeNumber':'编号'+('甲'*98),'notes':note})

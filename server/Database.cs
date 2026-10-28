@@ -10,11 +10,12 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 4;
+    public const int SchemaVersion = 5;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
     public string PhotosDir { get; }
+    public string AttachmentsDir { get; }
     public string BackupDir { get; }
     public string TemporaryDir { get; }
     public string DatabasePath => Path.Combine(DataDir, "app.db");
@@ -27,18 +28,20 @@ public sealed partial class Store : IDisposable
         DataDir = Path.GetFullPath(dataDir);
         RootDir = Directory.GetParent(DataDir)?.FullName ?? throw new IOException("数据目录缺少程序上级目录。");
         PhotosDir = Path.Combine(RootDir, "photos");
+        AttachmentsDir = Path.Combine(RootDir, "attachments");
         BackupDir = Path.Combine(RootDir, "backup");
         TemporaryDir = Path.Combine(RootDir, "temp");
         RejectUnsupportedLayout(DataDir);
         RecoverInterruptedRestore(DataDir);
-        if (!File.Exists(DatabasePath) && Directory.Exists(PhotosDir) && Directory.EnumerateFileSystemEntries(PhotosDir).Any())
-            throw new ApiException(409, "照片目录已有内容但缺少数据库。已停止启动，请保留文件并检查完整备份。");
+        if (!File.Exists(DatabasePath) && new[] { PhotosDir, AttachmentsDir }.Any(path => Directory.Exists(path) && Directory.EnumerateFileSystemEntries(path).Any()))
+            throw new ApiException(409, "照片或附件目录已有内容但缺少数据库。已停止启动，请保留文件并检查完整备份。");
         Directory.CreateDirectory(DataDir);
         Directory.CreateDirectory(PhotosDir);
+        Directory.CreateDirectory(AttachmentsDir);
         Directory.CreateDirectory(BackupDir);
         Directory.CreateDirectory(TemporaryDir);
         SQLitePCL.Batteries_V2.Init();
-        try { ReopenConnection(); }
+        try { ReopenConnection(); RecoverAttachmentFiles(); }
         catch { _db?.Dispose(); throw; }
     }
 
@@ -84,6 +87,7 @@ public sealed partial class Store : IDisposable
                 id TEXT PRIMARY KEY, point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT,
                 inspection_date TEXT NOT NULL, inspector TEXT NOT NULL, result TEXT NOT NULL CHECK(result IN ('normal','issues')),
                 notes TEXT NOT NULL DEFAULT '', notice_number TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'routine' CHECK(source IN ('routine','matter','other')),
                 point_name TEXT NOT NULL, community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
                 community_name TEXT NOT NULL, community_title TEXT NOT NULL,
                 type_id TEXT NOT NULL REFERENCES point_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
@@ -91,62 +95,114 @@ public sealed partial class Store : IDisposable
             );
             CREATE TABLE issues (
                 id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE RESTRICT,
+                issue_type_id TEXT NOT NULL REFERENCES issue_types(id) ON DELETE RESTRICT, issue_type_name TEXT NOT NULL,
                 description TEXT NOT NULL, requirement TEXT NOT NULL DEFAULT '', deadline TEXT NOT NULL, responsible_unit TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','feedback','closed')),
                 feedback_date TEXT, feedback_notes TEXT NOT NULL DEFAULT '', review_date TEXT,
                 review_conclusion TEXT NOT NULL DEFAULT '', closed_date TEXT
             );
+            CREATE TABLE issue_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE activity_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                template TEXT NOT NULL DEFAULT 'general' CHECK(template IN ('general','remediation')),
+                built_in INTEGER NOT NULL DEFAULT 0 CHECK(built_in IN (0,1)), UNIQUE(id,template));
+            CREATE UNIQUE INDEX ix_activity_remediation_type ON activity_types(template) WHERE template='remediation';
+            CREATE TABLE remediation_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE activities (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                type_id TEXT NOT NULL, type_name TEXT NOT NULL, template TEXT NOT NULL,
+                point_id TEXT REFERENCES points(id) ON DELETE RESTRICT, point_name TEXT NOT NULL DEFAULT '',
+                community_id TEXT REFERENCES communities(id) ON DELETE RESTRICT, community_name TEXT NOT NULL DEFAULT '',
+                location TEXT NOT NULL DEFAULT '', activity_date TEXT NOT NULL, end_date TEXT,
+                organizer TEXT NOT NULL DEFAULT '', participants TEXT NOT NULL DEFAULT '',
+                participant_count INTEGER CHECK(participant_count IS NULL OR participant_count BETWEEN 0 AND 100000000),
+                content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY(type_id,template) REFERENCES activity_types(id,template) ON DELETE RESTRICT,
+                CHECK(template<>'remediation' OR point_id IS NOT NULL), CHECK(end_date IS NULL OR end_date>=activity_date)
+            );
+            CREATE TABLE activity_remediations (
+                activity_id TEXT PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+                type_id TEXT NOT NULL REFERENCES remediation_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
+                vehicle_count INTEGER CHECK(vehicle_count IS NULL OR vehicle_count BETWEEN 0 AND 100000000),
+                garbage_tons REAL CHECK(garbage_tons IS NULL OR garbage_tons BETWEEN 0 AND 1000000000000),
+                area_sqm REAL CHECK(area_sqm IS NULL OR area_sqm BETWEEN 0 AND 1000000000000)
+            );
             CREATE TABLE issue_actions (
                 id TEXT PRIMARY KEY, issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE RESTRICT,
                 kind TEXT NOT NULL CHECK(kind IN ('feedback','review','return')), action_date TEXT NOT NULL, notes TEXT NOT NULL
             );
-            CREATE TABLE campaign_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
-                CREATE TABLE campaigns (
-                    id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                    point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT, point_name TEXT NOT NULL,
-                    type_id TEXT NOT NULL REFERENCES campaign_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
-                    community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT, community_name TEXT NOT NULL,
-                    location TEXT NOT NULL, campaign_date TEXT NOT NULL, end_date TEXT,
-                    organizer TEXT NOT NULL DEFAULT '', participants TEXT NOT NULL DEFAULT '',
-                    participant_count INTEGER CHECK(participant_count IS NULL OR participant_count >= 0),
-                    vehicle_count INTEGER CHECK(vehicle_count IS NULL OR vehicle_count >= 0),
-                    garbage_tons REAL CHECK(garbage_tons IS NULL OR garbage_tons >= 0),
-                    area_sqm REAL CHECK(area_sqm IS NULL OR area_sqm >= 0),
-                    content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
-                    CHECK(end_date IS NULL OR end_date >= campaign_date)
-                );
             CREATE TABLE photos (
                     id TEXT PRIMARY KEY, inspection_id TEXT REFERENCES inspections(id) ON DELETE RESTRICT,
                     issue_id TEXT REFERENCES issues(id) ON DELETE RESTRICT,
                     action_id TEXT REFERENCES issue_actions(id) ON DELETE RESTRICT,
                     point_id TEXT REFERENCES points(id) ON DELETE RESTRICT,
-                    campaign_id TEXT REFERENCES campaigns(id) ON DELETE RESTRICT,
-                    phase TEXT NOT NULL CHECK(phase IN ('site','after','review','point','before','process')),
+                    activity_id TEXT REFERENCES activities(id) ON DELETE RESTRICT,
+                    phase TEXT NOT NULL CHECK(phase IN ('site','after','review','point','before','process','activity')),
                     relative_path TEXT NOT NULL UNIQUE, width INTEGER NOT NULL CHECK(width>0), height INTEGER NOT NULL CHECK(height>0),
                     uploaded_at TEXT NOT NULL, has_thumb INTEGER NOT NULL DEFAULT 0 CHECK(has_thumb IN (0,1)),
-                    CHECK((inspection_id IS NOT NULL)+(issue_id IS NOT NULL)+(point_id IS NOT NULL)+(campaign_id IS NOT NULL) <= 1),
+                    CHECK((inspection_id IS NOT NULL)+(issue_id IS NOT NULL)+(point_id IS NOT NULL)+(activity_id IS NOT NULL) <= 1),
                     CHECK(action_id IS NULL OR issue_id IS NOT NULL),
                     CHECK(inspection_id IS NULL OR phase='site'),
                     CHECK(issue_id IS NULL OR phase IN ('site','after','review')),
                     CHECK(point_id IS NULL OR phase='point'),
-                    CHECK(campaign_id IS NULL OR phase IN ('before','process','after'))
+                    CHECK(activity_id IS NULL OR phase IN ('activity','before','process','after'))
                 );
             CREATE INDEX ix_points_community_type ON points(community_id,type_id,disabled);
             CREATE INDEX ix_inspections_point_date ON inspections(point_id,inspection_date);
             CREATE INDEX ix_inspections_community_date ON inspections(community_id,inspection_date);
             CREATE INDEX ix_issues_status_deadline ON issues(status,deadline);
+            CREATE INDEX ix_issues_type ON issues(issue_type_id);
             CREATE INDEX ix_issues_inspection ON issues(inspection_id);
             CREATE INDEX ix_actions_issue ON issue_actions(issue_id);
             CREATE INDEX ix_photos_inspection ON photos(inspection_id);
             CREATE INDEX ix_photos_issue ON photos(issue_id);
-            CREATE INDEX ix_photos_unattached ON photos(uploaded_at) WHERE inspection_id IS NULL AND issue_id IS NULL AND point_id IS NULL AND campaign_id IS NULL;
+            CREATE INDEX ix_photos_unattached ON photos(uploaded_at) WHERE inspection_id IS NULL AND issue_id IS NULL AND point_id IS NULL AND activity_id IS NULL;
             CREATE INDEX ix_photos_point ON photos(point_id);
-            CREATE INDEX ix_photos_campaign ON photos(campaign_id);
-            CREATE INDEX ix_campaigns_date ON campaigns(campaign_date,community_id,type_id);
-            CREATE INDEX ix_campaigns_point_date ON campaigns(point_id,campaign_date);
+            CREATE INDEX ix_photos_activity ON photos(activity_id);
+            CREATE INDEX ix_activities_date ON activities(activity_date,community_id,type_id);
+            CREATE INDEX ix_activities_point_date ON activities(point_id,activity_date);
             CREATE INDEX ix_points_temporary ON points(temporary,disabled);
+            CREATE TABLE matters (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('public','hotline','assigned','discovered','other')),
+                received_date TEXT NOT NULL, content TEXT NOT NULL,
+                point_id TEXT REFERENCES points(id) ON DELETE RESTRICT, location TEXT NOT NULL DEFAULT '', deadline TEXT,
+                handler TEXT NOT NULL DEFAULT '', reference_number TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','closed')),
+                closed_date TEXT, outcome TEXT NOT NULL DEFAULT '', conclusion TEXT NOT NULL DEFAULT '',
+                CHECK(deadline IS NULL OR deadline>=received_date), CHECK(closed_date IS NULL OR closed_date>=received_date),
+                CHECK((status='closed' AND closed_date IS NOT NULL AND outcome IN ('resolved','no_issue','transferred','withdrawn')) OR (status<>'closed' AND closed_date IS NULL AND outcome=''))
+            );
+            CREATE INDEX ix_matters_status_deadline ON matters(status,deadline);
+            CREATE INDEX ix_matters_point_date ON matters(point_id,received_date);
+            CREATE TABLE matter_actions (
+                id TEXT PRIMARY KEY, matter_id TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL CHECK(kind IN ('note','reply','transfer','close','reopen')), action_date TEXT NOT NULL,
+                handler TEXT NOT NULL, notes TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX ix_matter_actions ON matter_actions(matter_id,action_date);
+            CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)));
+            CREATE TABLE point_tags (point_id TEXT NOT NULL REFERENCES points(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT, PRIMARY KEY(point_id,tag_id));
+            CREATE INDEX ix_point_tags_tag ON point_tags(tag_id);
+            CREATE TABLE inspection_tags (inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT, PRIMARY KEY(inspection_id,tag_id));
+            CREATE INDEX ix_inspection_tags_tag ON inspection_tags(tag_id);
+            CREATE TABLE activity_tags (activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT, PRIMARY KEY(activity_id,tag_id));
+            CREATE INDEX ix_activity_tags_tag ON activity_tags(tag_id);
+            CREATE TABLE matter_tags (matter_id TEXT NOT NULL REFERENCES matters(id) ON DELETE CASCADE, tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE RESTRICT, PRIMARY KEY(matter_id,tag_id));
+            CREATE INDEX ix_matter_tags_tag ON matter_tags(tag_id);
+            CREATE TABLE inspection_matters (inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE CASCADE, matter_id TEXT NOT NULL REFERENCES matters(id) ON DELETE RESTRICT, PRIMARY KEY(inspection_id,matter_id));
+            CREATE INDEX ix_inspection_matters_matter ON inspection_matters(matter_id);
+            CREATE TABLE issue_matters (issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE, matter_id TEXT NOT NULL REFERENCES matters(id) ON DELETE RESTRICT, PRIMARY KEY(issue_id,matter_id));
+            CREATE INDEX ix_issue_matters_matter ON issue_matters(matter_id);
+            CREATE TABLE activity_matters (activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE, matter_id TEXT NOT NULL REFERENCES matters(id) ON DELETE RESTRICT, PRIMARY KEY(activity_id,matter_id));
+            CREATE INDEX ix_activity_matters_matter ON activity_matters(matter_id);
+            CREATE TABLE activity_issues (activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE, issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE RESTRICT, PRIMARY KEY(activity_id,issue_id));
+            CREATE TABLE attachments (
+                id TEXT PRIMARY KEY, point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT, name TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '', relative_path TEXT NOT NULL UNIQUE, size INTEGER NOT NULL CHECK(size>0 AND size<=26214400),
+                content_type TEXT NOT NULL, uploaded_at TEXT NOT NULL, sha256 TEXT NOT NULL
+            );
+            CREATE INDEX ix_attachments_point ON attachments(point_id,uploaded_at);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=4;
+            PRAGMA user_version=5;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),
@@ -156,11 +212,22 @@ public sealed partial class Store : IDisposable
             using var type = Command("INSERT INTO point_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
             type.ExecuteNonQuery();
         }
-        foreach (var name in new[] { "卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他" })
+        foreach (var name in new[] { "环境卫生", "垃圾堆放", "餐饮油烟", "扬尘污染", "水体污染", "噪声污染", "其他" })
         {
-            using var command = Command("INSERT INTO campaign_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
+            using var command = Command("INSERT INTO issue_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
             command.ExecuteNonQuery();
         }
+        foreach (var name in new[] { "工作部署会议", "宣传教育", "集中学习", "业务培训", "志愿服务", "其他" })
+        {
+            using var command = Command("INSERT INTO activity_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
+            command.ExecuteNonQuery();
+        }
+        foreach (var name in new[] { "卫生大扫除", "垃圾清运", "河道清理", "乱堆乱放清理", "小广告清除", "绿化补种", "其他" })
+        {
+            using var command = Command("INSERT INTO remediation_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
+            command.ExecuteNonQuery();
+        }
+        using (var builtin = Command("INSERT INTO activity_types(id,name,template,built_in) VALUES($id,'整治','remediation',1);", transaction, ("$id", NewId()))) builtin.ExecuteNonQuery();
         transaction.Commit();
     }
 

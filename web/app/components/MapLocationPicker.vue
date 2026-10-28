@@ -18,5 +18,5 @@ function changed(shape: GeoShape) { selection.value = shape; if (shape.type === 
   </UModal>
 </template>
 <style scoped>
-.map-picker-toolbar{display:flex;flex-direction:column;gap:10px;padding:12px 16px;border-bottom:1px solid var(--divider)}.location-picker-map{height:min(60dvh,620px);min-height:280px;position:relative}.finish-area{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);box-shadow:0 2px 12px #0003}
+.map-picker-toolbar{display:flex;flex-direction:column;gap:10px;padding:12px 16px;border-bottom:1px solid var(--divider)}.location-picker-map{height:min(60dvh,620px);min-height:280px;position:relative}.finish-area{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);box-shadow:0 2px 12px var(--border-strong)}
 </style>

@@ -6,3 +6,5 @@ export function recordShape(record: { shape?: GeoShape | null; longitude?: numbe
   return record.longitude != null && record.latitude != null ? { type: 'Point', coordinates: [[record.longitude, record.latitude]] } : null
 }
 export function shapeLabel(shape?: GeoShape | null) { return !shape ? '尚未标记位置' : shape.type === 'Point' ? '已标记点位' : `已画区域 · ${shape.coordinates.length - 1} 个边界点` }
+
+export const mapColors = {"danger": "#dc2626", "warning": "#d97706", "normal": "#16796f", "disabled": "#64748b", "editing": "#0d9488", "halo": "#fff", "label": "#162f2c"} as const

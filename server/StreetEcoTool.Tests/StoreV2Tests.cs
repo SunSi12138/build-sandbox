@@ -69,10 +69,10 @@ public sealed class StoreV2Tests
         using var store = environment.Open();
         var community = store.SaveCommunity(null, new("社区", "社区居民委员会"));
         var point = new PointWriteRequest("临时点位", community.Id, store.GetPointTypes()[0].Id, "地点", Frequency: "weekly", Longitude: 88.12345678, Latitude: 29.12345678);
-        Assert.Throws<ApiException>(() => store.CreateInspection(new(null, Store.Today, "检查人", "issues", Issues: [new("问题", "整改", Store.Today, PhotoIds: ["missing"])], NewPoint: point)));
+        Assert.Throws<ApiException>(() => store.CreateTypedInspection(new(null, Store.Today, "检查人", "issues", Issues: [new("问题", "整改", Store.Today, PhotoIds: ["missing"])], NewPoint: point)));
         Assert.Empty(store.ListPoints(new(Temporary: "all")).Items);
         Assert.Empty(store.ListInspections(new()).Items);
-        var inspection = store.CreateInspection(new(null, Store.Today, "检查人", "normal", NewPoint: point));
+        var inspection = store.CreateTypedInspection(new(null, Store.Today, "检查人", "normal", NewPoint: point));
         Assert.True(inspection.Inspection.PointTemporary);
         Assert.Equal("irregular", store.GetPoint(inspection.Inspection.PointId).Frequency);
         Assert.Equal(88.123457, inspection.Inspection.Longitude);
@@ -94,9 +94,9 @@ public sealed class StoreV2Tests
         var site = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "site");
         store.UploadThumbnail(site.Id, WordExporterTests.Jpeg(100, 50));
         var pointPhoto = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "point");
-        var inspection = store.CreateInspection(new(null, Store.Today, "检查人", "issues", Issues: [new("问题", "整改", Store.Today, PhotoIds: [site.Id])],
+        var inspection = store.CreateTypedInspection(new(null, Store.Today, "检查人", "issues", Issues: [new("问题", "整改", Store.Today, PhotoIds: [site.Id])],
             NewPoint: new("临时点位", community.Id, store.GetPointTypes()[0].Id, "地点", PhotoIds: [pointPhoto.Id])));
-        var second = store.CreateInspection(new(inspection.Inspection.PointId, Store.Today, "检查人", "normal"));
+        var second = store.CreateTypedInspection(new(inspection.Inspection.PointId, Store.Today, "检查人", "normal"));
         store.DeleteInspection(second.Inspection.Id);
         Assert.True(store.GetPoint(inspection.Inspection.PointId).Temporary);
         var after = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "after");
@@ -115,7 +115,7 @@ public sealed class StoreV2Tests
         using var environment = new V2Environment();
         using var store = environment.Open();
         var point = environment.CreatePoint(store);
-        var detail = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("问题1", "整改1", Store.Today), new("问题2", "整改2", Store.Today)]));
+        var detail = store.CreateTypedInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("问题1", "整改1", Store.Today), new("问题2", "整改2", Store.Today)]));
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "after");
         Assert.Throws<ApiException>(() => store.RecordInspectionFeedback(detail.Inspection.Id, new(Store.Today,
             [new(detail.Issues[0].Id, "第一项完成", [photo.Id]), new(detail.Issues[1].Id, "第二项完成", ["missing"])])));
@@ -145,9 +145,9 @@ public sealed class StoreV2Tests
         using var store = environment.Open();
         var point = environment.CreatePoint(store);
         var yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        store.CreateInspection(new(point.Id, yesterday, "检查人", "issues", Issues:
+        store.CreateTypedInspection(new(point.Id, yesterday, "检查人", "issues", Issues:
             [new("逾期1", "整改", yesterday), new("逾期2", "整改", yesterday), new("即将到期", "整改", Store.Today)]));
-        store.CreateInspection(new(point.Id, Store.Today, "检查人", "normal"));
+        store.CreateTypedInspection(new(point.Id, Store.Today, "检查人", "normal"));
         var overdue = store.ListInspections(new(Overdue: true));
         Assert.Single(overdue.Items);
         Assert.Equal(2, overdue.MatchingIssueCount);
@@ -168,12 +168,12 @@ public sealed class StoreV2Tests
         using var store = environment.Open();
         var point = environment.CreatePoint(store);
         var yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        var mixed = store.CreateInspection(new(point.Id, yesterday, "检查人", "issues", Issues:
+        var mixed = store.CreateTypedInspection(new(point.Id, yesterday, "检查人", "issues", Issues:
             [new("逾期待整改", "整改", yesterday), new("今日待复查", "整改", Store.Today), new("已闭环", "整改", yesterday)]));
         store.RecordFeedback(mixed.Issues[1].Id, new(Store.Today, "已整改"));
         store.RecordFeedback(mixed.Issues[2].Id, new(Store.Today, "已整改"));
         store.ReviewAndClose(mixed.Issues[2].Id, new(Store.Today, "通过"));
-        var feedback = store.CreateInspection(new(point.Id, yesterday, "检查人", "issues", Issues: [new("逾期待复查", "整改", yesterday)]));
+        var feedback = store.CreateTypedInspection(new(point.Id, yesterday, "检查人", "issues", Issues: [new("逾期待复查", "整改", yesterday)]));
         store.RecordFeedback(feedback.Issues[0].Id, new(Store.Today, "已整改"));
 
         var result = store.ListInspections(new(AwaitingReview: true));
@@ -205,18 +205,18 @@ public sealed class StoreV2Tests
         using var environment = new V2Environment();
         using var store = environment.Open();
         var point = environment.CreatePoint(store);
-        var pending = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待整改", "整改", Store.Today)]));
-        var feedback = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待复查", "整改", Store.Today)]));
+        var pending = store.CreateTypedInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待整改", "整改", Store.Today)]));
+        var feedback = store.CreateTypedInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待复查", "整改", Store.Today)]));
         store.RecordFeedback(feedback.Issues[0].Id, new(Store.Today, "已整改"));
-        var mixed = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues:
+        var mixed = store.CreateTypedInspection(new(point.Id, Store.Today, "检查人", "issues", Issues:
             [new("待整改", "整改", Store.Today), new("待复查", "整改", Store.Today), new("已闭环", "整改", Store.Today)]));
         store.RecordFeedback(mixed.Issues[1].Id, new(Store.Today, "已整改"));
         store.RecordFeedback(mixed.Issues[2].Id, new(Store.Today, "已整改"));
         store.ReviewAndClose(mixed.Issues[2].Id, new(Store.Today, "通过"));
-        var closed = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("全部闭环", "整改", Store.Today)]));
+        var closed = store.CreateTypedInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("全部闭环", "整改", Store.Today)]));
         store.RecordFeedback(closed.Issues[0].Id, new(Store.Today, "已整改"));
         store.ReviewAndClose(closed.Issues[0].Id, new(Store.Today, "通过"));
-        var normal = store.CreateInspection(new(point.Id, Store.Today, "检查人", "normal"));
+        var normal = store.CreateTypedInspection(new(point.Id, Store.Today, "检查人", "normal"));
 
         var result = store.ListInspections(new(OpenOnly: true));
         Assert.Equal(3, result.Total);

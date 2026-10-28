@@ -16,7 +16,7 @@ import { isEmpty } from 'ol/extent'
 import { Style, Stroke, Fill, Circle as CircleStyle, Text } from 'ol/style'
 import type { Geometry } from 'ol/geom'
 import type { GeoShape } from '~/types/api'
-import type { MapRecord } from '~/utils/map'
+import { mapColors, type MapRecord } from '~/utils/map'
 import 'ol/ol.css'
 
 const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[] }>(), { records: () => [], shape: null, mode: 'view', selected: () => [] })
@@ -33,12 +33,12 @@ function toShape(feature: Feature<Geometry>): GeoShape {
   return { type: item instanceof Point ? 'Point' : 'Polygon', coordinates: coordinates.map(c => c.map(n => Math.round(n * 1e6) / 1e6)) }
 }
 function style(feature: Feature<Geometry>, editing = false) {
-  const color = editing ? '#0d9488' : feature.get('color') || '#16796f'
+  const color = editing ? mapColors.editing : feature.get('color') || mapColors.normal
   const active = editing || props.selected.includes(String(feature.getId()))
   return new Style({
     stroke: new Stroke({ color, width: active ? 4 : 2 }), fill: new Fill({ color: `${color}25` }),
-    image: new CircleStyle({ radius: active ? 9 : 7, fill: new Fill({ color }), stroke: new Stroke({ color: '#fff', width: 3 }) }),
-    text: editing ? undefined : new Text({ text: feature.get('title'), font: '600 13px "Microsoft YaHei",sans-serif', offsetY: -22, overflow: true, fill: new Fill({ color: '#162f2c' }), stroke: new Stroke({ color: '#fff', width: 4 }) }),
+    image: new CircleStyle({ radius: active ? 9 : 7, fill: new Fill({ color }), stroke: new Stroke({ color: mapColors.halo, width: 3 }) }),
+    text: editing ? undefined : new Text({ text: feature.get('title'), font: '600 13px "Microsoft YaHei",sans-serif', offsetY: -22, overflow: true, fill: new Fill({ color: mapColors.label }), stroke: new Stroke({ color: mapColors.halo, width: 4 }) }),
   })
 }
 function renderRecords() {
@@ -121,5 +121,5 @@ onBeforeUnmount(() => { observer?.disconnect(); map?.setTarget(undefined); map?.
   <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="吉林一号地图" /><div v-if="missingTiles || missingLabels" class="map-cache-hint" role="status">{{ missingTiles ? '部分底图未缓存或暂时不可用；仍可标记位置' : '部分地名未缓存或暂时不可用' }}</div><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
-.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:#e8ede9;overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:#fff;box-shadow:0 2px 10px #20332c22;border-radius:8px;padding:3px}.simple-map .ol-control button{background:#fff;color:#293d36;font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:#eff6f3}.simple-map .ol-scale-line{bottom:12px;left:12px}.simple-map .ol-attribution{bottom:4px;right:4px;max-width:75%;font-size:10px}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:#274b41;font-size:26px;box-shadow:0 2px 10px #20332c22;cursor:pointer}.map-cache-hint{position:absolute;bottom:12px;left:65px;right:60px;margin:auto;width:fit-content;max-width:calc(100% - 130px);background:#fffefaee;color:#665b35;padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none}
+.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.simple-map .ol-attribution{bottom:4px;right:4px;max-width:75%;font-size:10px}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-cache-hint{position:absolute;bottom:12px;left:65px;right:60px;margin:auto;width:fit-content;max-width:calc(100% - 130px);background:var(--warning-bg);color:var(--warning);padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none}
 </style>

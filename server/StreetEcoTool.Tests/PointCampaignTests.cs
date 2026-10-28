@@ -25,7 +25,7 @@ public sealed class PointCampaignTests
         Assert.Equal(point.Address, detail.Campaign.Location);
         Assert.Equal(point.CommunityId, detail.Campaign.CommunityId);
         Assert.Empty(store.GetPointDetail(point.Id).Inspections);
-        Assert.Equal(detail.Campaign.Id, Assert.Single(store.GetPointDetail(point.Id).Campaigns!).Id);
+        Assert.Equal(detail.Campaign.Id, Assert.Single(store.GetPointDetail(point.Id).Activities!).Id);
         Assert.Equal(detail.Campaign.Id, Assert.Single(store.ListCampaigns(new(PointId: point.Id)).Items).Id);
         Assert.Null(store.GetPoint(point.Id).LastInspectionDate);
         store.SavePoint(point.Id, new("改名", point.CommunityId, point.TypeId, "新地址", Contact: "王五"));
@@ -71,13 +71,13 @@ public sealed class PointCampaignTests
         Assert.Throws<ApiException>(() => store.SaveCampaign(null, request with { BeforePhotoIds = [before.Id], AfterPhotoIds = [wrong.Id] }));
         Assert.Empty(store.ListCampaigns(new()).Items);
         Assert.Empty(store.ListPoints(new(Temporary: "true")).Items);
-        Assert.Equal(0, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM photos WHERE campaign_id IS NOT NULL;"));
+        Assert.Equal(0, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM photos WHERE activity_id IS NOT NULL;"));
         var created = store.SaveCampaign(null, request with { BeforePhotoIds = [before.Id] });
         var temporary = store.GetPoint(created.Campaign.PointId);
         Assert.True(temporary.Temporary);
         Assert.Equal("irregular", temporary.Frequency);
         Assert.Equal(88.893426, temporary.Longitude);
-        Assert.Equal(created.Campaign.Id, Assert.Single(store.GetPointDetail(temporary.Id).Campaigns!).Id);
+        Assert.Equal(created.Campaign.Id, Assert.Single(store.GetPointDetail(temporary.Id).Activities!).Id);
         Assert.DoesNotContain(store.ListPoints(new(Missed: true)).Items, p => p.Id == temporary.Id);
         store.PromotePoint(temporary.Id, new("monthly"));
         Assert.False(store.GetCampaign(created.Campaign.Id).PointTemporary);
@@ -99,7 +99,7 @@ public sealed class PointCampaignTests
         var id = campaign.Campaign.PointId;
         var pointPhoto = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
         store.AttachPointPhotos(id, new([pointPhoto.Id]));
-        var inspection = store.CreateInspection(new(id, Store.Today, "张三", "normal"));
+        var inspection = store.CreateTypedInspection(new(id, Store.Today, "张三", "normal"));
         if (deleteInspectionFirst) store.DeleteInspection(inspection.Inspection.Id);
         else store.DeleteCampaign(campaign.Campaign.Id);
         Assert.Equal(id, store.GetPoint(id).Id);
@@ -122,8 +122,8 @@ public sealed class PointCampaignTests
         var c = store.SavePoint(null, new("丙点位", a.CommunityId, a.TypeId, "丙地址"));
         foreach (var point in new[] { a, b, c })
         {
-            store.CreateInspection(new(point.Id, Store.Today, "张三 李四", "normal"));
-            store.CreateInspection(new(point.Id, Store.Today, "张三 李四", "issues", Issues: [new(point.Name + "问题", "整改", Store.Today)]));
+            store.CreateTypedInspection(new(point.Id, Store.Today, "张三 李四", "normal"));
+            store.CreateTypedInspection(new(point.Id, Store.Today, "张三 李四", "issues", Issues: [new(point.Name + "问题", "整改", Store.Today)]));
             var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "before");
             store.SaveCampaign(null, Campaign(store, point.Id) with { Name = point.Name + "整治", ParticipantCount = 2, BeforePhotoIds = [photo.Id] });
         }

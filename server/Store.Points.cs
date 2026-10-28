@@ -23,10 +23,10 @@ public sealed partial class Store
             AND n.inspection_date >= CASE p.frequency WHEN 'weekly' THEN $week WHEN 'monthly' THEN $month WHEN 'quarterly' THEN $quarter END)))
         """;
 
-    private static PointDto ReadPoint(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
+    private PointDto ReadPoint(SqliteDataReader row, SqliteTransaction? tx = null) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetInt32(11) != 0, NullableString(row, 12), row.GetInt32(13), row.IsDBNull(14) ? null : row.GetDouble(14),
-        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), ReadShape(NullableString(row, 19)));
+        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), ReadShape(NullableString(row, 19))) { Tags = ReadTags("point", row.GetString(0), tx) };
 
     public PointDto GetPoint(string id)
     {
@@ -38,7 +38,7 @@ public sealed partial class Store
         using var command = Command(PointSelect + " WHERE p.id=$id;", transaction, ("$id", id), ("$today", Today));
         using var row = command.ExecuteReader();
         if (!row.Read()) throw new ApiException(404, "点位不存在。");
-        return ReadPoint(row);
+        return ReadPoint(row, transaction);
     }
 
     public PageDto<PointDto> ListPoints(PointQuery query)
@@ -56,11 +56,13 @@ public sealed partial class Store
                 ("$week", ReminderRules.PeriodStart("weekly", today)!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
                 ("$month", ReminderRules.PeriodStart("monthly", today)!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
                 ("$quarter", ReminderRules.PeriodStart("quarterly", today)!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))];
+            var where = PointWhere + TagFilterSql("point", "p.id", query.TagIds);
+            parameters = [.. parameters, .. TagParameters(query.TagIds)];
             int total;
-            using (var count = Command("SELECT COUNT(*) FROM points p " + PointWhere, null, parameters)) total = Convert.ToInt32(count.ExecuteScalar());
+            using (var count = Command("SELECT COUNT(*) FROM points p " + where, null, parameters)) total = Convert.ToInt32(count.ExecuteScalar());
             if (query.Map) (page, pageSize) = (1, Math.Max(total, 1));
             var ordering = query.Recent ? " ORDER BY 13 DESC,p.rowid DESC " : " ORDER BY p.name COLLATE NOCASE,p.rowid ";
-            using var command = Command(PointSelect + " " + PointWhere + ordering + " LIMIT $limit OFFSET $offset;", null,
+            using var command = Command(PointSelect + " " + where + ordering + " LIMIT $limit OFFSET $offset;", null,
                 [.. parameters, ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]);
             using var rows = command.ExecuteReader();
             var items = new List<PointDto>();
@@ -76,8 +78,8 @@ public sealed partial class Store
             var point = GetPoint(id);
             var inspections = ReadInspectionList(" WHERE n.point_id=$point ORDER BY n.inspection_date DESC,n.rowid DESC;", [("$point", id)]);
             var issues = ReadIssueList(" WHERE n.point_id=$point AND x.status<>'closed' ORDER BY x.deadline,x.rowid;", Today, [("$point", id)]);
-            var campaigns = ReadCampaigns("WHERE c.point_id=$point ORDER BY c.campaign_date DESC,c.rowid DESC;", [("$point", id)]);
-            return new(point, inspections, issues, ReadPhotos(pointId: id), campaigns);
+            var activities = ReadActivities("WHERE a.point_id=$point ORDER BY a.activity_date DESC,a.rowid DESC;", [("$point", id)]);
+            return new(point, inspections, issues, ReadPhotos(pointId: id), activities, GetAttachments(id), ReadMatters("WHERE m.point_id=$point;", ("$point", id)).Select(item => new MatterLinkDto(item.Id, item.Title, item.Status)).ToArray());
         }
     }
 
@@ -110,13 +112,14 @@ public sealed partial class Store
 
     // Both record types keep a temporary point alive. Call under the storage lock
     // before staging photo deletion so the same decision governs files and SQL.
-    private bool IsLastTemporaryRecord(string pointId, string? inspectionId = null, string? campaignId = null)
+    private bool IsLastTemporaryRecord(string pointId, string? inspectionId = null, string? activityId = null)
     {
         if (!GetPointInternal(pointId).Temporary) return false;
         using var command = Command("""
             SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$point AND id<>$inspection)
-                 + (SELECT COUNT(*) FROM campaigns WHERE point_id=$point AND id<>$campaign);
-            """, null, ("$point", pointId), ("$inspection", inspectionId ?? ""), ("$campaign", campaignId ?? ""));
+                 + (SELECT COUNT(*) FROM activities WHERE point_id=$point AND id<>$activity)
+                 + (SELECT COUNT(*) FROM attachments WHERE point_id=$point) + (SELECT COUNT(*) FROM matters WHERE point_id=$point);
+            """, null, ("$point", pointId), ("$inspection", inspectionId ?? ""), ("$activity", activityId ?? ""));
         return Convert.ToInt32(command.ExecuteScalar()) == 0;
     }
 
@@ -140,6 +143,7 @@ public sealed partial class Store
             ? "INSERT INTO points(id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,shape) VALUES($id,$name,$community,$type,$address,$contact,$phone,$frequency,$notes,$disabled,$longitude,$latitude,$temporary,$shape);"
             : "UPDATE points SET name=$name,community_id=$community,type_id=$type,address=$address,contact=$contact,phone=$phone,frequency=$frequency,notes=$notes,disabled=$disabled,longitude=$longitude,latitude=$latitude,temporary=$temporary,shape=$shape WHERE id=$id;", transaction, parameters))
             RequireChanged(command.ExecuteNonQuery(), "点位");
+        ReplaceTags("point", actualId, request.TagIds, transaction);
         AttachPhotos(request.PhotoIds, "point", null, null, transaction, pointId: actualId);
         return actualId;
     }
@@ -226,8 +230,8 @@ public sealed partial class Store
         {
             PrepareWrite();
             _ = GetPoint(id);
-            using (var used = Command("SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id) + (SELECT COUNT(*) FROM campaigns WHERE point_id=$id);", null, ("$id", id)))
-                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该点位已有排查或整治记录，不能删除；请停用点位。");
+            using (var used = Command("SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id) + (SELECT COUNT(*) FROM activities WHERE point_id=$id)+(SELECT COUNT(*) FROM matters WHERE point_id=$id)+(SELECT COUNT(*) FROM attachments WHERE point_id=$id);", null, ("$id", id)))
+                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该点位仍有业务记录或附件，不能删除；可停用点位。");
             ExecuteWithPhotoDeletion(ReadPhotos(pointId: id).Select(photo => photo.Id).ToArray(), transaction =>
             {
                 using var command = Command("DELETE FROM points WHERE id=$id;", transaction, ("$id", id));

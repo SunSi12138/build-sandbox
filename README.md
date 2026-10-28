@@ -1,8 +1,8 @@
 # 街道生态环保工具
 
-分支：`hbtool`，已加入点位和排查地图功能。本机部署，手机通过可信局域网或蒲公英组网访问；五个入口为首页、点位、排查、整治、设置。日常登记、照片、导出和已缓存地图无需外网；新地图范围首次加载需联网。运行时无需 Node.js、.NET Runtime 或 Office。没有登录、口令及权限体系，不要暴露到公网。
+分支：`hbtool`，已加入点位和排查地图功能。本机部署，手机通过可信局域网或蒲公英组网访问；六个入口为首页、点位、排查、事项、活动、设置。日常登记、照片、导出和已缓存地图无需外网；新地图范围首次加载需联网。运行时无需 Node.js、.NET Runtime 或 Office。没有登录、口令及权限体系，不要暴露到公网。
 
-## 地图版
+## 地图
 
 点位管理、排查记录增加列表／地图切换，两种视图共用筛选；地图展示全部匹配记录。
 点位创建／编辑、临时点位和排查创建支持地图选点或画一个区域；排查保存当时位置，不随点位后续移动。
@@ -11,10 +11,10 @@
 底图固定为吉林一号卫星图＋天地图地名标注。OpenLayers 随前端本地打包；图块优先读 `tiles`，缺失时由本机服务器联网获取并缓存，浏览器无需密钥。
 只缓存浏览过或预先复制的范围，未缓存区域不能保证断网显示。业务备份不包含地图缓存和服务配置。
 
-Windows 可用 `scripts/build-map.ps1` 构建独立地图版；脚本会复制本地的 `tiles/` 和 `map-providers.local.json`，不复制业务数据库。默认端口 **5181**，避免与社区 GIS 的 5180 冲突。两版 hbtool 仍使用同一个单实例锁，运行前关闭另一个 hbtool。
+Windows 可用 `scripts/build-map.ps1` 构建部署包；脚本会复制本地的 `tiles/` 和 `map-providers.local.json`，不复制业务数据库。默认端口 **5181**，避免与社区 GIS 的 5180 冲突。运行前关闭已启动的 hbtool。
 可复制 `map-providers.example.json` 为 `map-providers.local.json` 后填写密钥（天地图使用服务端类型 Key）。服务配置文件沿用社区 GIS 格式，数组只需 `jlyh`、`tdt-cva` 两项：`id`、`folder`、`scheme`、`urlTemplate`、`apiKey`、`mapKey`、`subdomains`。密钥在部署目录配置，不提交仓库；模板支持 `{z}`、`{x}`、`{y}`、`{s}`、`{key}`、`{mk}`。吉林一号使用 TMS 行号，地名标注使用 XYZ 行号。
 
-[地图版操作说明](docs/地图版使用说明.txt)。以下为原 hbtool 的通用启动与功能说明，原 CI 统一包不包含私有地图配置或缓存；部署地图版时另行携带这两项。
+[地图版操作说明](docs/地图版使用说明.txt)。CI 统一包不包含私有地图配置或缓存；部署地图版时另行携带这两项。
 
 ## 下载与启动
 
@@ -22,12 +22,14 @@ Windows 可用 `scripts/build-map.ps1` 构建独立地图版；脚本会复制�
 
 ```text
 hbtool/
-  StreetEcoTool-win-x86.exe
+  StreetEcoTool-win-x64.exe
   StreetEcoTool-linux-arm64
   wwwroot/
+  README.md
+  使用说明.md
 ```
 
-Windows 完整解压到可写目录，双击 `StreetEcoTool-win-x86.exe`。Linux ARM64：
+Windows 完整解压到可写目录，双击 `StreetEcoTool-win-x64.exe`。Linux ARM64：
 
 ```sh
 chmod +x StreetEcoTool-linux-arm64
@@ -43,10 +45,10 @@ chmod +x StreetEcoTool-linux-arm64
 命令行优先于程序同目录 `appsettings.json`；配置优先于默认值：
 
 ```powershell
-.\StreetEcoTool-win-x86.exe --port 5181
-.\StreetEcoTool-win-x86.exe --listen 127.0.0.1 --listen 192.168.1.100
-.\StreetEcoTool-win-x86.exe --listen 0.0.0.0 --no-browser
-.\StreetEcoTool-win-x86.exe --seed-demo
+.\StreetEcoTool-win-x64.exe --port 5181
+.\StreetEcoTool-win-x64.exe --listen 127.0.0.1 --listen 192.168.1.100
+.\StreetEcoTool-win-x64.exe --listen 0.0.0.0 --no-browser
+.\StreetEcoTool-win-x64.exe --seed-demo
 ```
 
 可选配置（发布包不包含此文件，避免覆盖用户设置）：
@@ -61,36 +63,40 @@ chmod +x StreetEcoTool-linux-arm64
 
 ## 数据、备份及不支持的旧版本
 
-地图版数据库结构为 **schema 4**，新增点位区域和排查位置快照。不兼容旧库、旧备份；请在全新目录启动。检测到旧库会拒绝打开并保留文件，不自动删除或迁移。程序目录布局：
+当前数据库结构为 **schema 5**，同时包含地图位置快照、事项、标签、附件和统一活动。按新的整合版本部署，使用全新数据目录。程序目录布局：
 
 ```text
 hbtool/
   data/app.db                # 运行时可能有 -wal / -shm
   photos/yyyyMM/             # 原图与 .thumb.jpg
+  attachments/yyyyMM/        # 点位附件原文件
   backup/                   # auto-日期.db、before-restore-* 等
   temp/                     # 当前恢复日志、恢复暂存及临时导出
   appsettings.json          # 用户配置
 ```
 
-所有路径相对可执行文件，不依赖工作目录。**本次不再迁移 schema 1、旧 data/photos 布局或旧恢复日志**。发现不支持的旧库、未来库或旧布局将保留文件并拒绝启动／恢复，不自动清空或新建空库。当前 ZIP 清单的 `FormatVersion=1` 是现行包格式，与 schema 1 不同，继续支持。
+所有路径相对可执行文件，不依赖工作目录。不支持的数据库或旧布局将保留文件并拒绝启动／恢复。本版 ZIP 清单为 `FormatVersion=1`，恢复时校验完整结构。
 
-“设置 → 备份与恢复”下载完整 ZIP，内容含一致性数据库快照、所有登记的原图和缩略图。恢复先预检并显示点位、排查、问题、整治和照片数量，确认覆盖后才执行；覆盖前保留旧数据，当前恢复日志支持中断回滚。恢复包必须来自当前支持的结构。
+“设置 → 备份与恢复”下载完整 ZIP，内容含一致性数据库快照、所有登记的原图、缩略图和点位附件。恢复先预检并显示点位、排查、问题、活动、整治子集、事项、附件、标签和照片数量，确认覆盖后才执行；覆盖前保留旧数据，当前恢复日志支持中断回滚。恢复包必须来自当前支持的结构。
 
-每日 00:00 保存前一天的数据库快照；缺失时在启动及跨日写入前补做；保留最近 14 份 `auto-日期.db`，**不含照片**，不删除 `before-*`。超过七天仍未关联的照片会清理。浏览器草稿不包含在服务端备份中。
+每日 00:00 保存前一天的数据库快照；缺失时在启动及跨日写入前补做；保留最近 14 份 `auto-日期.db`，**不含照片和附件**，不删除 `before-*`。超过七天仍未关联的照片会清理。浏览器草稿不包含在服务端备份中。
 
-**升级／搬迁前先下载完整备份并正常停机，再复制整个程序目录留作回退。** 更新时只替换两平台程序和整份 `wwwroot`，保留 data、photos、backup、temp 和用户配置；运行时不要只复制 app.db、不要删除 WAL。回退使用更新前的整目录副本或与其匹配的完整备份，不混用不同时点的数据库与照片。旧目录中真实数据的处理需要人工确认，程序不会代为删除。
+首次部署请解压到可写目录。**更新前下载完整备份并正常停机，再复制整个程序目录留作回退。** 更新时替换两平台程序和整份 `wwwroot`，保留 data、photos、attachments、backup、temp、tiles 和用户配置。回退使用更新前的整目录副本；当前完整备份恢复要求结构版本为5。
 
 ## 日常流程与导出
 
-正常排查同样保存；临时点位和排查共同成功或回滚。问题只有待整改、已反馈、复查闭环三档；排查详情按问题反馈、复查、退回，也支持单事务批量办理。删除临时点位最后一条排查会级联清理临时点位和点位照片，确认框明确说明。点位只加照片或切换停用不会再回写其他资料。
+完整业务规则见[新版使用说明](docs/new-application.md)。
 
-草稿在当前浏览器自动保存，提交期间字段冻结，失败后保留输入。上传可取消、失败可重试；缩略图失败回退原图，不阻断正常业务。浏览器支持的图片解码后按 EXIF 方向转 JPEG、去除 EXIF，长边不超过 1600，默认质量75；原图上限10MiB。HEIC 无法解码时先转 JPEG。样式、图标、字体栈、WASM 随静态页面本地供应；主动点高德链接才访问外部地图，工具不自动定位。
+- 事项独立登记和办理，可关联排查、整改问题及活动；办理记录、回复、移交、办结和重新办理保留过程。
+- 点位管理基本资料、照片、附件及相关工作记录。附件保存原文件，支持预览、下载、改名、备注和删除。
+- 排查支持事项来源、问题分类和逐项事项关联，整改保留反馈、复查、退回及闭环。
+- 活动统一承载普通活动和整治。整治是内置特殊模板，保留点位、整治类别、数量和前中后照片。
+- 标签在设置统一管理，跨模块筛选和查看；停用标签保留历史，多个标签按同时满足筛选。
+- 列表导出默认沿用当前筛选，覆盖全部匹配记录，也可自定义范围。九种DOCX：排查记录单、整改通知单、整改记录单、整治记录单、排查台账、整改台账、整治台账、活动记录单、活动台账。
 
-七种 DOCX：排查记录单、整改通知单、整改记录单、整治记录单、排查台账、整改台账、整治台账。整改记录单仅对有问题且全部闭环的排查开放。台账日期、社区和实际有效类型在导出弹窗全部显示；日期独立选择，未支持的列表搜索／状态条件不继承。
+照片在浏览器转JPEG、去除EXIF并压缩到长边不超过1600，原图上限10MiB；点位附件单文件上限25MiB，保持原始字节。静态样式、图标、图片处理WASM随页面本地供应。
 
-通知单支持 `{日期}`、`{点位}`、`{问题}`、`{期限}`、`{街道全称}`、`{社区}`。`{问题}` 为块级变量，最多一次；没有时正文后补问题表。重复时明确报错、不重置模板。编号最多100字。用户业务原文不会因包含“让、妥善、上传”等词而过滤。
-
-保持尚未确认的规则：整治台账仍为摘要（全文在记录单）；通知单正文期限仍为该次最晚期限，各问题保留各自期限；退回后仍允许符合原有规则的业务日期补录；台账仍独立范围。详见 [实施决定](docs/optimization/DECISIONS.md)。
+通知单支持 `{日期}`、`{点位}`、`{问题}`、`{期限}`、`{街道全称}`、`{社区}`。`{问题}` 为问题表格，最多一次；未填写时在正文后补表。
 
 ## 手机访问、网络与开机自启
 
@@ -137,7 +143,7 @@ journalctl -u street-eco-tool -n 80 --no-pager
 
 ## 平台和浏览器边界
 
-Windows x86 在 Windows Server 2022 x64/WOW64 构建与运行验证；不支持 Windows7/8.1。Linux ARM64 在 Ubuntu24.04原生构建，已核验产物最高 GLIBC 符号2.38，不能承诺旧发行版或 Alpine/musl 兼容。linux-x64只用于测试，不进入统一发布包。
+Windows x64 在 Windows Server 2022 x64 构建与运行验证；不支持 Windows7/8.1。Linux ARM64 在 Ubuntu20.04容器中原生构建，打包检查要求最高 GLIBC 符号不超过2.31；不支持 Alpine/musl。linux-x64只用于测试，不进入统一发布包。
 
 浏览器基线：Chrome/Edge111+、Safari/iOS16.4+、Firefox128+。自动化主要是 Chromium；最低版本和真机相机不能视为已逐一验收。没有 HTTPS 专属功能、Service Worker 或公网资源依赖。
 
@@ -154,14 +160,14 @@ npm --prefix web ci
 npm --prefix web run dev
 ```
 
-Nuxt开发代理默认后端5180；生产仅 `nuxt generate` 的 `.output/public`。常规回归：
+Nuxt开发代理默认后端5180；生产仅 `nuxt generate` 的 `.output/public`。常规回归（Node.js 24.15+）：
 
 ```sh
 dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release -p:PublishAot=false -warnaserror
 npm --prefix web ci
 npm --prefix web run typecheck
 npm --prefix web run generate
-# 对应原生宿主，Windows需x86 MSVC，Linux需clang、zlib开发包
+# 对应原生宿主，Windows需x64 MSVC，Linux需clang、zlib开发包
 dotnet publish server/StreetEcoTool.csproj -c Release -r <RID> -o publish/<RID> -p:PublishAot=true -p:SelfContained=true -warnaserror
 python3 tests/api-smoke.py --executable publish/<RID>/StreetEcoTool --report test-results/api.json
 python3 tests/word-smoke.py --executable publish/<RID>/StreetEcoTool --report test-results/word.json
@@ -171,16 +177,16 @@ npx playwright install --with-deps chromium
 node browser-test.mjs --executable ../publish/<RID>/StreetEcoTool
 ```
 
-`tests/word-layout-samples.py` 用真实API生成七类文档和边界样本；`tests/render-word.py` 固定本地字体配置，生成PDF、逐页PNG、哈希和人工审阅清单。CI同一宿主分别构建原始审计基线与新程序，使用相同测试脚本和字体渲染，浏览器／文档步骤失败时不组装最终包。Pillow、LibreOffice及Poppler只用于测试，不放入生产程序。
+`tests/word-layout-samples.py` 用真实API生成当前模板和边界样本；`tests/render-word.py` 固定本地字体配置，生成PDF、逐页PNG、哈希和人工审阅清单。CI针对当前新结构生成样本并使用固定字体渲染，浏览器／文档步骤失败时不组装最终包。Pillow、LibreOffice及Poppler只用于测试，不放入生产程序。
 
 统一打包：
 
 ```sh
-python3 scripts/package.py --win-x86 publish/win-x86/StreetEcoTool.exe --linux-arm64 publish/linux-arm64/StreetEcoTool --web-static web/.output/public --output dist
+python3 scripts/package.py --win-x64 publish/win-x64/StreetEcoTool.exe --linux-arm64 publish/linux-arm64/StreetEcoTool --web-static web/.output/public --output dist
 ```
 
 输出 `dist/hbtool.zip` 与校验文件。主程序架构、ZIP CRC、Linux执行位及共享wwwroot都会核对。历史完整说明仅保留在 [历史README](docs/history/v2-README.md)，其中旧迁移能力和旧测试数字不代表当前版本。
 
 ## 常见问题
 
-手机连不上：核对实际监听网卡、IP、端口、防火墙、Wi-Fi隔离与电脑休眠。端口占用：正常关闭原实例或改端口并更新防火墙／书签。照片失败：核对可解码格式、10MiB上限、网络、磁盘和写权限，重试或确认移除失败任务。更新后白屏：替换完整wwwroot并刷新，不能混用两版hash资源。旧库拒绝：先保留完整目录，用与原数据匹配的旧程序导出／核对，不要删除文件绕过检查。
+手机连不上：核对实际监听网卡、IP、端口、防火墙、Wi-Fi隔离与电脑休眠。端口占用：正常关闭原实例或改端口并更新防火墙／书签。照片失败：核对可解码格式、10MiB上限、网络、磁盘和写权限，重试或确认移除失败任务。更新后白屏：替换完整wwwroot并刷新，不能混用两版hash资源。旧库拒绝：本版不兼容旧结构，请使用独立新目录，原目录保留供旧程序使用。
