@@ -99,14 +99,15 @@ public sealed partial class Store
             return new(ReadActivities(where + " ORDER BY a.activity_date DESC,a.rowid DESC LIMIT $limit OFFSET $offset;", [.. parameters, ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]), total, page, pageSize);
         }
     }
-    public ActivityDto[] GetLedgerActivities(string from, string to, string? communityId = null, string? typeId = null, ActivityQuery? filters = null)
+    public ActivityDto[] GetLedgerActivities(string from, string to, string? communityId = null, string? typeId = null, ActivityQuery? filters = null, string[]? pointIds = null)
     {
         lock (_gate)
         {
             if (!string.IsNullOrWhiteSpace(communityId)) _ = RequireCommunity(communityId);
             if (!string.IsNullOrWhiteSpace(typeId)) _ = RequireActivityType(typeId);
             var query = (filters ?? new()) with { CommunityId = communityId, TypeId = typeId, From = from, To = to };
-            return ReadActivities(ActivityWhere + TagFilterSql("activity", "a.id", query.TagIds) + " ORDER BY a.activity_date,a.rowid;", ActivityParameters(query));
+            return ReadActivities(ActivityWhere + TagFilterSql("activity", "a.id", query.TagIds) + LedgerPointSql(pointIds?.Length ?? 0, "a.point_id") + " ORDER BY a.activity_date,a.rowid;",
+                [.. ActivityParameters(query), .. LedgerPointParameters(pointIds)]);
         }
     }
     public ActivityDetailDto SaveActivity(string? id, ActivityWriteRequest request)

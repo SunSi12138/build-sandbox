@@ -253,3 +253,9 @@ a.list-row:hover { background:var(--surface-2); }
 }
 
 .table-wrap .name-text { display:inline-block; max-width:24ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; vertical-align:middle; }
+
+@media (max-width:767px) {
+  .page-stack.map-page { height:calc(100dvh - 68px - env(safe-area-inset-bottom)); }
+  .page-stack.map-page > :not(.record-map-shell) { flex-shrink:0; }
+  .page-stack.map-page > .record-map-shell { flex:1 0 280px; height:auto; min-height:280px; }
+}

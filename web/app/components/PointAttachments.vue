@@ -6,36 +6,60 @@ const items = ref<AttachmentDto[]>([]), error = ref(''), busy = ref(false), uplo
 const input = ref<HTMLInputElement | null>(null), editing = ref<AttachmentDto | null>(null), deleting = ref<AttachmentDto | null>(null)
 const editOpen = ref(false), deleteOpen = ref(false), saving = ref(false), actionError = ref('')
 const form = reactive({ name: '', notes: '' })
-let controller: AbortController | undefined
-async function load() { try { items.value = await $fetch<AttachmentDto[]>(`/api/points/${props.pointId}/attachments`); error.value = '' } catch (cause) { error.value = errorMessage(cause) } }
+const listRequest = useLatestRequest()
+let uploadController: AbortController | undefined, ownerVersion = 0
+async function load() {
+  const request = listRequest.start(), pointId = props.pointId
+  try {
+    const result = await $fetch<AttachmentDto[]>(`/api/points/${pointId}/attachments`, { signal: request.signal })
+    if (request.isCurrent()) { items.value = result; error.value = '' }
+  } catch (cause) { if (request.isCurrent()) error.value = errorMessage(cause) }
+}
 async function upload(event: Event) {
   const element = event.target as HTMLInputElement, files = [...element.files ?? []]; element.value = ''
   if (busy.value || !files.length) return
-  busy.value = true; error.value = ''; controller = new AbortController(); const failures: string[] = []
+  const pointId = props.pointId, controller = new AbortController(), version = ownerVersion
+  uploadController = controller; busy.value = true; error.value = ''
+  const current = () => version === ownerVersion && uploadController === controller && !controller.signal.aborted
+  const failures: string[] = []
   try {
     for (const file of files) {
+      if (!current()) break
       uploadName.value = file.name
       if (!file.size || file.size > 25 * 1024 * 1024) { failures.push(`${file.name}：文件应大于 0 且不超过 25 MB`); continue }
-      try { await $fetch(`/api/points/${props.pointId}/attachments`, { method: 'PUT', query: { name: file.name }, body: file, headers: { 'content-type': 'application/octet-stream' }, retry: 0, signal: controller.signal }) }
-      catch (cause) { if (controller.signal.aborted) break; failures.push(`${file.name}：${errorMessage(cause)}`) }
+      try { await $fetch(`/api/points/${pointId}/attachments`, { method: 'PUT', query: { name: file.name }, body: file, headers: { 'content-type': 'application/octet-stream' }, retry: 0, signal: controller.signal }) }
+      catch (cause) { if (!current()) break; failures.push(`${file.name}：${errorMessage(cause)}`) }
     }
-    await load(); error.value = failures.join('\n')
-  } finally { busy.value = false; uploadName.value = '' }
+    if (current()) {
+      await load()
+      if (current() && failures.length) error.value = [error.value, ...failures].filter(Boolean).join('\n')
+    }
+  } finally { if (current()) { busy.value = false; uploadName.value = ''; uploadController = undefined } }
 }
 function edit(item: AttachmentDto) { editing.value = item; form.name = item.name; form.notes = item.notes; actionError.value = ''; editOpen.value = true }
 async function save() {
   if (!editing.value || saving.value) return
+  const version = ownerVersion, attachmentId = editing.value.id, body = { ...form }
   saving.value = true; actionError.value = ''
-  try { await $fetch(`/api/attachments/${editing.value.id}`, { method: 'PUT', body: form, retry: 0 }); editOpen.value = false; await load() }
-  catch (cause) { actionError.value = errorMessage(cause) } finally { saving.value = false }
+  try { await $fetch(`/api/attachments/${attachmentId}`, { method: 'PUT', body, retry: 0 }); if (version === ownerVersion) { editOpen.value = false; await load() } }
+  catch (cause) { if (version === ownerVersion) actionError.value = errorMessage(cause) }
+  finally { if (version === ownerVersion) saving.value = false }
 }
 async function remove() {
   if (!deleting.value || saving.value) return
+  const version = ownerVersion, attachmentId = deleting.value.id
   saving.value = true; actionError.value = ''
-  try { await $fetch(`/api/attachments/${deleting.value.id}`, { method: 'DELETE', query: { confirm: true }, retry: 0 }); deleteOpen.value = false; await load() }
-  catch (cause) { actionError.value = errorMessage(cause) } finally { saving.value = false }
+  try { await $fetch(`/api/attachments/${attachmentId}`, { method: 'DELETE', query: { confirm: true }, retry: 0 }); if (version === ownerVersion) { deleteOpen.value = false; await load() } }
+  catch (cause) { if (version === ownerVersion) actionError.value = errorMessage(cause) }
+  finally { if (version === ownerVersion) saving.value = false }
 }
-watch(() => props.pointId, load, { immediate: true }); onBeforeUnmount(() => controller?.abort())
+function cancelOwner() { ownerVersion++; uploadController?.abort(); uploadController = undefined; listRequest.cancel() }
+watch(() => props.pointId, () => {
+  cancelOwner(); items.value = []; error.value = ''; busy.value = false; uploadName.value = ''
+  editing.value = null; deleting.value = null; editOpen.value = false; deleteOpen.value = false; saving.value = false; actionError.value = ''
+  void load()
+}, { immediate: true, flush: 'sync' })
+onBeforeUnmount(cancelOwner)
 </script>
 <template><section class="panel"><div class="panel-head"><h2 class="section-title">点位附件</h2><UButton label="添加附件" icon="i-lucide-paperclip" color="neutral" variant="outline" :loading="busy" :disabled="busy" @click="input?.click()" /><input ref="input" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.txt,.zip" class="sr-only" data-testid="attachment-file" :disabled="busy" @change="upload" /></div>
 <div class="panel-body space-y-2"><p class="text-xs text-muted">保存原文件，单个不超过 25 MB；包含在完整备份中。</p><p v-if="busy" role="status" class="text-sm">正在上传 {{ uploadName }}</p><UAlert role="alert" v-if="error" :description="error" color="error" class="whitespace-pre-wrap" />

@@ -11,8 +11,14 @@ const state = reactive({ title: '', source: 'public', receivedDate: todayLocal()
 const saving = ref(false), loading = ref(true), error = ref(''), completed = ref(false), leaveOpen = ref(false)
 let original = '', resolveLeave: ((value: boolean) => void) | undefined
 const dirty = computed(() => !loading.value && JSON.stringify(state) !== original)
-watch(() => props.initial, value => { if (value) Object.assign(state, { ...value, pointId: value.pointId ?? '', deadline: value.deadline ?? '', tagIds: value.tags.map(tag => tag.id) }) }, { immediate: true })
-onMounted(async () => { try { await load(); if (!props.initial) { state.handler = bootstrap.value?.settings.defaultInspector ?? ''; state.pointId = queryText(route.query.pointId) } original = JSON.stringify(state) } catch (cause) { error.value = errorMessage(cause) } finally { loading.value = false } window.addEventListener('beforeunload', beforeUnload) })
+watch(() => props.initial, value => {
+  if (value) Object.assign(state, {
+    title: value.title, source: value.source, receivedDate: value.receivedDate, content: value.content,
+    pointId: value.pointId ?? '', location: value.location, deadline: value.deadline ?? '', handler: value.handler,
+    referenceNumber: value.referenceNumber, contact: value.contact, phone: value.phone, tagIds: value.tags.map(tag => tag.id)
+  })
+}, { immediate: true })
+onMounted(async () => { window.addEventListener('beforeunload', beforeUnload); try { await load(); if (!props.initial) { state.handler = bootstrap.value?.settings.defaultInspector ?? ''; state.pointId = queryText(route.query.pointId) } original = JSON.stringify(state) } catch (cause) { error.value = errorMessage(cause) } finally { loading.value = false } })
 function validate(): FormError[] {
   const errors: FormError[] = []
   if (!state.title.trim()) errors.push({ name: 'title', message: '请填写事项标题' })

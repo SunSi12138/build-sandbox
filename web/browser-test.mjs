@@ -14,6 +14,7 @@ import { verifyOptimization } from './optimization-browser-test.mjs'
 import { verifyRound3 } from './round3-browser-test.mjs'
 import { verifyUsability } from './ux-browser-test.mjs'
 import { verifyFreshArchitecture } from './fresh-architecture-browser-test.mjs'
+import { verifyConsistency } from './consistency-browser-test.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const executableArgument = process.argv.indexOf('--executable')
@@ -317,9 +318,18 @@ try {
   page = await context.newPage()
   page.on('pageerror', error => report.pageErrors.push(String(error)))
   page.on('requestfailed', request => { report.failedRequests ??= []; report.failedRequests.push({ url: request.url(), error: request.failure()?.errorText, case: activeCase }) })
-  page.on('console', message => { if (message.type() === 'error') report.consoleErrors.push({ text: message.text(), location: message.location(), case: activeCase, expectedWasmFailure }) })
+  page.on('console', message => {
+    if (message.type() !== 'error') return
+    const location = message.location()
+    // The listener-change case deliberately restarts HTTP; SystemListen retries this health probe.
+    const expectedRebindFailure = activeCase === 'Local listen popover: mutually exclusive all-interfaces selection and live rebind'
+      && location.url === origin + '/api/health' && message.text().includes('net::ERR_CONNECTION_REFUSED')
+    report.consoleErrors.push({ text: message.text(), location, case: activeCase, expectedWasmFailure, expectedRebindFailure })
+  })
 
-  if (process.argv.includes('--fresh-only')) {
+  if (process.argv.includes('--consistency-only')) {
+    await verifyConsistency({ browser, origin, directOrigin, api, test, bootstrap, evidence })
+  } else if (process.argv.includes('--fresh-only')) {
     await verifyFreshArchitecture({ browser, origin, api, test, bootstrap, point, evidence })
   } else {
   await test('Fresh HTTP page: offline resources, six navigation items and hash query persistence', async () => {
@@ -685,10 +695,11 @@ try {
   await verifyOptimization({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg })
   await verifyRound3({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg, evidence })
   await verifyUsability({ browser, origin, api, test, bootstrap, activityId, evidence, directOrigin, fixtureJpeg })
+  await verifyConsistency({ browser, origin, directOrigin, api, test, bootstrap, evidence })
   }
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')
   assert.deepEqual(report.pageErrors, [], 'Unhandled browser errors occurred')
-  assert.deepEqual(report.consoleErrors.filter(entry => !entry.expectedWasmFailure), [], 'Unexpected browser console errors occurred')
+  assert.deepEqual(report.consoleErrors.filter(entry => !entry.expectedWasmFailure && !entry.expectedRebindFailure), [], 'Unexpected browser console errors occurred')
   report.passed = true
 } catch (error) {
   report.error = error.stack || String(error); console.error(report.error)

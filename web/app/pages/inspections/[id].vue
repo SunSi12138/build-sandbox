@@ -162,19 +162,16 @@ async function revealIssue() {
   await nextTick()
   document.getElementById(`issue-${issue}`)?.scrollIntoView({ block: 'start', behavior: 'auto' })
 }
+const detailRequest = useLatestRequest()
 async function load() {
   if (!id.value) return
-  loading.value = true
-  error.value = ''
+  const request = detailRequest.start(), recordId = id.value
+  loading.value = true; error.value = ''
   try {
-    assign(await $fetch<InspectionDetailDto>(`/api/inspections/${id.value}`))
-  } catch (value) {
-    error.value = errorMessage(value)
-  } finally {
-    loading.value = false
-    await nextTick()
-    void revealIssue()
-  }
+    const result = await $fetch<InspectionDetailDto>(`/api/inspections/${recordId}`, { signal: request.signal })
+    if (request.isCurrent()) { assign(result) }
+  } catch (cause) { if (request.isCurrent()) error.value = errorMessage(cause) }
+  finally { if (request.isCurrent()) { loading.value = false; await nextTick(); if (request.isCurrent()) void revealIssue() } }
 }
 function openBatch(mode: 'feedback' | 'review', issue = '') {
   batchMode.value = mode
@@ -320,7 +317,7 @@ onBeforeUnmount(() => {
   overlayForm.value = false
   window.removeEventListener('beforeunload', beforeUnload)
 })
-watch(id, load, { immediate: true })
+watch(id, () => { detail.value = null; void load() }, { immediate: true })
 watch(() => route.query.issue, revealIssue)
 </script>
 <template>

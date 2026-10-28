@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import type { ActivityDto, PageDto } from '~/types/api'
 import { errorMessage, queryText } from '~/utils/format'
+import { currentLedgerFilters } from '~/utils/ledger'
 useHead({ title: '活动记录 · 街道生态环保' })
 const route = useRoute()
 const { bootstrap, load: loadAppData } = useAppData()
-const { field, page, setPage, tagIds, flush } = useQueryFilters()
+const { field, page, setPage, tagIds, flush, setFilters } = useQueryFilters()
 const q = field('q')
 const communityId = field('communityId', 'all')
-const typeId = field('typeId', 'all')
+const selectedType = field('typeId', 'all')
+const typeId = computed({ get: () => selectedType.value, set: (value: string) => { void setFilters({ typeId: value === 'all' ? undefined : value, template: undefined, remediationTypeId: undefined }) } })
+const filters = computed(() => currentLedgerFilters('activity', route.query))
 const remediationTypeId = field('remediationTypeId', 'all')
 const from = field('from')
 const to = field('to')
@@ -17,7 +20,7 @@ const error = ref('')
 const datesOpen = ref(false)
 const exportOpen = ref(false)
 const communities = computed(() => [{ label: '全部社区', value: 'all' }, ...(bootstrap.value?.communities ?? []).map(v => ({ label: v.name, value: v.id }))])
-const isRemediationFilter = computed(() => bootstrap.value?.activityTypes.find(item => item.id === typeId.value)?.template === 'remediation' || queryText(route.query.template) === 'remediation')
+const isRemediationFilter = computed(() => bootstrap.value?.activityTypes.find(item => item.id === typeId.value)?.template === 'remediation' || queryText(route.query.template) === 'remediation' || remediationTypeId.value !== 'all')
 const remediationTypes = computed(() => [{ label: '全部整治类别', value: 'all' }, ...(bootstrap.value?.remediationTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
 const types = computed(() => [{ label: '全部类型', value: 'all' }, ...(bootstrap.value?.activityTypes ?? []).map(v => ({ label: v.name, value: v.id }))])
 let sequence = 0
@@ -30,12 +33,7 @@ async function refresh() {
   error.value = ''
   try {
     await loadAppData()
-    const value = await $fetch<PageDto<ActivityDto>>('/api/activities', { signal: controller.signal, query: {
-      q: q.value || undefined, communityId: communityId.value === 'all' ? undefined : communityId.value,
-      typeId: typeId.value === 'all' ? undefined : typeId.value,
-      pointId: queryText(route.query.pointId) || undefined, template: queryText(route.query.template) || undefined, remediationTypeId: isRemediationFilter.value && remediationTypeId.value !== 'all' ? remediationTypeId.value : undefined, tagId: tagIds.value, matterId: queryText(route.query.matterId) || undefined,
-      from: from.value || undefined, to: to.value || undefined, page: page.value, pageSize: 30
-    } })
+    const value = await $fetch<PageDto<ActivityDto>>('/api/activities', { signal: controller.signal, query: { ...filters.value, page: page.value, pageSize: 30 } })
     if (current === sequence) result.value = value
   } catch (cause) { if (current === sequence) error.value = errorMessage(cause) }
   finally { if (current === sequence) loading.value = false }
@@ -60,11 +58,12 @@ async function openExport() { await flush(); exportOpen.value = true }
       <div class="filter-field"><label>社区</label><USelect v-model="communityId" :items="communities" class="w-full" aria-label="社区筛选" /></div>
       <div class="filter-field"><label>类型</label><USelect v-model="typeId" :items="types" class="w-full" aria-label="类型筛选" /></div>
       <div v-if="isRemediationFilter" class="filter-field"><label>整治类别</label><USelect v-model="remediationTypeId" :items="remediationTypes" class="w-full" aria-label="整治类别筛选" /></div>
-      <div class="filter-dates" :class="{ 'is-open': datesOpen }"><div class="filter-field"><label>标签</label><TagPicker v-model="tagIds" placeholder="按标签筛选" /></div>
+      <div class="filter-dates" :class="{ 'is-open': datesOpen }"><div class="filter-field"><label>标签</label><TagPicker v-model="tagIds" mode="filter" placeholder="按标签筛选" /></div>
         <div class="filter-field"><label>开始日期</label><UInput v-model="from" type="date" aria-label="开始日期" class="w-full" /></div>
         <div class="filter-field"><label>结束日期</label><UInput v-model="to" type="date" aria-label="结束日期" class="w-full" /></div>
       </div>
     </div>
+    <div class="filter-tool-row"><span>共 {{ result?.total ?? '—' }} 条</span><UButton v-if="Object.keys(route.query).length" to="/activities" label="清空筛选" color="neutral" variant="link" /></div>
     <div class="mobile-only"><UButton label="导出活动台账" color="neutral" variant="outline" icon="i-lucide-file-down" @click="openExport" /></div>
     <UAlert v-if="error" :description="error" color="error" variant="subtle"><template #actions><UButton label="重试" color="neutral" variant="outline" @click="refresh" /></template></UAlert>
     <div v-if="loading && !result" class="space-y-2"><USkeleton v-for="index in 5" :key="index" class="h-16 w-full" /></div>
@@ -86,6 +85,6 @@ async function openExport() { await flush(); exportOpen.value = true }
       <EmptyState v-else-if="!loading" title="暂无活动记录"><UButton to="/activities/new">新增活动</UButton></EmptyState>
       <div v-if="result.total > 30" class="flex items-center justify-between gap-2"><UButton label="上一页" color="neutral" variant="outline" :disabled="page <= 1 || loading" @click="setPage(page - 1)" /><span class="text-xs text-muted">{{ page }} / {{ Math.ceil(result.total / 30) }}</span><UButton label="下一页" color="neutral" variant="outline" :disabled="page >= Math.ceil(result.total / 30) || loading" @click="setPage(page + 1)" /></div>
     </template>
-    <ActivityLedgerExport :current-query="route.query" v-model:open="exportOpen" :community-id="communityId === 'all' ? undefined : communityId" :type-id="typeId === 'all' ? undefined : typeId" />
+    <ActivityLedgerExport :current-query="filters" v-model:open="exportOpen" :community-id="communityId === 'all' ? undefined : communityId" :type-id="typeId === 'all' ? undefined : typeId" />
   </div>
 </template>

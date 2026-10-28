@@ -33,5 +33,5 @@ export function useQueryFilters() {
   onBeforeUnmount(() => clearTimeout(timer))
   const tagIds = computed({ get: () => { const value = route.query.tagId; return (Array.isArray(value) ? value : value ? [value] : []).filter((id): id is string => typeof id === 'string' && !!id) }, set: (value: string[]) => { void replace({ tagId: value.length ? value : undefined }) } })
   const page = computed(() => Math.max(1, Number.parseInt(queryText(route.query.page) || '1', 10) || 1))
-  return { field, set, page, tagIds, flush: () => Object.keys(pending).length ? replace({}) : Promise.resolve(), setPage: (value: number) => set('page', value === 1 ? '' : String(value), false) }
+  return { field, set, setFilters: replace, page, tagIds, flush: () => Object.keys(pending).length ? replace({}) : Promise.resolve(), setPage: (value: number) => set('page', value === 1 ? '' : String(value), false) }
 }

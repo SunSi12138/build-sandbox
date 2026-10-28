@@ -14,7 +14,7 @@ async function save() {
   try {
     await $fetch(`/api/${route}/${props.id}/relations`, { method: 'PUT', body: { tagIds: canTag.value ? tagIds.value : undefined, matterIds: canMatter.value ? matterIds.value : undefined }, retry: 0 })
     emit('changed'); open.value = false
-  } catch (cause) { error.value = errorMessage(cause); emit('changed') }
+  } catch (cause) { error.value = errorMessage(cause) }
   finally { saving.value = false }
 }
 </script>

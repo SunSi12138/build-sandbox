@@ -236,7 +236,7 @@ async function save() {
       <section class="form-section">
         <UButton type="button" label="更多信息" color="neutral" variant="ghost" :trailing-icon="moreOpen ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" :aria-expanded="moreOpen" aria-controls="activity-more" @click="moreOpen = !moreOpen" />
         <div v-show="moreOpen" id="activity-more" class="field-grid mt-3">
-          <UFormField v-if="!remediation" label="关联点位" class="field-full"><PointSelect v-model="state.pointId" :disabled="disabled" /></UFormField>
+          <UFormField v-if="!remediation" label="关联点位" class="field-full"><PointSelect v-model="state.pointId" active-only :disabled="disabled" /></UFormField>
           <UFormField label="标签" class="field-full"><TagPicker v-model="state.tagIds" :disabled="disabled" /></UFormField>
           <UFormField label="关联事项" class="field-full"><MatterPicker v-model="state.matterIds" :selected="initial?.activity.matters" :disabled="disabled" /></UFormField>
           <UFormField label="关联整改问题" class="field-full"><IssuePicker v-model="state.issueIds" :point-id="state.pointId" :selected="initial?.activity.relatedIssues" :disabled="disabled" /></UFormField>

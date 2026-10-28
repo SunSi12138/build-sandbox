@@ -11,11 +11,16 @@ const back = computed(() => { const value = queryText(route.query.returnTo); ret
 const menu = computed(() => [[{ label: '编辑', icon: 'i-lucide-pencil', to: `/activities/new?edit=${id.value}` },
   { label: '删除活动', icon: 'i-lucide-trash-2', color: 'error' as const, onSelect: () => { actionError.value = ''; deleteOpen.value = true } }]])
 useHead({ title: () => `${detail.value?.activity.name ?? '活动详情'} · 街道生态环保` })
+const detailRequest = useLatestRequest()
 async function load() {
+  if (!id.value) return
+  const request = detailRequest.start(), recordId = id.value
   loading.value = true; error.value = ''
-  try { detail.value = await $fetch<ActivityDetailDto>(`/api/activities/${id.value}`) }
-  catch (cause) { error.value = errorMessage(cause) }
-  finally { loading.value = false }
+  try {
+    const result = await $fetch<ActivityDetailDto>(`/api/activities/${recordId}`, { signal: request.signal })
+    if (request.isCurrent()) { detail.value = result }
+  } catch (cause) { if (request.isCurrent()) error.value = errorMessage(cause) }
+  finally { if (request.isCurrent()) { loading.value = false } }
 }
 async function remove() {
   if (deleting.value) return
@@ -34,7 +39,7 @@ async function exportRecord() {
   catch (cause) { actionError.value = errorMessage(cause) }
   finally { downloading.value = false }
 }
-watch(id, load, { immediate: true })
+watch(id, () => { detail.value = null; void load() }, { immediate: true })
 </script>
 <template>
   <div class="page-stack">

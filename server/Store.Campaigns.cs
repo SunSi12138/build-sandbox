@@ -69,9 +69,7 @@ public sealed partial class Store
         {
             if (!string.IsNullOrWhiteSpace(typeId)) _ = RequireCampaignType(typeId);
             var query = new ActivityQuery(Q: filters?.Q, PointId: filters?.PointId, Template: "remediation", RemediationTypeId: typeId, TagIds: filters?.TagIds, MatterId: filters?.MatterId);
-            var records = GetLedgerActivities(from, to, communityId, filters?.ActivityTypeId, query);
-            var selected = (pointIds ?? []).ToHashSet(StringComparer.Ordinal);
-            return records.Where(record => selected.Count == 0 || selected.Contains(record.PointId!)).Select(AsCampaign).ToArray();
+            return GetLedgerActivities(from, to, communityId, filters?.ActivityTypeId, query, pointIds).Select(AsCampaign).ToArray();
         }
     }
     public CampaignDetailDto SaveCampaign(string? id, CampaignWriteRequest request)

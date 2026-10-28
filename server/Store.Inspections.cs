@@ -117,9 +117,22 @@ public sealed partial class Store
         lock (_gate)
         {
             var parameters = InspectionParameters(query with { Rectify = null });
-            var items = ReadInspectionList(InspectionWhere + TagFilterSql("inspection", "n.id", query.TagIds), parameters);
-            return new(items.Length, items.Count(item => item.RectifyStatus == "none"), items.Count(item => item.RectifyStatus == "pending"),
-                items.Count(item => item.RectifyStatus == "feedback"), items.Count(item => item.RectifyStatus == "closed"), CountMatchingIssues(parameters, query.TagIds));
+            using var command = Command("""
+                WITH matching AS (
+                    SELECT n.result,
+                        EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='pending') AS pending,
+                        EXISTS(SELECT 1 FROM issues x WHERE x.inspection_id=n.id AND x.status='feedback') AS feedback
+                    FROM inspections n JOIN points pt ON pt.id=n.point_id
+                """ + " " + InspectionWhere + TagFilterSql("inspection", "n.id", query.TagIds) + """
+                )
+                SELECT COUNT(*),COALESCE(SUM(result='normal'),0),
+                    COALESCE(SUM(result<>'normal' AND pending),0),
+                    COALESCE(SUM(result<>'normal' AND NOT pending AND feedback),0),
+                    COALESCE(SUM(result<>'normal' AND NOT pending AND NOT feedback),0)
+                FROM matching;
+                """, null, [.. parameters, ("$today", Today)]);
+            using var row = command.ExecuteReader(); row.Read();
+            return new(row.GetInt32(0), row.GetInt32(1), row.GetInt32(2), row.GetInt32(3), row.GetInt32(4), CountMatchingIssues(parameters, query.TagIds));
         }
     }
 

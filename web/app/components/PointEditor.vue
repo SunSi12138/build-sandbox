@@ -13,17 +13,23 @@ const defaults = (): PointState => ({ shape: null, name: '', communityId: '', ty
 const state = reactive<PointState>(defaults())
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
+const detailRequest = useLatestRequest()
 watch(open, async value => {
   overlayForm.value = value
-  if (!value) return
+  if (!value) { detailRequest.cancel(); return }
+  const request = detailRequest.start()
   error.value = ''; loading.value = true
   const point = props.point
   Object.assign(state, point ? { ...point, shape: point.shape ?? (point.longitude != null && point.latitude != null ? { type: "Point", coordinates: [[point.longitude, point.latitude]] } : null), coordinates: coordinatesText(point.longitude, point.latitude), photos: [], tagIds: point.tags.map(tag => tag.id) } : defaults())
   try {
     await load()
-    if (point) state.photos = (await $fetch<PointDetailDto>(`/api/points/${point.id}`)).photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
-  } catch (value) { error.value = errorMessage(value) }
-  finally { loading.value = false }
+    if (!request.isCurrent()) return
+    if (point) {
+      const result = await $fetch<PointDetailDto>(`/api/points/${point.id}`, { signal: request.signal })
+      if (request.isCurrent()) state.photos = result.photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
+    }
+  } catch (value) { if (request.isCurrent()) error.value = errorMessage(value) }
+  finally { if (request.isCurrent()) loading.value = false }
 })
 function validate(value: PointState): FormError[] {
   const errors: FormError[] = []

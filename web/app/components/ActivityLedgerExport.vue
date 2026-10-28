@@ -12,7 +12,8 @@ const scope = ref<'current' | 'custom'>('current')
 const kind = ref<'activity' | 'remediation'>('activity'), remediationType = ref('all')
 const remediationTypes = computed(() => [{ label: '全部整治类别', value: 'all' }, ...(bootstrap.value?.remediationTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
 const canRemediation = computed(() => scope.value === 'custom' || (props.currentQuery?.template !== 'general' && (!props.currentQuery?.typeId || bootstrap.value?.activityTypes.find(item => item.id === props.currentQuery?.typeId)?.template === 'remediation')))
-watch(kind, value => { if (value === 'remediation' && scope.value === 'custom') type.value = 'all' })
+watch([kind, scope], ([value, currentScope]) => { if (value === 'remediation' && currentScope === 'custom') type.value = 'all' })
+watch(canRemediation, allowed => { if (!allowed) kind.value = 'activity' }, { flush: 'sync' })
 const includePhotos = ref(false), exporting = ref(false), loading = ref(false), error = ref('')
 const preview = ref<number | null>(null), previewBusy = ref(false), previewError = ref('')
 const disabled = computed(() => exporting.value || loading.value)
@@ -68,7 +69,7 @@ async function exportWord() {
   if (scope.value === 'custom' && (!from.value || !to.value || from.value > to.value)) { error.value = '请选择正确的日期范围'; return }
   exporting.value = true; error.value = ''
   const parameters = ledgerSearchParams({ ...query.value, scope: scope.value, photos: String(includePhotos.value) })
-  try { await downloadWord(`/api/exports/${kind.value}-ledger?${parameters}`, '活动台账.docx'); open.value = false }
+  try { await downloadWord(`/api/exports/${kind.value}-ledger?${parameters}`, kind.value === 'remediation' ? '整治台账.docx' : '活动台账.docx'); open.value = false }
   catch (cause) { error.value = errorMessage(cause) }
   finally { exporting.value = false }
 }

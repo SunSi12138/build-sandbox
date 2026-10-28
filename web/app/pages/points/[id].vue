@@ -26,17 +26,16 @@ const back = computed(() => {
   return /^\/points\/?(?:\?|$)/.test(value) ? value : '/points'
 })
 useHead({ title: computed(() => `${detail.value?.point.name || '点位详情'} · 街道生态环保`) })
+const detailRequest = useLatestRequest()
 async function load() {
   if (!id.value) return
-  loading.value = true
-  error.value = ''
+  const request = detailRequest.start(), recordId = id.value
+  loading.value = true; error.value = ''
   try {
-    detail.value = await $fetch<PointDetailDto>(`/api/points/${id.value}`)
-  } catch (value) {
-    error.value = errorMessage(value)
-  } finally {
-    loading.value = false
-  }
+    const result = await $fetch<PointDetailDto>(`/api/points/${recordId}`, { signal: request.signal })
+    if (request.isCurrent()) { detail.value = result }
+  } catch (cause) { if (request.isCurrent()) error.value = errorMessage(cause) }
+  finally { if (request.isCurrent()) { loading.value = false } }
 }
 async function saved() {
   toast.add({ title: '已保存', color: 'success', duration: 2000 })
@@ -103,7 +102,7 @@ const menu = computed(() => [
     },
   },
 ])
-watch(id, load, { immediate: true })
+watch(id, () => { detail.value = null; void load() }, { immediate: true })
 </script>
 <template>
   <div class="page-stack">
