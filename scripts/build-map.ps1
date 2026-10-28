@@ -26,7 +26,7 @@ foreach ($name in @('map-providers.local.json', 'tiles')) {
   $source = Join-Path $root $name
   if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $Output -Recurse -Force }
 }
-Copy-Item -LiteralPath (Join-Path $root 'docs/地图版使用说明.txt') -Destination $Output -Force
+Copy-Item -LiteralPath (Join-Path $root 'docs/地图使用说明.txt') -Destination $Output -Force
 if (-not (Test-Path -LiteralPath (Join-Path $Output 'appsettings.json'))) {
   [IO.File]::WriteAllText((Join-Path $Output 'appsettings.json'), '{"port":5181,"listen":["127.0.0.1"]}')
 }

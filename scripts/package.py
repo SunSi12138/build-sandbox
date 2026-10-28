@@ -44,7 +44,7 @@ def main() -> None:
     root = Path(__file__).resolve().parent.parent
     files.extend([(root / "README.md", "hbtool/README.md", 0o644),
                   (root / "docs/new-application.md", "hbtool/使用说明.md", 0o644),
-                  (root / "docs/地图版使用说明.txt", "hbtool/地图使用说明.txt", 0o644),
+                  (root / "docs/地图使用说明.txt", "hbtool/地图使用说明.txt", 0o644),
                   (root / "map-providers.example.json", "hbtool/map-providers.example.json", 0o644)])
     args.output.mkdir(parents=True, exist_ok=True)
     target = args.output / "hbtool.zip"
@@ -54,6 +54,11 @@ def main() -> None:
             entry.create_system = 3
             entry.external_attr = (0o100000 | mode) << 16
             entry.compress_type = zipfile.ZIP_DEFLATED
+            if source == root / "README.md":
+                readme = source.read_text(encoding="utf-8")
+                readme = readme.replace("docs/new-application.md", "使用说明.md").replace("docs/地图使用说明.txt", "地图使用说明.txt")
+                archive.writestr(entry, readme.encode("utf-8"))
+                continue
             with source.open("rb") as input_file, archive.open(entry, "w") as output:
                 while block := input_file.read(1024 * 1024):
                     output.write(block)

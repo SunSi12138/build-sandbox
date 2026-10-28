@@ -19,8 +19,8 @@ function select(ids: string[]) { unlocated.value = false; selected.value = ids }
   <div class="record-map-shell">
     <SimpleMap ref="map" :records="markers" :selected="selected" @select="select" />
     <div class="record-map-summary"><span>已标记 {{ records.length - missing.length }} 条</span><button v-if="missing.length" type="button" :aria-pressed="unlocated" @click="unlocated = !unlocated; selected = []">未标记 {{ missing.length }} 条 ›</button></div>
-    <div v-if="!records.length" class="record-map-empty">当前筛选下没有记录</div>
-    <section v-if="shown.length" class="record-map-panel" aria-label="地图上的记录"><header><strong>{{ unlocated ? '未标记位置' : '此处的记录' }} · {{ shown.length }}</strong><UButton type="button" icon="i-lucide-x" aria-label="收起地图记录" color="neutral" variant="ghost" @click="selected = []; unlocated = false" /></header><div class="record-map-items"><article v-for="record in shown" :key="record.id"><h3>{{ record.title }}</h3><p>{{ record.subtitle }}</p><div class="flex gap-2"><UButton v-if="choose" type="button" size="sm" label="选择这个点位" @click="emit('choose', record.id)" /><UButton v-else-if="record.href" :to="record.href" size="sm" label="查看详情" variant="outline" /><slot name="actions" :record="record" /></div></article></div></section>
+    <div v-if="!records.length" class="record-map-empty">暂无匹配记录</div>
+    <section v-if="shown.length" class="record-map-panel" aria-label="地图记录"><header><strong>{{ unlocated ? '未标记位置' : '此处记录' }} · {{ shown.length }}</strong><UButton type="button" icon="i-lucide-x" aria-label="收起地图记录" color="neutral" variant="ghost" @click="selected = []; unlocated = false" /></header><div class="record-map-items"><article v-for="record in shown" :key="record.id"><h3>{{ record.title }}</h3><p>{{ record.subtitle }}</p><div class="flex gap-2"><UButton v-if="choose" type="button" size="sm" label="选择点位" @click="emit('choose', record.id)" /><UButton v-else-if="record.href" :to="record.href" size="sm" label="查看详情" variant="outline" /><slot name="actions" :record="record" /></div></article></div></section>
   </div>
 </template>
 <style scoped>

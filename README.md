@@ -1,20 +1,6 @@
 # 街道生态环保工具
 
-分支：`hbtool`，已加入点位和排查地图功能。本机部署，手机通过可信局域网或蒲公英组网访问；六个入口为首页、点位、排查、事项、活动、设置。日常登记、照片、导出和已缓存地图无需外网；新地图范围首次加载需联网。运行时无需 Node.js、.NET Runtime 或 Office。没有登录、口令及权限体系，不要暴露到公网。
-
-## 地图
-
-点位管理、排查记录增加列表／地图切换，两种视图共用筛选；地图展示全部匹配记录。
-点位创建／编辑、临时点位和排查创建支持地图选点或画一个区域；排查保存当时位置，不随点位后续移动。
-同一位置的排查集中列出；无位置的记录在“未标记”入口仍可访问。详情支持查看保存的位置。
-
-底图固定为吉林一号卫星图＋天地图地名标注。OpenLayers 随前端本地打包；图块优先读 `tiles`，缺失时由本机服务器联网获取并缓存，浏览器无需密钥。
-只缓存浏览过或预先复制的范围，未缓存区域不能保证断网显示。业务备份不包含地图缓存和服务配置。
-
-Windows 可用 `scripts/build-map.ps1` 构建部署包；脚本会复制本地的 `tiles/` 和 `map-providers.local.json`，不复制业务数据库。默认端口 **5181**，避免与社区 GIS 的 5180 冲突。运行前关闭已启动的 hbtool。
-可复制 `map-providers.example.json` 为 `map-providers.local.json` 后填写密钥（天地图使用服务端类型 Key）。服务配置文件沿用社区 GIS 格式，数组只需 `jlyh`、`tdt-cva` 两项：`id`、`folder`、`scheme`、`urlTemplate`、`apiKey`、`mapKey`、`subdomains`。密钥在部署目录配置，不提交仓库；模板支持 `{z}`、`{x}`、`{y}`、`{s}`、`{key}`、`{mk}`。吉林一号使用 TMS 行号，地名标注使用 XYZ 行号。
-
-[地图版操作说明](docs/地图版使用说明.txt)。CI 统一包不包含私有地图配置或缓存；部署地图版时另行携带这两项。
+本机运行的街道生态环保工作台，包含点位、排查、事项、活动、地图和设置。手机可通过可信局域网访问，无需安装 Node.js、.NET 或 Office。
 
 ## 下载与启动
 
@@ -27,6 +13,8 @@ hbtool/
   wwwroot/
   README.md
   使用说明.md
+  地图使用说明.txt
+  map-providers.example.json
 ```
 
 Windows 完整解压到可写目录，双击 `StreetEcoTool-win-x64.exe`。Linux ARM64：
@@ -59,7 +47,7 @@ chmod +x StreetEcoTool-linux-arm64
 
 `0.0.0.0` 与其他选项互斥。保存监听后在同一进程重新绑定，数据库和 Mutex 不变；远程请求不能修改监听，必须从运行电脑的回环地址操作。失效网卡跳过并提示，全部不可用时回退到本机。端口冲突会中文报错退出。
 
-默认框架日志最低级别为 **Warning**，保留 Error/Critical。启动地址、目录、时区和关键配置提醒仍直接输出到控制台。命令行 `--no-browser` 禁止自动开浏览器；第二实例不另起服务。Ctrl+C、SIGTERM 或正常关闭会释放连接。
+按 Ctrl+C 正常停机。
 
 ## 数据、备份及不支持的旧版本
 
@@ -85,7 +73,7 @@ hbtool/
 
 ## 日常流程与导出
 
-完整业务规则见[新版使用说明](docs/new-application.md)。
+完整业务规则见[使用说明](docs/new-application.md)。
 
 - 事项独立登记和办理，可关联排查、整改问题及活动；办理记录、回复、移交、办结和重新办理保留过程。
 - 点位管理基本资料、照片、附件及相关工作记录。附件保存原文件，支持预览、下载、改名、备注和删除。
@@ -98,7 +86,19 @@ hbtool/
 
 通知单支持 `{日期}`、`{点位}`、`{问题}`、`{期限}`、`{街道全称}`、`{社区}`。`{问题}` 为问题表格，最多一次；未填写时在正文后补表。
 
+## 地图
+
+点位和排查的列表与地图共用筛选条件。点位支持选点、画区域；排查保存当时的位置，不随点位后续移动。操作见[地图使用说明](docs/地图使用说明.txt)。
+
+底图使用吉林一号卫星图和天地图地名标注。复制 `map-providers.example.json` 为 `map-providers.local.json`，填写密钥后放在程序旁并重启；天地图使用服务端类型 Key。
+
+浏览新范围时联网下载，已缓存范围从 `tiles/` 加载。完整业务备份不包含地图缓存和服务配置，搬迁时另行复制 `tiles/` 和 `map-providers.local.json`。
+
+Windows 本机构建可用 `scripts/build-map.ps1`，会携带本地地图配置和缓存。该脚本生成的配置使用端口5181；统一ZIP包默认端口5180。
+
 ## 手机访问、网络与开机自启
+
+本工具无登录保护，仅用于可信网络。
 
 Windows 防火墙由管理员放行实际端口，仅限所需可信网络。例如管理员 PowerShell：
 
@@ -141,17 +141,17 @@ journalctl -u street-eco-tool -n 80 --no-pager
 
 安装 tzdata 并核对本地时区；所有业务日期和快照以服务器本地时间计算。修改服务或更新程序前正常停机。
 
-## 平台和浏览器边界
+## 平台和浏览器
 
 Windows x64 在 Windows Server 2022 x64 构建与运行验证；不支持 Windows7/8.1。Linux ARM64 在 Ubuntu20.04容器中原生构建，打包检查要求最高 GLIBC 符号不超过2.31；不支持 Alpine/musl。linux-x64只用于测试，不进入统一发布包。
 
-浏览器基线：Chrome/Edge111+、Safari/iOS16.4+、Firefox128+。自动化主要是 Chromium；最低版本和真机相机不能视为已逐一验收。没有 HTTPS 专属功能、Service Worker 或公网资源依赖。
+浏览器：Chrome/Edge111+、Safari/iOS16.4+、Firefox128+。
 
-Word 页面使用项目固定A4/字体声明和页码，不打包字体。缺少字体时由设备替代；**LibreOffice 渲染、OOXML结构和 Word/WPS GUI 是不同验收层**，不能互相替代。本轮结果与未验项见 [变更和验证说明](docs/optimization/CHANGES.md)。
+Word导出采用A4页面和固定字体，设备缺少字体时会自动替换。
 
 ## 开发、构建与回归
 
-沿用 global.json、server项目与web锁文件，不擅自更新版本。开发：
+使用 global.json 指定的.NET SDK及Node.js 24.15+。开发：
 
 ```sh
 dotnet run --project server/StreetEcoTool.csproj -p:PublishAot=false -- --no-browser
@@ -185,7 +185,7 @@ node browser-test.mjs --executable ../publish/<RID>/StreetEcoTool
 python3 scripts/package.py --win-x64 publish/win-x64/StreetEcoTool.exe --linux-arm64 publish/linux-arm64/StreetEcoTool --web-static web/.output/public --output dist
 ```
 
-输出 `dist/hbtool.zip` 与校验文件。主程序架构、ZIP CRC、Linux执行位及共享wwwroot都会核对。历史完整说明仅保留在 [历史README](docs/history/v2-README.md)，其中旧迁移能力和旧测试数字不代表当前版本。
+输出 `dist/hbtool.zip` 与校验文件。
 
 ## 常见问题
 
