@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 namespace StreetEcoTool;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(GeoShape))]
 [JsonSerializable(typeof(ErrorDto))]
 [JsonSerializable(typeof(OkDto))]
 [JsonSerializable(typeof(SettingsDto))]

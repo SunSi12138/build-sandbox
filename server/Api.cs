@@ -73,7 +73,7 @@ public static class Api
         app.MapDelete("/api/point-types/{id}", deleteType);
 
         RequestDelegate points = context => Write(context, store.ListPoints(new(Query(context, "q"), Query(context, "communityId"), Query(context, "typeId"),
-            Query(context, "disabled") ?? "false", Number(context, "page", 1), Number(context, "pageSize", 30), Flag(context, "recent"), Flag(context, "missed"), Query(context, "temporary") ?? "false")), AppJsonContext.Default.PointPage);
+            Query(context, "disabled") ?? "false", Number(context, "page", 1), Number(context, "pageSize", 30), Flag(context, "recent"), Flag(context, "missed"), Query(context, "temporary") ?? "false", Flag(context, "map"))), AppJsonContext.Default.PointPage);
         RequestDelegate point = context => Write(context, store.GetPointDetail(Id(context)), AppJsonContext.Default.PointDetailDto);
         RequestDelegate createPoint = async context => await Write(context, store.SavePoint(null, await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto, 201);
         RequestDelegate updatePoint = async context => await Write(context, store.SavePoint(Id(context), await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto);
@@ -95,7 +95,7 @@ public static class Api
         static InspectionQuery InspectionFilters(HttpContext context) => new(Query(context, "pointId"), Query(context, "communityId"),
             Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30),
             Query(context, "rectify"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "typeId"), Flag(context, "temporary"),
-            Flag(context, "awaitingReview"), Flag(context, "openOnly"));
+            Flag(context, "awaitingReview"), Flag(context, "openOnly"), Flag(context, "map"));
         RequestDelegate inspections = context => Write(context, store.ListInspections(InspectionFilters(context)), AppJsonContext.Default.InspectionPage);
         RequestDelegate inspectionCounts = context => Write(context, store.GetInspectionCounts(InspectionFilters(context)), AppJsonContext.Default.InspectionCountsDto);
         RequestDelegate inspection = context => Write(context, store.GetInspectionDetail(Id(context)), AppJsonContext.Default.InspectionDetailDto);

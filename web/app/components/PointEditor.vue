@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { FormError } from '@nuxt/ui'
-import type { PointDetailDto, PointDto, PointWriteRequest, PhotoUploadDto, Frequency } from '~/types/api'
+import type { PointDetailDto, PointDto, PointWriteRequest, PhotoUploadDto, Frequency, GeoShape } from '~/types/api'
 import { coordinatesText, errorMessage, frequencyOptions, parseCoordinates } from '~/utils/format'
 const open = defineModel<boolean>('open', { default: false })
 const props = defineProps<{ point?: PointDto | null }>()
@@ -8,8 +8,8 @@ const emit = defineEmits<{ saved: [point: PointDto] }>()
 const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false)
-interface PointState { name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
-const defaults = (): PointState => ({ name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
+interface PointState { shape: GeoShape | null; name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
+const defaults = (): PointState => ({ shape: null, name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
 const state = reactive<PointState>(defaults())
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
@@ -18,7 +18,7 @@ watch(open, async value => {
   if (!value) return
   error.value = ''; loading.value = true
   const point = props.point
-  Object.assign(state, point ? { ...point, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : defaults())
+  Object.assign(state, point ? { ...point, shape: point.shape ?? (point.longitude != null && point.latitude != null ? { type: 'Point', coordinates: [[point.longitude, point.latitude]] } : null), coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : defaults())
   try {
     await load()
     if (point) state.photos = (await $fetch<PointDetailDto>(`/api/points/${point.id}`)).photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
@@ -39,7 +39,7 @@ async function save() {
   if (loading.value || saving.value || photosBusy.value || validate(state).length) return
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
-  const body: PointWriteRequest = { name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
+  const body: PointWriteRequest = { shape: state.shape, name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
   try { const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/points', { method: props.point ? 'PUT' : 'POST', body, retry: 0 }); emit('saved', point); open.value = false }
   catch (value) { error.value = errorMessage(value) }
   finally { saving.value = false }
@@ -56,7 +56,8 @@ onBeforeUnmount(() => { overlayForm.value = false })
         <UFormField label="社区" name="communityId" required><USelect v-model="state.communityId" :items="communities" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="类型" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
         <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
-        <UFormField label="经纬度" name="coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" /></UFormField>
+        <UFormField label="地图位置" class="field-full"><MapLocationField :model-value="state.shape" :disabled="loading || saving" @update:model-value="state.shape = $event; state.coordinates = $event ? coordinatesText($event.coordinates[0]?.[0] ?? null, $event.coordinates[0]?.[1] ?? null) : ''" /></UFormField>
+        <details class="field-full text-sm text-muted"><summary class="cursor-pointer">手动填写经纬度</summary><UFormField name="coordinates" class="mt-2"><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" @update:model-value="state.shape = null" /></UFormField></details>
         <UFormField label="联系人" name="contact"><NameTagsInput :disabled="loading || saving" v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>

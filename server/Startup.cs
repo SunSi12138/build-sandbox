@@ -259,6 +259,7 @@ internal static class Startup
         });
 
         Api.Map(app, store);
+        store.MapApi(app);
         PhotoApi.Map(app, store);
         store.MapBackupApi(app);
         store.MapWordApi(app);

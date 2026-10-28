@@ -18,3 +18,9 @@ artifacts/
 .DS_Store
 **/__pycache__/
 *.pyc
+
+work/
+release/
+运行版/
+tiles/
+map-providers.local.json

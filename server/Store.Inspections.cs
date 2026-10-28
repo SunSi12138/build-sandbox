@@ -16,7 +16,7 @@ public sealed partial class Store
         (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status='closed'),
         (SELECT COUNT(*) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed' AND x.deadline<$today),
         (SELECT MIN(x.deadline) FROM issues x WHERE x.inspection_id=n.id AND x.status<>'closed'),
-        pt.temporary,pt.longitude,pt.latitude
+        pt.temporary,json_extract(n.shape,'$.coordinates[0][0]'),json_extract(n.shape,'$.coordinates[0][1]'),n.shape
         FROM inspections n JOIN points pt ON pt.id=n.point_id
         """;
     private const string InspectionWhere = """
@@ -37,7 +37,7 @@ public sealed partial class Store
     private static InspectionDto ReadInspection(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetString(11), row.GetString(12), row.GetString(13), row.GetString(14), row.GetString(15), row.GetInt32(16), row.GetInt32(17), row.GetString(18), row.GetInt32(19), row.GetInt32(20), NullableString(row, 21),
-        row.GetInt32(22) != 0, row.IsDBNull(23) ? null : row.GetDouble(23), row.IsDBNull(24) ? null : row.GetDouble(24));
+        row.GetInt32(22) != 0, row.IsDBNull(23) ? null : row.GetDouble(23), row.IsDBNull(24) ? null : row.GetDouble(24), ReadShape(NullableString(row, 25)));
 
     private InspectionDto[] ReadInspectionList(string suffix, (string Name, object? Value)[] parameters, string? today = null)
     {
@@ -103,6 +103,7 @@ public sealed partial class Store
             int total;
             using (var count = Command("SELECT COUNT(*) FROM inspections n JOIN points pt ON pt.id=n.point_id " + InspectionWhere, null, [.. parameters, ("$today", Today)]))
                 total = Convert.ToInt32(count.ExecuteScalar());
+            if (query.Map) (page, pageSize) = (1, Math.Max(total, 1));
             var items = ReadInspectionList(InspectionWhere + " ORDER BY n.inspection_date DESC,n.rowid DESC LIMIT $limit OFFSET $offset;",
                 [.. parameters, ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]);
             return new(items, total, page, pageSize, CountMatchingIssues(parameters));
@@ -152,17 +153,18 @@ public sealed partial class Store
             {
                 var point = ResolveRecordPoint(request.PointId, request.NewPoint, transaction);
                 var community = RequireCommunity(point.CommunityId, transaction);
+                var shape = request.Shape is null ? point.Shape : NormalizeShape(request.Shape);
                 var validatedIssues = inputIssues.Select(issue => new IssueCreateRequest(Text(issue.Description, "问题描述", 8000, true),
                     Text(issue.Requirement, "整改要求", 8000), DateText(issue.Deadline, "整改期限"),
                     Text(string.IsNullOrWhiteSpace(issue.ResponsibleUnit) ? point.CommunityName : issue.ResponsibleUnit, "责任单位", 200, true), issue.PhotoIds)).ToArray();
                 using (var insert = Command("""
                     INSERT INTO inspections(id,point_id,inspection_date,inspector,result,notes,notice_number,
-                    point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone)
-                    VALUES($id,$point,$date,$inspector,$result,$notes,$number,$name,$community,$communityName,$title,$type,$typeName,$address,$contact,$phone);
+                    point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone,shape)
+                    VALUES($id,$point,$date,$inspector,$result,$notes,$number,$name,$community,$communityName,$title,$type,$typeName,$address,$contact,$phone,$shape);
                     """, transaction, ("$id", inspectionId), ("$point", point.Id), ("$date", date), ("$inspector", inspector),
                     ("$result", request.Result), ("$notes", notes), ("$number", noticeNumber), ("$name", point.Name),
                     ("$community", point.CommunityId), ("$communityName", point.CommunityName), ("$title", community.Title),
-                    ("$type", point.TypeId), ("$typeName", point.TypeName), ("$address", point.Address), ("$contact", point.Contact), ("$phone", point.Phone))) insert.ExecuteNonQuery();
+                    ("$type", point.TypeId), ("$typeName", point.TypeName), ("$address", point.Address), ("$contact", point.Contact), ("$phone", point.Phone), ("$shape", WriteShape(shape)))) insert.ExecuteNonQuery();
                 AttachPhotos(request.PhotoIds, "site", inspectionId, null, transaction);
                 foreach (var issue in validatedIssues)
                 {

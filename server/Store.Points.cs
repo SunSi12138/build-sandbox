@@ -11,7 +11,7 @@ public sealed partial class Store
         (SELECT COUNT(*) FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id AND x.status<>'closed'),
         p.longitude,p.latitude,p.temporary,
         (SELECT ph.id FROM photos ph WHERE ph.point_id=p.id ORDER BY ph.uploaded_at,ph.rowid LIMIT 1),
-        (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id)
+        (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id),p.shape
         FROM points p JOIN communities c ON c.id=p.community_id JOIN point_types t ON t.id=p.type_id
         """;
     private const string PointWhere = """
@@ -26,7 +26,7 @@ public sealed partial class Store
     private static PointDto ReadPoint(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetInt32(11) != 0, NullableString(row, 12), row.GetInt32(13), row.IsDBNull(14) ? null : row.GetDouble(14),
-        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18));
+        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), ReadShape(NullableString(row, 19)));
 
     public PointDto GetPoint(string id)
     {
@@ -58,6 +58,7 @@ public sealed partial class Store
                 ("$quarter", ReminderRules.PeriodStart("quarterly", today)!.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))];
             int total;
             using (var count = Command("SELECT COUNT(*) FROM points p " + PointWhere, null, parameters)) total = Convert.ToInt32(count.ExecuteScalar());
+            if (query.Map) (page, pageSize) = (1, Math.Max(total, 1));
             var ordering = query.Recent ? " ORDER BY 13 DESC,p.rowid DESC " : " ORDER BY p.name COLLATE NOCASE,p.rowid ";
             using var command = Command(PointSelect + " " + PointWhere + ordering + " LIMIT $limit OFFSET $offset;", null,
                 [.. parameters, ("$limit", pageSize), ("$offset", (page - 1) * pageSize)]);
@@ -127,16 +128,17 @@ public sealed partial class Store
         var community = RequireCommunity(Text(request.CommunityId, "所属社区", 100, true), transaction);
         var type = RequirePointType(Text(request.TypeId, "点位类型", 100, true), transaction);
         ValidateFrequency(request.Frequency);
-        var (longitude, latitude) = ValidateCoordinates(request.Longitude, request.Latitude);
+        var shape = NormalizeShape(request.Shape, request.Longitude, request.Latitude);
+        var (longitude, latitude) = shape is null ? (null, (double?)null) : ((double?)shape.Coordinates[0][0], (double?)shape.Coordinates[0][1]);
         var actualId = id ?? NewId();
         (string Name, object? Value)[] parameters = [("$id", actualId), ("$name", name), ("$community", community.Id), ("$type", type.Id),
             ("$address", Text(request.Address, "详细地址", 1000, true)), ("$contact", Text(request.Contact, "联系人", 100)),
             ("$phone", Text(request.Phone, "电话", 100)), ("$frequency", temporary ? "irregular" : request.Frequency),
             ("$notes", Text(request.Notes, "备注", 8000)), ("$disabled", request.Disabled ? 1 : 0),
-            ("$longitude", longitude), ("$latitude", latitude), ("$temporary", temporary ? 1 : 0)];
+            ("$longitude", longitude), ("$latitude", latitude), ("$temporary", temporary ? 1 : 0), ("$shape", WriteShape(shape))];
         using (var command = Command(id is null
-            ? "INSERT INTO points(id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary) VALUES($id,$name,$community,$type,$address,$contact,$phone,$frequency,$notes,$disabled,$longitude,$latitude,$temporary);"
-            : "UPDATE points SET name=$name,community_id=$community,type_id=$type,address=$address,contact=$contact,phone=$phone,frequency=$frequency,notes=$notes,disabled=$disabled,longitude=$longitude,latitude=$latitude,temporary=$temporary WHERE id=$id;", transaction, parameters))
+            ? "INSERT INTO points(id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,shape) VALUES($id,$name,$community,$type,$address,$contact,$phone,$frequency,$notes,$disabled,$longitude,$latitude,$temporary,$shape);"
+            : "UPDATE points SET name=$name,community_id=$community,type_id=$type,address=$address,contact=$contact,phone=$phone,frequency=$frequency,notes=$notes,disabled=$disabled,longitude=$longitude,latitude=$latitude,temporary=$temporary,shape=$shape WHERE id=$id;", transaction, parameters))
             RequireChanged(command.ExecuteNonQuery(), "点位");
         AttachPhotos(request.PhotoIds, "point", null, null, transaction, pointId: actualId);
         return actualId;

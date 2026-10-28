@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { InspectionCreateRequest, InspectionDetailDto, InspectionResult, PageDto, PhotoUploadDto, PointDetailDto, PointDto } from '~/types/api'
+import type { InspectionCreateRequest, InspectionDetailDto, InspectionResult, PageDto, PhotoUploadDto, PointDetailDto, PointDto, GeoShape } from '~/types/api'
+import { recordShape, type MapRecord } from '~/utils/map'
 import { errorMessage, queryText, todayLocal, parseCoordinates } from '~/utils/format'
 
 interface IssueDraft {
@@ -10,8 +11,9 @@ interface IssueDraft {
   responsibleUnit: string
   photos: PhotoUploadDto[]
 }
-interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
+interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string; shape: GeoShape | null }
 interface InspectionDraft {
+  shape: GeoShape | null
   pointMode: 'regular' | 'temporary'
   newPoint: NewPointDraft
   pointId: string
@@ -26,7 +28,7 @@ interface InspectionDraft {
 
 definePageMeta({ formPage: true })
 useHead({ title: '新增排查 · 街道生态环保' })
-const DRAFT_KEY = 'street-eco.inspection-draft.v2'
+const DRAFT_KEY = 'street-eco.inspection-draft.map.v1'
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
@@ -40,11 +42,21 @@ let searchRequest: AbortController | undefined
 let searchSequence = 0
 let leaveDecision: ((leave: boolean) => void) | undefined
 
-function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
+function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '', shape: null } }
 function emptyDraft(pointId = ''): InspectionDraft {
-  return { pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
+  return { shape: null, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
 }
 const draft = reactive<InspectionDraft>(emptyDraft())
+const pointMapOpen = ref(false), pointMapLoading = ref(false), pointMapError = ref('')
+const allPoints = ref<PointDto[]>([])
+const pointMapRecords = computed<MapRecord[]>(() => allPoints.value.map(point => ({ id: point.id, title: point.name, subtitle: `${point.communityName} · ${point.typeName}\n${point.address}`, shape: recordShape(point) })))
+async function openPointMap() {
+  pointMapOpen.value = true; pointMapLoading.value = true; pointMapError.value = ''
+  try { allPoints.value = (await $fetch<PageDto<PointDto>>('/api/points', { query: { map: true } })).items }
+  catch (error) { pointMapError.value = errorMessage(error) }
+  finally { pointMapLoading.value = false }
+}
+function chooseMapPoint(id: string) { const point = allPoints.value.find(p => p.id === id); if (point) { selectPoint(point); pointMapOpen.value = false } }
 const initializing = ref(true)
 const loadError = ref('')
 const saving = ref(false)
@@ -81,7 +93,7 @@ const photosFailed = computed(() => overallPhotosFailed.value || draft.issues.so
 const uploadsBusy = computed(() => overallPhotosBusy.value || Object.values(issuePhotosBusy).some(Boolean))
 const photoCount = computed(() => draft.photos.length + draft.issues.reduce((count, issue) => count + issue.photos.length, 0))
 const formDisabled = computed(() => saving.value || initializing.value)
-const hasDraft = computed(() => Boolean(draft.pointMode === 'temporary' || Object.values(draft.newPoint).some(Boolean) || draft.pointId || draft.notes || draft.noticeNumber || draft.photos.length || draft.issues.length
+const hasDraft = computed(() => Boolean(draft.pointMode === 'temporary' || Object.values(draft.newPoint).some(Boolean) || draft.shape || draft.pointId || draft.notes || draft.noticeNumber || draft.photos.length || draft.issues.length
   || draft.inspector !== (bootstrap.value?.settings.defaultInspector ?? '') || draft.date !== today.value))
 const draftSavedTime = computed(() => {
   if (lastSavedAt.value === null) return ''
@@ -121,8 +133,9 @@ function loadLocalDraft() {
     const text = (key: string) => typeof value[key] === 'string' ? value[key] as string : ''
     const issues = Array.isArray(value.issues) ? value.issues : []
     Object.assign(draft, {
+      shape: value.shape && typeof value.shape === 'object' ? value.shape as GeoShape : null,
       pointMode: value.pointMode === 'temporary' ? 'temporary' : 'regular',
-      newPoint: Object.fromEntries(Object.keys(emptyNewPoint()).map(key => [key, value.newPoint && typeof value.newPoint === 'object' && typeof (value.newPoint as Record<string, unknown>)[key] === 'string' ? (value.newPoint as Record<string, unknown>)[key] : ''])),
+      newPoint: { ...emptyNewPoint(), ...(value.newPoint && typeof value.newPoint === 'object' ? value.newPoint : {}) },
       pointId: text('pointId'), date: text('date') || today.value, inspector: text('inspector'),
       result: value.result === 'issues' ? 'issues' : 'normal', notes: text('notes'), noticeNumber: text('noticeNumber'),
       photos: readPhotoList(value.photos),
@@ -184,6 +197,7 @@ watch(pointSearch, () => {
 
 function selectPoint(point: PointDto) {
   const previousCommunity = selectedPoint.value?.communityName
+  if (draft.pointId !== point.id) draft.shape = null
   selectedPoint.value = point
   draft.pointMode = 'regular'
   draft.pointId = point.id
@@ -326,8 +340,9 @@ async function saveInspection() {
   saving.value = true
   persistDraft()
   const body: InspectionCreateRequest = {
+    shape: draft.pointMode === 'temporary' ? draft.newPoint.shape : draft.shape,
     pointId: draft.pointMode === 'regular' ? draft.pointId : null,
-    newPoint: draft.pointMode === 'temporary' ? { name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
+    newPoint: draft.pointMode === 'temporary' ? { shape: draft.newPoint.shape, name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
     notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: draft.photos.map(photo => photo.id),
     issues: draft.result === 'issues' ? draft.issues.map(issue => ({
       description: issue.description.trim(), requirement: issue.requirement, deadline: issue.deadline,
@@ -392,15 +407,16 @@ onBeforeUnmount(() => {
         <div class="form-sections">
           <section class="form-section"><h2>点位</h2><div class="chip-row mb-2"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'regular'" :disabled="formDisabled" @click="draft.pointMode = 'regular'">常态点位</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'temporary'" :disabled="formDisabled" data-testid="temporary-point-mode" @click="draft.pointMode = 'temporary'">临时点位</UButton></div>
             <div v-if="draft.pointMode === 'regular'">
+              <UButton type="button" label="从地图选择点位" icon="i-lucide-map" variant="outline" class="mb-3" :disabled="formDisabled" @click="openPointMap" />
               <UFormField name="pointId" label="常态点位" required>
                 <div v-if="selectedPoint && !pointPickerOpen" class="flex items-center gap-2"><p class="min-w-0 flex-1 truncate text-sm">{{ selectedPoint.name }} · {{ selectedPoint.communityName }} · {{ selectedPoint.typeName }}</p><UButton type="button" label="更换" color="neutral" variant="link" :disabled="formDisabled" @click="pointPickerOpen = true" /></div>
                 <div v-else><UInput v-model="pointSearch" type="search" icon="i-lucide-search" placeholder="搜索点位" aria-label="搜索常态点位" data-testid="inspection-point-search" class="mb-2 w-full" :disabled="formDisabled" /><p v-if="pointListError" class="text-sm text-error">{{ pointListError }}<UButton type="button" label="重试" color="error" variant="link" @click="fetchPointOptions()" /></p><div v-if="pointListLoading && !pointOptions.length"><USkeleton v-for="row in 3" :key="row" class="my-2 h-12 w-full rounded" /></div><button v-for="point in pointOptions" :key="point.id" type="button" class="flex h-14 w-full items-center border-b border-[var(--divider)] py-2 text-left" :disabled="formDisabled" :aria-pressed="draft.pointId === point.id" data-testid="inspection-point-option" @click="selectPoint(point)"><span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}</span></span><UIcon v-if="draft.pointId === point.id" name="i-lucide-check" class="size-4 text-primary" /></button><p v-if="!pointListLoading && !pointOptions.length" class="py-3 text-sm text-muted">暂无常态点位</p><UButton v-if="pointOptions.length < pointTotal" type="button" label="加载更多" color="neutral" variant="link" :loading="pointListLoading" @click="fetchPointOptions(false)" /></div>
-              </UFormField><p v-if="pointError" class="text-sm text-error">{{ pointError }}</p>
+              </UFormField><UFormField v-if="selectedPoint" label="本次排查位置" class="mt-3"><MapLocationField :model-value="draft.shape ?? recordShape(selectedPoint)" :clearable="!!draft.shape" clear-label="沿用点位位置" :disabled="formDisabled" @update:model-value="draft.shape = $event" /><p class="mt-1 text-xs text-muted">默认沿用点位位置；修改只影响本次排查。</p></UFormField><p v-if="pointError" class="text-sm text-error">{{ pointError }}</p>
             </div>
             <div v-else class="field-grid">
               <UFormField name="newPoint.name" label="名称" required class="field-full"><UInput v-model="draft.newPoint.name" data-testid="temporary-point-name" :maxlength="200" class="w-full"  :disabled="formDisabled" /></UFormField>
               <UFormField name="newPoint.communityId" label="社区" required><USelect v-model="draft.newPoint.communityId" :items="communities" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.typeId" label="类型" required><USelect v-model="draft.newPoint.typeId" :items="pointTypes" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField>
-              <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="经纬度" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full"  :disabled="formDisabled" /></UFormField>
+              <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField label="地图位置" class="field-full"><MapLocationField :model-value="draft.newPoint.shape" :disabled="formDisabled" @update:model-value="draft.newPoint.shape = $event; draft.newPoint.coordinates = ''" /></UFormField><details class="field-full text-sm text-muted"><summary>手动填写经纬度</summary><UFormField name="newPoint.coordinates" class="mt-2"><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" :disabled="formDisabled" @update:model-value="draft.newPoint.shape = null" /></UFormField></details>
             </div>
           </section>
           <section class="form-section"><h2>排查信息</h2><div class="field-grid"><UFormField name="date" label="排查日期" required><UInput v-model="draft.date" type="date" :max="today" class="w-full" :disabled="formDisabled" data-testid="inspection-date" /></UFormField><UFormField name="inspector" label="排查人" required><NameTagsInput v-model="draft.inspector" :maxlength="100" class="w-full" :disabled="formDisabled" data-testid="inspection-inspector" /></UFormField><UFormField name="noticeNumber" label="通知单编号" class="field-full"><UInput v-model="draft.noticeNumber" :maxlength="100" class="w-full" :disabled="formDisabled" /></UFormField></div></section>
@@ -414,6 +430,7 @@ onBeforeUnmount(() => {
         <div class="form-actions"><p class="draft-state" aria-live="polite">{{ photosFailed ? '有照片未完成，请重试或移除' : uploadsBusy ? '照片处理中' : draftSavedTime ? `草稿已保存 ${draftSavedTime}` : '草稿未保存' }}</p><UButton type="submit" data-testid="inspection-save" label="保存" :loading="saving" :disabled="uploadsBusy || (draft.pointMode === 'regular' && (!selectedPoint || selectedPoint.disabled))" /></div>
       </UForm>
     </PageState>
+    <UModal v-model:open="pointMapOpen" title="从地图选择点位" :ui="{ content: 'w-[100vw] max-w-[1100px]' }"><template #body><PageState :loading="pointMapLoading" :error="pointMapError" @retry="openPointMap"><RecordMap :records="pointMapRecords" choose @choose="chooseMapPoint" /></PageState></template></UModal>
     <UModal v-model:open="destructiveOpen" :title="destructiveTitle" :description="destructiveDescription"><template #footer><UButton type="button" label="取消" color="neutral" variant="outline" @click="destructiveOpen = false" /><UButton type="button" :label="destructiveAction === 'clear' ? '清空' : destructiveAction === 'normal' ? '改为正常' : '移除'" color="error" @click="confirmDestructiveAction" /></template></UModal>
     <UModal v-model:open="conflictOpen" title="清空已有草稿？" description="清空后无法恢复" :dismissible="false" :close="false"><template #footer><UButton type="button" label="继续草稿" color="neutral" variant="outline" @click="keepRestoredDraft" /><UButton type="button" label="清空并新建" color="error" @click="startRequestedPoint" /></template></UModal>
     <UModal v-model:open="leaveOpen" title="照片尚未上传完成" description="离开后，未上传的照片需重新选择" :dismissible="false" :close="false"><template #footer><UButton type="button" label="离开" color="neutral" variant="outline" @click="leavePage(true)" /><UButton type="button" label="继续等待" @click="leavePage(false)" /></template></UModal>

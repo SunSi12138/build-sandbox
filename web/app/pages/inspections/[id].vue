@@ -449,6 +449,7 @@ watch(() => route.query.issue, revealIssue)
               <dd>{{ detail.inspection.noticeNumber || '—' }}</dd>
             </div>
           </dl>
+          <LocationPreview :shape="detail.inspection.shape" />
         </section>
         <section class="panel">
           <div class="panel-head">

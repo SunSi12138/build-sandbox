@@ -10,7 +10,7 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
@@ -78,7 +78,7 @@ public sealed partial class Store : IDisposable
                 notes TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
                 longitude REAL CHECK(longitude IS NULL OR longitude BETWEEN -180 AND 180),
                 latitude REAL CHECK(latitude IS NULL OR latitude BETWEEN -90 AND 90),
-                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1))
+                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1)), shape TEXT
             );
             CREATE TABLE inspections (
                 id TEXT PRIMARY KEY, point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT,
@@ -87,7 +87,7 @@ public sealed partial class Store : IDisposable
                 point_name TEXT NOT NULL, community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
                 community_name TEXT NOT NULL, community_title TEXT NOT NULL,
                 type_id TEXT NOT NULL REFERENCES point_types(id) ON DELETE RESTRICT, type_name TEXT NOT NULL,
-                address TEXT NOT NULL, contact TEXT NOT NULL, phone TEXT NOT NULL
+                address TEXT NOT NULL, contact TEXT NOT NULL, phone TEXT NOT NULL, shape TEXT
             );
             CREATE TABLE issues (
                 id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE RESTRICT,
@@ -146,7 +146,7 @@ public sealed partial class Store : IDisposable
             CREATE INDEX ix_campaigns_point_date ON campaigns(point_id,campaign_date);
             CREATE INDEX ix_points_temporary ON points(temporary,disabled);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=3;
+            PRAGMA user_version=4;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),

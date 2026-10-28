@@ -197,6 +197,7 @@ watch(id, load, { immediate: true })
               <dd class="whitespace-pre-wrap">{{ detail.point.notes }}</dd>
             </div>
           </dl>
+          <LocationPreview :shape="detail.point.shape" />
         </section>
         <section class="panel">
           <div class="panel-head">

@@ -1,3 +1,4 @@
+export interface GeoShape { type: 'Point' | 'Polygon'; coordinates: number[][] }
 export type IssueStatus = 'pending' | 'feedback' | 'closed'
 export type Frequency = 'weekly' | 'monthly' | 'quarterly' | 'irregular'
 export type PhotoPhase = 'site' | 'after' | 'review' | 'point' | 'before' | 'process'
@@ -17,18 +18,18 @@ export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto
 export interface PointWriteRequest {
   name: string; communityId: string; typeId: string; address: string
   contact?: string | null; phone?: string | null; frequency: Frequency; notes?: string | null; disabled: boolean
-  longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]
+  shape?: GeoShape | null; longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]
 }
 export interface PointDto {
   id: string; name: string; communityId: string; communityName: string; typeId: string; typeName: string
   address: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean
-  lastInspectionDate: string | null; openIssueCount: number
+  shape?: GeoShape | null; lastInspectionDate: string | null; openIssueCount: number
   longitude: number | null; latitude: number | null; temporary: boolean; coverPhotoId: string | null; photoCount: number
 }
 export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[]; campaigns?: CampaignDto[] }
 export interface InspectionCreateRequest {
   pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; inspector: string; result: InspectionResult; notes?: string | null
-  noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]
+  shape?: GeoShape | null; noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]
 }
 export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[] }
 export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string }
@@ -37,7 +38,7 @@ export interface InspectionDto {
   typeId: string; typeName: string; address: string; contact: string; phone: string; date: string
   inspector: string; result: InspectionResult; notes: string; noticeNumber: string; issueCount: number; openIssueCount: number
   rectifyStatus: RectifyStatus; closedCount: number; overdueCount: number; nearestDeadline: string | null
-  pointTemporary: boolean; longitude: number | null; latitude: number | null
+  shape?: GeoShape | null; pointTemporary: boolean; longitude: number | null; latitude: number | null
 }
 export interface InspectionDetailDto { inspection: InspectionDto; issues: IssueDto[]; photos: PhotoDto[]; issueDetails?: IssueDetailDto[] }
 export interface IssueDto {
@@ -79,9 +80,9 @@ export interface RestoreResultDto { ok: boolean; preservedBackup: string; messag
 
 export interface PointQuery {
   q?: string; communityId?: string; typeId?: string; disabled?: 'false' | 'true' | 'all'
-  page?: number; pageSize?: number; recent?: boolean; missed?: boolean; temporary?: 'false' | 'true' | 'all'
+  map?: boolean; page?: number; pageSize?: number; recent?: boolean; missed?: boolean; temporary?: 'false' | 'true' | 'all'
 }
-export interface InspectionQuery { pointId?: string; communityId?: string; from?: string; to?: string; q?: string; page?: number; pageSize?: number; rectify?: RectifyStatus; overdue?: boolean; dueSoon?: boolean; typeId?: string; temporary?: boolean }
+export interface InspectionQuery { map?: boolean; pointId?: string; communityId?: string; from?: string; to?: string; q?: string; page?: number; pageSize?: number; rectify?: RectifyStatus; overdue?: boolean; dueSoon?: boolean; typeId?: string; temporary?: boolean }
 export interface InspectionUpdateRequest { date: string; inspector: string; noticeNumber?: string; notes?: string }
 export interface InspectionCountsDto { all: number; none: number; pending: number; feedback: number; closed: number; issueCount: number }
 export interface InspectionFeedbackRequest { date: string; items: { issueId: string; notes: string; photoIds: string[] }[] }
