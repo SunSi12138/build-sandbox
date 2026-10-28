@@ -241,7 +241,7 @@ class ApiSmoke:
         require((self.data / "app.db").is_file(), "Database was not created next to the copied executable")
         require(not (self.cwd / "data").exists(), "Database incorrectly depends on the current working directory")
         require(self.sql_rows("PRAGMA journal_mode")[0][0].lower() == "wal", "WAL mode is not enabled")
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 5, "Current schema was not initialized")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 6, "Current schema was not initialized")
         require(self.sql_rows("PRAGMA application_id")[0][0] == 1397048143, "Database application identifier is missing")
         require({"餐饮油烟", "工地扬尘", "河道水体", "垃圾堆放", "小散乱污", "其他"}.issubset({row["name"] for row in self.bootstrap["pointTypes"]}), "Default point types are incomplete")
         self.settings = {"streetName": "测试街道 O'Brien", "issuingUnit": "生态环境办公室", "defaultInspector": "默认排查员",
@@ -848,7 +848,7 @@ class ApiSmoke:
         journal.write_text('{"backupName":"before-restore-legacy","committed":false}')
         rejected(); journal.unlink()
         self.start()
-        require(self.sql_rows("PRAGMA user_version")[0][0] == 5, "Current schema failed to reopen")
+        require(self.sql_rows("PRAGMA user_version")[0][0] == 6, "Current schema failed to reopen")
         self.stop()
 
     def test_activities_and_types(self) -> None:

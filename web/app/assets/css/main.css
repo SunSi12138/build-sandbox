@@ -259,3 +259,18 @@ a.list-row:hover { background:var(--surface-2); }
   .page-stack.map-page > :not(.record-map-shell) { flex-shrink:0; }
   .page-stack.map-page > .record-map-shell { flex:1 0 280px; height:auto; min-height:280px; }
 }
+
+.main-shell{position:relative;isolation:isolate;min-height:100dvh;--main-map-left:0px}
+.main-map-layer{position:fixed;top:0;right:0;bottom:0;left:var(--main-map-left);z-index:0;pointer-events:none}
+.main-shell>.workspace-content{position:relative;z-index:1}
+.has-background-map .workspace-content,.has-background-map .page-stack{pointer-events:none}
+.has-background-map .page-stack>:not(.record-map-shell){pointer-events:auto}
+.has-background-map .page-header,.has-background-map .filter-tool-row,.has-background-map .chip-row{background:var(--surface)}
+@media(min-width:768px){.main-shell{--main-map-left:56px}}
+@media(min-width:1024px){.main-shell{--main-map-left:208px}}
+@media(max-width:767px){
+  .main-map-layer .simple-map .ol-zoom{bottom:calc(104px + env(safe-area-inset-bottom))}
+  .main-map-layer .map-fit{bottom:calc(184px + env(safe-area-inset-bottom))}
+  .main-map-layer .simple-map .ol-scale-line{bottom:calc(68px + env(safe-area-inset-bottom))}
+  .main-map-layer .map-cache-hint{bottom:calc(68px + env(safe-area-inset-bottom))}
+}

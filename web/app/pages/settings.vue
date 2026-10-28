@@ -18,6 +18,7 @@ const tabs = [
   { value: 'template', label: '通知单模板' },
   { value: 'dictionaries', label: '社区与分类' },
   { value: 'tags', label: '标签管理' },
+  { value: 'maps', label: '地图管理' },
   { value: 'backup', label: '备份与恢复' }
 ]
 const active = ref<string | number>(tabs.some(t => t.value === route.query.tab) ? String(route.query.tab) : 'basic')
@@ -133,6 +134,7 @@ onMounted(() => { void fetchSettings() })
         <SettingsDictionary :key="dictionaryKind" :kind="dictionaryKind" :items="dictionaryItems" @changed="dictionaryChanged" />
       </div>
       <SettingsTags v-else-if="active === 'tags'" />
+      <SettingsMaps v-else-if="active === 'maps'" />
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
     </template>
   </div>

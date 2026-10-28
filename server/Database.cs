@@ -10,7 +10,7 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 5;
+    public const int SchemaVersion = 6;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
@@ -61,6 +61,7 @@ public sealed partial class Store : IDisposable
         _db.Open();
         using (var pragmas = Command("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000;")) pragmas.ExecuteNonQuery();
         if (initialize) InitializeCurrentDatabase();
+        _mapGeneration++;
     }
 
     private void InitializeCurrentDatabase()
@@ -70,6 +71,13 @@ public sealed partial class Store : IDisposable
             CREATE TABLE settings (
                 id INTEGER PRIMARY KEY CHECK(id=1), street_name TEXT NOT NULL, issuing_unit TEXT NOT NULL,
                 default_inspector TEXT NOT NULL, notice_template TEXT NOT NULL, jpeg_quality INTEGER NOT NULL CHECK(jpeg_quality BETWEEN 1 AND 100)
+            );
+            CREATE TABLE map_providers (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, folder TEXT NOT NULL,
+                scheme TEXT NOT NULL CHECK(scheme IN ('xyz','tms')), url_template TEXT NOT NULL DEFAULT '',
+                api_key TEXT NOT NULL DEFAULT '', map_key TEXT NOT NULL DEFAULT '', subdomains TEXT NOT NULL,
+                force_refresh INTEGER NOT NULL DEFAULT 0 CHECK(force_refresh IN (0,1)),
+                enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)), sort_order INTEGER NOT NULL CHECK(sort_order>=0)
             );
             CREATE TABLE communities (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL);
             CREATE TABLE point_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
@@ -202,7 +210,7 @@ public sealed partial class Store : IDisposable
             );
             CREATE INDEX ix_attachments_point ON attachments(point_id,uploaded_at);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=5;
+            PRAGMA user_version=6;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),
@@ -228,6 +236,12 @@ public sealed partial class Store : IDisposable
             command.ExecuteNonQuery();
         }
         using (var builtin = Command("INSERT INTO activity_types(id,name,template,built_in) VALUES($id,'整治','remediation',1);", transaction, ("$id", NewId()))) builtin.ExecuteNonQuery();
+        foreach (var provider in DefaultMapProviders().Take(1))
+        {
+            using var command = Command("INSERT INTO map_providers(id,name,folder,scheme,subdomains,sort_order) VALUES($id,$name,$folder,$scheme,$subdomains,0);", transaction,
+                ("$id", NewId()), ("$name", provider.Name), ("$folder", provider.Folder), ("$scheme", provider.Scheme), ("$subdomains", provider.Subdomains));
+            command.ExecuteNonQuery();
+        }
         transaction.Commit();
     }
 

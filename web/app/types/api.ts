@@ -125,3 +125,6 @@ export interface MatterDto extends MatterWriteRequest {
 export interface MatterActionDto { id: string; kind: string; date: string; handler: string; notes: string; outcome: string }
 export interface MatterDetailDto { matter: MatterDto; actions: MatterActionDto[]; inspections: InspectionDto[]; issues: IssueDto[]; activities: ActivityDto[] }
 export interface AttachmentDto { id: string; pointId: string; name: string; notes: string; size: number; contentType: string; uploadedAt: string; sha256: string; canPreview: boolean }
+
+export interface TileProvider { id: string; folder: string; scheme: 'xyz' | 'tms'; urlTemplate: string; apiKey: string; mapKey: string; subdomains: string; name: string; forceRefresh: boolean; enabled: boolean; sortOrder: number }
+export interface MapSettingsDto { providers: TileProvider[]; defaults: TileProvider[]; cacheRoot: string }

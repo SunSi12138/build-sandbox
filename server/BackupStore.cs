@@ -369,6 +369,7 @@ public sealed partial class Store
     private static readonly string[] RequiredSchemaQueries =
     [
         "SELECT id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality FROM settings LIMIT 0;",
+        "SELECT id,name,folder,scheme,url_template,api_key,map_key,subdomains,force_refresh,enabled,sort_order FROM map_providers LIMIT 0;",
         "SELECT id,name,title FROM communities LIMIT 0;",
         "SELECT id,name FROM point_types LIMIT 0;",
         "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,shape FROM points LIMIT 0;",

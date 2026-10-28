@@ -1,5 +1,6 @@
 <script setup lang="ts">
 const route = useRoute()
+const mapExpanded = useState<boolean>('main-map-expanded', () => false)
 const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 const formPage = computed(() => Boolean(route.meta.formPage) || overlayForm.value)
@@ -30,7 +31,7 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshOn
       </nav>
       <p class="sidebar-street">{{ bootstrap?.settings.streetName }}</p>
     </aside>
-    <div class="main-shell"><main id="main-content" class="workspace-content" tabindex="-1"><slot /></main></div>
+    <div class="main-shell" :class="{ 'has-background-map': mapExpanded }"><div id="main-map-layer" class="main-map-layer" /><main id="main-content" class="workspace-content" tabindex="-1"><slot /></main></div>
     <nav v-if="!formPage" class="mobile-tabs" aria-label="底部主导航">
       <NuxtLink v-for="item in links" :key="item.to" :to="item.to" class="mobile-tab" :class="{ 'is-active': active(item.to) }" :aria-current="active(item.to) ? 'page' : undefined"><UIcon :name="item.icon" /><span>{{ item.short }}</span></NuxtLink>
     </nav>

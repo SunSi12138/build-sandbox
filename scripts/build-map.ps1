@@ -22,11 +22,10 @@ New-Item -ItemType Directory -Force $Output | Out-Null
 Copy-Item -LiteralPath (Join-Path $root 'release/StreetEcoTool.exe') -Destination (Join-Path $Output 'StreetEcoTool-win-x64.exe') -Force
 New-Item -ItemType Directory -Force (Join-Path $Output 'wwwroot') | Out-Null
 Get-ChildItem -LiteralPath (Join-Path $root 'web/.output/public') -Force | Copy-Item -Destination (Join-Path $Output 'wwwroot') -Recurse -Force
-foreach ($name in @('map-providers.local.json', 'tiles')) {
+foreach ($name in @('tiles')) {
   $source = Join-Path $root $name
   if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $Output -Recurse -Force }
 }
-Copy-Item -LiteralPath (Join-Path $root 'docs/地图使用说明.txt') -Destination $Output -Force
 if (-not (Test-Path -LiteralPath (Join-Path $Output 'appsettings.json'))) {
   [IO.File]::WriteAllText((Join-Path $Output 'appsettings.json'), '{"port":5181,"listen":["127.0.0.1"]}')
 }

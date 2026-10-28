@@ -81,6 +81,7 @@ onMounted(fetchBackups)
       <input ref="fileInput" data-testid="restore-file-input" type="file" accept=".zip,application/zip" class="sr-only" aria-label="选择待恢复的 ZIP 备份" :disabled="uploading || restoring" @change="prepareRestore">
       <UButton color="neutral" variant="outline" :loading="uploading" :disabled="restoring" @click="fileInput?.click()">{{ uploading ? '正在校验' : '恢复备份' }}</UButton>
     </div>
+    <p class="text-xs text-muted">备份包含地图配置，不包含图块缓存。</p>
     <UProgress v-if="uploading" animation="carousel" aria-label="正在校验备份" />
     <UAlert v-if="restoreError && !confirmOpen" :color="cacheRefreshFailed ? 'warning' : 'error'" variant="subtle" :description="restoreError"><template v-if="cacheRefreshFailed" #actions><UButton color="neutral" variant="outline" @click="reloadPage">刷新</UButton></template></UAlert>
     <div v-if="restoredResult" class="text-xs text-muted break-all">保留位置：{{ restoredResult.preservedBackup }}</div>

@@ -15,6 +15,7 @@ import { verifyRound3 } from './round3-browser-test.mjs'
 import { verifyUsability } from './ux-browser-test.mjs'
 import { verifyFreshArchitecture } from './fresh-architecture-browser-test.mjs'
 import { verifyConsistency } from './consistency-browser-test.mjs'
+import { verifyMapManagement } from './map-management-browser-test.mjs'
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const executableArgument = process.argv.indexOf('--executable')
@@ -327,7 +328,9 @@ try {
     report.consoleErrors.push({ text: message.text(), location, case: activeCase, expectedWasmFailure, expectedRebindFailure })
   })
 
-  if (process.argv.includes('--consistency-only')) {
+  if (process.argv.includes('--map-only')) {
+    await verifyMapManagement({ browser, origin, api, test, bootstrap, evidence })
+  } else if (process.argv.includes('--consistency-only')) {
     await verifyConsistency({ browser, origin, directOrigin, api, test, bootstrap, evidence })
   } else if (process.argv.includes('--fresh-only')) {
     await verifyFreshArchitecture({ browser, origin, api, test, bootstrap, point, evidence })
@@ -696,6 +699,7 @@ try {
   await verifyRound3({ browser, origin, directOrigin, api, test, report, bootstrap, fixtureJpeg, evidence })
   await verifyUsability({ browser, origin, api, test, bootstrap, activityId, evidence, directOrigin, fixtureJpeg })
   await verifyConsistency({ browser, origin, directOrigin, api, test, bootstrap, evidence })
+  await verifyMapManagement({ browser, origin, api, test, bootstrap, evidence })
   }
   assert.deepEqual(report.externalRequests, [], 'The app attempted to load an external origin')
   assert.deepEqual(report.pageErrors, [], 'Unhandled browser errors occurred')

@@ -12,9 +12,7 @@ on:
       - '!scripts/optimization-stage.py'
       - 'global.json'
       - '.github/workflows/build.yml'
-      - 'README.md'
       - 'docs/**'
-      - 'map-providers.example.json'
   pull_request:
     paths:
       - 'server/**'
@@ -24,9 +22,7 @@ on:
       - '!scripts/optimization-stage.py'
       - 'global.json'
       - '.github/workflows/build.yml'
-      - 'README.md'
       - 'docs/**'
-      - 'map-providers.example.json'
 
 permissions:
   contents: read

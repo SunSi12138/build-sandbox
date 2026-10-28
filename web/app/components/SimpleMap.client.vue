@@ -10,7 +10,7 @@ import TileLayer from 'ol/layer/Tile'
 import XYZ from 'ol/source/XYZ'
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
-import { defaults as defaultControls, ScaleLine, Attribution } from 'ol/control'
+import { defaults as defaultControls, ScaleLine } from 'ol/control'
 import { fromLonLat, toLonLat } from 'ol/proj'
 import { isEmpty } from 'ol/extent'
 import { Style, Stroke, Fill, Circle as CircleStyle, Text } from 'ol/style'
@@ -21,11 +21,12 @@ import 'ol/ol.css'
 
 const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[] }>(), { records: () => [], shape: null, mode: 'view', selected: () => [] })
 const emit = defineEmits<{ select: [ids: string[]]; change: [shape: GeoShape]; drawing: [active: boolean] }>()
-const host = ref<HTMLElement>(), missingTiles = ref(false), missingLabels = ref(false)
+const host = ref<HTMLElement>(), missingTiles = ref(false)
+const layerRequest = new AbortController()
 const sketchVertices = ref(0)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
-let reporting = false, initialFit = false
+let reporting = false
 function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(shape.coordinates[0]!)) : new Polygon([shape.coordinates.map(c => fromLonLat(c))]) }
 function toShape(feature: Feature<Geometry>): GeoShape {
   const item = feature.getGeometry()!
@@ -48,7 +49,7 @@ function renderRecords() {
     const feature = new Feature({ geometry: geometry(record.shape), title: record.title, color: record.color })
     feature.setId(record.id); recordsSource.addFeature(feature)
   }
-  if (!initialFit && recordsSource.getFeatures().length) { fitAll(); initialFit = true }
+  if (recordsSource.getFeatures().length) fitAll()
 }
 function renderShape() {
   if (reporting) return
@@ -94,13 +95,16 @@ watch(() => props.mode, interactions)
 watch(() => props.selected, () => recordsLayer.changed(), { deep: true })
 const recordsLayer = new VectorLayer({ source: recordsSource, style: feature => style(feature as Feature<Geometry>), declutter: false })
 onMounted(() => {
-  const satellite = new XYZ({ url: '/api/map/tiles/jlyh/{z}/{x}/{y}', maxZoom: 18, attributions: '卫星影像：吉林一号' })
-  const labels = new XYZ({ url: '/api/map/tiles/labels/{z}/{x}/{y}', maxZoom: 18, attributions: '地名标注：天地图' })
-  satellite.on('tileloaderror', () => { missingTiles.value = true })
-  satellite.on('tileloadend', () => { missingTiles.value = false })
-  labels.on('tileloaderror', () => { missingLabels.value = true })
-  labels.on('tileloadend', () => { missingLabels.value = false })
-  map = new Map({ target: host.value, layers: [new TileLayer({ source: satellite }), new TileLayer({ source: labels }), recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })], view: new View({ center: fromLonLat([88.893426, 29.274331]), zoom: 16, minZoom: 3, maxZoom: 21 }), controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine(), new Attribution({ collapsible: true, collapsed: true })]) })
+  map = new Map({ target: host.value, layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })], view: new View({ center: fromLonLat([88.893426, 29.274331]), zoom: 16, minZoom: 3, maxZoom: 21 }), controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]) })
+  void $fetch<{ id: string }[]>('/api/map/layers', { signal: layerRequest.signal }).then(layers => {
+    if (layerRequest.signal.aborted || !map) return
+    layers.forEach((layer, index) => {
+      const source = new XYZ({ url: `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`, maxZoom: 18 })
+      source.on('tileloaderror', () => { missingTiles.value = true })
+      source.on('tileloadend', () => { missingTiles.value = false })
+      map!.getLayers().insertAt(index, new TileLayer({ source }))
+    })
+  }).catch(() => { if (!layerRequest.signal.aborted) missingTiles.value = true })
   map.on('singleclick', event => {
     if (props.mode === 'point') {
       const feature = new Feature(new Point(event.coordinate)); editingSource.clear(); editingSource.addFeature(feature); report(feature)
@@ -115,11 +119,11 @@ onMounted(() => {
   if (props.shape) fitAll()
   observer = new ResizeObserver(() => map?.updateSize()); if (host.value) observer.observe(host.value)
 })
-onBeforeUnmount(() => { observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
+onBeforeUnmount(() => { layerRequest.abort(); observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
 </script>
 <template>
-  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="吉林一号地图" /><div v-if="missingTiles || missingLabels" class="map-cache-hint" role="status">{{ missingTiles ? '部分底图暂不可用' : '部分地名标注暂不可用' }}</div><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
+  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图" /><div v-if="missingTiles" class="map-cache-hint" role="status">部分图层暂不可用</div><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
-.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.simple-map .ol-attribution{bottom:4px;right:4px;max-width:75%;font-size:10px}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-cache-hint{position:absolute;bottom:12px;left:65px;right:60px;margin:auto;width:fit-content;max-width:calc(100% - 130px);background:var(--warning-bg);color:var(--warning);padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none}
+.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-cache-hint{position:absolute;bottom:12px;left:65px;right:60px;margin:auto;width:fit-content;max-width:calc(100% - 130px);background:var(--warning-bg);color:var(--warning);padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none}
 </style>

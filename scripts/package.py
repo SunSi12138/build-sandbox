@@ -44,13 +44,8 @@ def main() -> None:
         if file.is_file():
             files.append((file, "hbtool/wwwroot/" + file.relative_to(args.web_static).as_posix(), 0o644))
     root = Path(__file__).resolve().parent.parent
-    readme_source = root / ("README.md" if args.win_x64 is not None else "docs/linux-start.md")
-    files.extend([(readme_source, "hbtool/README.md", 0o644),
-                  (root / "scripts/linux/start-linux.sh", "hbtool/start-linux.sh", 0o755),
-                  (root / "scripts/linux/启动应用.desktop", "hbtool/启动应用.desktop", 0o755),
-                  (root / "docs/new-application.md", "hbtool/使用说明.md", 0o644),
-                  (root / "docs/地图使用说明.txt", "hbtool/地图使用说明.txt", 0o644),
-                  (root / "map-providers.example.json", "hbtool/map-providers.example.json", 0o644)])
+    files.extend([(root / "scripts/linux/start-linux.sh", "hbtool/start-linux.sh", 0o755),
+                  (root / "scripts/linux/启动应用.desktop", "hbtool/启动应用.desktop", 0o755)])
     args.output.mkdir(parents=True, exist_ok=True)
     target = args.output / ("hbtool.zip" if args.win_x64 is not None else "hbtool-linux-arm64.zip")
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
@@ -59,11 +54,6 @@ def main() -> None:
             entry.create_system = 3
             entry.external_attr = (0o100000 | mode) << 16
             entry.compress_type = zipfile.ZIP_DEFLATED
-            if source == readme_source:
-                readme = source.read_text(encoding="utf-8")
-                readme = readme.replace("docs/new-application.md", "使用说明.md").replace("docs/地图使用说明.txt", "地图使用说明.txt")
-                archive.writestr(entry, readme.encode("utf-8"))
-                continue
             with source.open("rb") as input_file, archive.open(entry, "w") as output:
                 while block := input_file.read(1024 * 1024):
                     output.write(block)
