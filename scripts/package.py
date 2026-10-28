@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Combine two NativeAOT executables and one offline SPA into hbtool.zip."""
+"""Package the Linux application, optionally with the Windows executable."""
 import argparse
 import hashlib
 from pathlib import Path
@@ -25,36 +25,41 @@ def verify_binary(path: Path, platform: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--win-x64", type=Path, required=True)
+    parser.add_argument("--win-x64", type=Path, help="Include Windows x64 in the combined package")
     parser.add_argument("--linux-arm64", type=Path, required=True)
     parser.add_argument("--web-static", type=Path, required=True)
     parser.add_argument("--output", type=Path, default=Path("dist"))
     args = parser.parse_args()
-    verify_binary(args.win_x64, "win-x64")
+    if args.win_x64 is not None:
+        verify_binary(args.win_x64, "win-x64")
     verify_binary(args.linux_arm64, "linux-arm64")
     if not (args.web_static / "index.html").is_file():
         raise ValueError("Missing generated frontend index.html")
-    files = [(args.win_x64, "hbtool/StreetEcoTool-win-x64.exe", 0o644),
-             (args.linux_arm64, "hbtool/StreetEcoTool-linux-arm64", 0o755)]
+    files = [(args.linux_arm64, "hbtool/StreetEcoTool-linux-arm64", 0o755)]
+    if args.win_x64 is not None:
+        files.insert(0, (args.win_x64, "hbtool/StreetEcoTool-win-x64.exe", 0o644))
     for file in sorted(args.web_static.rglob("*")):
         if file.is_symlink():
             raise ValueError(f"Frontend cannot include symbolic links: {file}")
         if file.is_file():
             files.append((file, "hbtool/wwwroot/" + file.relative_to(args.web_static).as_posix(), 0o644))
     root = Path(__file__).resolve().parent.parent
-    files.extend([(root / "README.md", "hbtool/README.md", 0o644),
+    readme_source = root / ("README.md" if args.win_x64 is not None else "docs/linux-start.md")
+    files.extend([(readme_source, "hbtool/README.md", 0o644),
+                  (root / "scripts/linux/start-linux.sh", "hbtool/start-linux.sh", 0o755),
+                  (root / "scripts/linux/启动应用.desktop", "hbtool/启动应用.desktop", 0o755),
                   (root / "docs/new-application.md", "hbtool/使用说明.md", 0o644),
                   (root / "docs/地图使用说明.txt", "hbtool/地图使用说明.txt", 0o644),
                   (root / "map-providers.example.json", "hbtool/map-providers.example.json", 0o644)])
     args.output.mkdir(parents=True, exist_ok=True)
-    target = args.output / "hbtool.zip"
+    target = args.output / ("hbtool.zip" if args.win_x64 is not None else "hbtool-linux-arm64.zip")
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for source, name, mode in files:
             entry = zipfile.ZipInfo(name)
             entry.create_system = 3
             entry.external_attr = (0o100000 | mode) << 16
             entry.compress_type = zipfile.ZIP_DEFLATED
-            if source == root / "README.md":
+            if source == readme_source:
                 readme = source.read_text(encoding="utf-8")
                 readme = readme.replace("docs/new-application.md", "使用说明.md").replace("docs/地图使用说明.txt", "地图使用说明.txt")
                 archive.writestr(entry, readme.encode("utf-8"))
@@ -69,6 +74,9 @@ def main() -> None:
         if any("linux-x64" in name or name.endswith("appsettings.json") for name in names):
             raise ValueError("Package includes a test binary or user configuration")
         assert (archive.getinfo("hbtool/StreetEcoTool-linux-arm64").external_attr >> 16) & 0o777 == 0o755
+    if args.win_x64 is None:
+        print(f"Packaged {len(files)} files into {target} ({target.stat().st_size:,} bytes)")
+        return
     checksum_hash = hashlib.sha256()
     with target.open("rb") as package_file:
         while block := package_file.read(1024 * 1024):

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=街道生态环保
+Comment=打开街道生态环保工具
+Icon=applications-office
+Terminal=true
+StartupNotify=false
+Exec=bash -c "p=\\$1; if [[ \\$p == file://* ]]; then p=\\${p#file://}; [[ \\$p == localhost/* ]] && p=\\${p#localhost}; printf -v p '%%b' \\"\\${p//%%/\\\\\\\\x}\\"; fi; exec bash \\"\\$(dirname -- \\"\\$(readlink -f -- \\"\\$p\\")\\")/start-linux.sh\\"" hbtool %k

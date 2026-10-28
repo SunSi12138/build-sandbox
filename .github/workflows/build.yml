@@ -13,6 +13,8 @@ on:
       - 'global.json'
       - '.github/workflows/build.yml'
       - 'README.md'
+      - 'docs/**'
+      - 'map-providers.example.json'
   pull_request:
     paths:
       - 'server/**'
@@ -22,6 +24,9 @@ on:
       - '!scripts/optimization-stage.py'
       - 'global.json'
       - '.github/workflows/build.yml'
+      - 'README.md'
+      - 'docs/**'
+      - 'map-providers.example.json'
 
 permissions:
   contents: read
@@ -185,10 +190,20 @@ jobs:
           path: package-input/bin
       - name: Package both architectures with shared frontend
         run: python scripts/package.py --win-x64 package-input/bin/StreetEcoTool-win-x64.exe --linux-arm64 package-input/bin/StreetEcoTool-linux-arm64 --web-static package-input/wwwroot --output dist
+      - name: Package Linux ARM64
+        run: python scripts/package.py --linux-arm64 package-input/bin/StreetEcoTool-linux-arm64 --web-static package-input/wwwroot --output dist
       - uses: actions/upload-artifact@v7
         with:
           name: hbtool
-          path: dist/
+          path: |
+            dist/hbtool.zip
+            dist/hbtool.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v7
+        with:
+          name: hbtool-linux-arm64
+          path: dist/hbtool-linux-arm64.zip
           if-no-files-found: error
           retention-days: 30
 

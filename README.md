@@ -10,6 +10,8 @@
 hbtool/
   StreetEcoTool-win-x64.exe
   StreetEcoTool-linux-arm64
+  启动应用.desktop
+  start-linux.sh
   wwwroot/
   README.md
   使用说明.md
@@ -17,7 +19,9 @@ hbtool/
   map-providers.example.json
 ```
 
-Windows 完整解压到可写目录，双击 `StreetEcoTool-win-x64.exe`。Linux ARM64：
+Windows 完整解压到可写目录，双击 `StreetEcoTool-win-x64.exe`。Linux ARM64 桌面环境解压后双击“街道生态环保”图标（`启动应用.desktop`），首次如提示“允许启动”请选择允许。终端保持打开；按 Ctrl+C 停止程序，再按回车关闭终端。
+
+Linux ARM64 也可在终端启动：
 
 ```sh
 chmod +x StreetEcoTool-linux-arm64
