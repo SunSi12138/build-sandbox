@@ -104,7 +104,7 @@ export async function verifyRound3({ browser, origin, directOrigin, api, test, r
       await page.getByRole('button', { name: '编辑', exact: true }).click()
       const editor = page.getByRole('dialog', { name: '编辑点位', exact: true })
       await expect(editor.getByTestId('photo-file-input')).toHaveCount(1)
-      await expect(editor.getByRole('link', { name: '选取', exact: true })).toHaveAttribute('target', '_blank')
+      await expect(editor.getByRole('button', { name: '查看 / 修改', exact: true })).toBeVisible()
       await editor.getByRole('button', { name: '取消', exact: true }).click()
       await expect(page.getByTestId('photo-file-input')).toHaveCount(0)
     })
