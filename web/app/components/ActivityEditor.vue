@@ -8,7 +8,7 @@ const emit = defineEmits<{ saved: [detail: ActivityDetailDto] }>()
 const route = useRoute()
 const { bootstrap, load } = useAppData()
 const toast = useToast()
-const draftKey = 'street-eco.activity-draft.v2'
+const draftRecovery = useDraftRecovery('street-eco.activity-draft.v2', 2, 'data')
 interface State {
   name: string; typeId: string; communityId: string; location: string; date: string; endDate: string
   organizer: string; participants: string; participantCount: string; content: string; outcome: string; notes: string
@@ -34,16 +34,12 @@ const moreOpen = ref(false)
 const leaveOpen = ref(false)
 const draftSaved = ref(false)
 let original = ''
-let persistTimer: ReturnType<typeof setTimeout> | undefined
 let resolveLeave: ((leave: boolean) => void) | undefined
 const dirty = computed(() => Boolean(props.initial && ready.value && JSON.stringify(state) !== original))
 function persist() {
-  clearTimeout(persistTimer)
   if (!ready.value || props.initial || saved.value) return
-  try {
-    localStorage.setItem(draftKey, JSON.stringify({ version: 2, data: state }))
-    draftSaved.value = true
-  } catch { error.value = '草稿未能保存，请勿关闭页面。' }
+  if (draftRecovery.flush(() => state)) draftSaved.value = true
+  else error.value = draftRecovery.error.value
 }
 function finishLeave(leave: boolean) { leaveOpen.value = false; resolveLeave?.(leave); resolveLeave = undefined }
 function guardLeave() {
@@ -88,11 +84,8 @@ function useRequestedContext() {
 const disabled = computed(() => initializing.value || saving.value || conflictOpen.value)
 function restoreDraft() {
   try {
-    const raw = localStorage.getItem(draftKey)
-    if (!raw) return
-    const parsed: unknown = JSON.parse(raw)
-    if (!parsed || typeof parsed !== 'object' || !('version' in parsed) || parsed.version !== 2 || !('data' in parsed) || !parsed.data || typeof parsed.data !== 'object') return
-    const data = parsed.data as Record<string, unknown>
+    const data = draftRecovery.read<Record<string, unknown>>()
+    if (!data) return
     const base = empty()
     for (const key of Object.keys(base) as (keyof State)[]) if (typeof base[key] === 'string' && typeof data[key] === 'string') (state as unknown as Record<string, unknown>)[key] = data[key]
     for (const key of ['participantCount', 'vehicleCount', 'garbageTons', 'areaSqm'] as const) if (typeof data[key] === 'number' && Number.isFinite(data[key])) state[key] = String(data[key])
@@ -105,9 +98,9 @@ function restoreDraft() {
 watch(state, () => {
   if (!ready.value || props.initial || saved.value) return
   draftSaved.value = false
-  clearTimeout(persistTimer)
-  persistTimer = setTimeout(persist, 250)
+  draftRecovery.schedule(() => state)
 }, { deep: true })
+watch(draftRecovery.savedAt, value => { if (value !== null) draftSaved.value = true })
 watch(() => props.initial, initial => {
   if (!initial) return
   const record = initial.activity
@@ -189,8 +182,7 @@ async function save() {
     const result = await $fetch<ActivityDetailDto>(id ? `/api/activities/${id}` : '/api/activities',
       { method: id ? 'PUT' : 'POST', body, retry: 0 })
     saved.value = true
-    clearTimeout(persistTimer)
-    if (!id) { try { localStorage.removeItem(draftKey) } catch { /* record was saved */ } }
+    if (!id) draftRecovery.clear()
     toast.add({ title: '已保存', color: 'success', duration: 2000 })
     emit('saved', result)
   } catch (cause) { error.value = errorMessage(cause) }
