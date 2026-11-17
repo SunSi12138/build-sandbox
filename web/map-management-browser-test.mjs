@@ -145,6 +145,7 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
         await editor.getByRole('button', { name: '清除', exact: true }).click()
       await editor.getByRole('button', { name: '标记位置', exact: true }).click()
       const picker = page.getByRole('dialog', { name: '标记位置', exact: true })
+      await picker.getByRole('button', { name: '选点', exact: true }).click()
       const canvas = picker.locator('.simple-map-canvas')
       await canvas.locator('.ol-viewport').waitFor()
       const box = await canvas.boundingBox()
