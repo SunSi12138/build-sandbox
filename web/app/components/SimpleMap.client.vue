@@ -161,6 +161,7 @@ onMounted(() => {
     scheduleDepthPrefetch()
   })
   const registerPrefetch = (options: Parameters<typeof makeDeepTilePrefetch>[0]) => {
+    if (layerRequest.signal.aborted || !map) return
     const prefetch = makeDeepTilePrefetch(options)
     depthPrefetchers.push(prefetch)
     prefetch.schedule()
