@@ -17,6 +17,7 @@ import { Style, Stroke, Fill, Circle as CircleStyle, Text } from 'ol/style'
 import type { Geometry } from 'ol/geom'
 import type { GeoShape } from '~/types/api'
 import { mapColors, type MapRecord } from '~/utils/map'
+import { gcj02ToWgs84, wgs84ToGcj02 } from '~/utils/gcj02'
 import 'ol/ol.css'
 
 const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[] }>(), { records: () => [], shape: null, mode: 'view', selected: () => [] })
@@ -27,10 +28,10 @@ const sketchVertices = ref(0)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
 let reporting = false
-function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(shape.coordinates[0]!)) : new Polygon([shape.coordinates.map(c => fromLonLat(c))]) }
+function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(gcj02ToWgs84(shape.coordinates[0]!))) : new Polygon([shape.coordinates.map(c => fromLonLat(gcj02ToWgs84(c)))]) }
 function toShape(feature: Feature<Geometry>): GeoShape {
   const item = feature.getGeometry()!
-  const coordinates = item instanceof Point ? [toLonLat(item.getCoordinates())] : (item as Polygon).getCoordinates()[0]!.map(c => toLonLat(c))
+  const coordinates = item instanceof Point ? [wgs84ToGcj02(toLonLat(item.getCoordinates()))] : (item as Polygon).getCoordinates()[0]!.map(c => wgs84ToGcj02(toLonLat(c)))
   return { type: item instanceof Point ? 'Point' : 'Polygon', coordinates: coordinates.map(c => c.map(n => Math.round(n * 1e6) / 1e6)) }
 }
 function style(feature: Feature<Geometry>, editing = false) {
@@ -95,7 +96,7 @@ watch(() => props.mode, interactions)
 watch(() => props.selected, () => recordsLayer.changed(), { deep: true })
 const recordsLayer = new VectorLayer({ source: recordsSource, style: feature => style(feature as Feature<Geometry>), declutter: false })
 onMounted(() => {
-  map = new Map({ target: host.value, layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })], view: new View({ center: fromLonLat([88.893426, 29.274331]), zoom: 16, minZoom: 3, maxZoom: 21 }), controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]) })
+  map = new Map({ target: host.value, layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })], view: new View({ center: fromLonLat(gcj02ToWgs84([88.893426, 29.274331])), zoom: 16, minZoom: 3, maxZoom: 21 }), controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]) })
   void $fetch<{ id: string }[]>('/api/map/layers', { signal: layerRequest.signal }).then(layers => {
     if (layerRequest.signal.aborted || !map) return
     layers.forEach((layer, index) => {
