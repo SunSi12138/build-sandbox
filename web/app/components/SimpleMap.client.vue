@@ -23,6 +23,7 @@ import 'ol/ol.css'
 const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[] }>(), { records: () => [], shape: null, mode: 'view', selected: () => [] })
 const emit = defineEmits<{ select: [ids: string[]]; change: [shape: GeoShape]; drawing: [active: boolean] }>()
 const host = ref<HTMLElement>(), missingTiles = ref(false)
+const locateError = ref('')
 const layerRequest = new AbortController()
 const sketchVertices = ref(0)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
@@ -84,6 +85,28 @@ function fitAll() {
   const extent = source.getExtent()
   if (extent && !isEmpty(extent)) map.getView().fit(extent, { padding: [60, 60, 70, 60], maxZoom: 17, duration: 200 })
 }
+// Persist the user's last map view in GCJ-02. No existing point coordinates change.
+const mapViewKey = 'street-eco.last-map-view.v1'
+function initialMapView() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(mapViewKey) || 'null') as { longitude?: number; latitude?: number; zoom?: number } | null
+    if (saved && typeof saved.longitude === 'number' && Number.isFinite(saved.longitude) &&
+      typeof saved.latitude === 'number' && Number.isFinite(saved.latitude) &&
+      Math.abs(saved.longitude) <= 180 && Math.abs(saved.latitude) <= 85 &&
+      typeof saved.zoom === 'number' && saved.zoom >= 3 && saved.zoom <= 21)
+      return { coordinate: [saved.longitude, saved.latitude], zoom: saved.zoom }
+  } catch { /* Local storage may be unavailable in private browsing. */ }
+  return { coordinate: [88.893426, 29.274331], zoom: 16 }
+}
+function locateCurrent() {
+  locateError.value = ''
+  if (!navigator.geolocation) { locateError.value = '当前浏览器不支持定位'; return }
+  navigator.geolocation.getCurrentPosition(
+    position => { map?.getView().animate({ center: fromLonLat([position.coords.longitude, position.coords.latitude]), zoom: 17, duration: 300 }) },
+    () => { locateError.value = '无法获取当前位置，请检查浏览器定位权限' },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 },
+  )
+}
 function focus(id: string) {
   const feature = recordsSource.getFeatureById(id)
   if (feature?.getGeometry()) map?.getView().fit(feature.getGeometry()!.getExtent(), { padding: [60, 60, 70, 60], maxZoom: 18, duration: 200 })
@@ -96,7 +119,14 @@ watch(() => props.mode, interactions)
 watch(() => props.selected, () => recordsLayer.changed(), { deep: true })
 const recordsLayer = new VectorLayer({ source: recordsSource, style: feature => style(feature as Feature<Geometry>), declutter: false })
 onMounted(() => {
-  map = new Map({ target: host.value, layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })], view: new View({ center: fromLonLat(gcj02ToWgs84([88.893426, 29.274331])), zoom: 16, minZoom: 3, maxZoom: 21 }), controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]) })
+  const lastView = initialMapView()
+  map = new Map({ target: host.value, layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })], view: new View({ center: fromLonLat(gcj02ToWgs84(lastView.coordinate)), zoom: lastView.zoom, minZoom: 3, maxZoom: 21 }), controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]) })
+  map.on('moveend', () => {
+    const coordinate = map?.getView().getCenter()
+    if (!coordinate) return
+    const [longitude, latitude] = wgs84ToGcj02(toLonLat(coordinate))
+    try { localStorage.setItem(mapViewKey, JSON.stringify({ longitude, latitude, zoom: map!.getView().getZoom() ?? 16 })) } catch { /* Optional map preference. */ }
+  })
   void $fetch<{ id: string }[]>('/api/map/layers', { signal: layerRequest.signal }).then(layers => {
     if (layerRequest.signal.aborted || !map) return
     layers.forEach((layer, index) => {
@@ -123,8 +153,8 @@ onMounted(() => {
 onBeforeUnmount(() => { layerRequest.abort(); observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
 </script>
 <template>
-  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图" /><div v-if="missingTiles" class="map-cache-hint" role="status">部分图层暂不可用</div><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
+  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图" /><div v-if="missingTiles" class="map-cache-hint" role="status">部分图层暂不可用</div><div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
-.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-cache-hint{position:absolute;bottom:12px;left:65px;right:60px;margin:auto;width:fit-content;max-width:calc(100% - 130px);background:var(--warning-bg);color:var(--warning);padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none}
+.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-locate{position:absolute;right:12px;bottom:174px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:24px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-location-hint{position:absolute;left:12px;bottom:12px;max-width:calc(100% - 78px);background:var(--surface);padding:6px 9px;border-radius:6px;font-size:12px;z-index:2}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-cache-hint{position:absolute;bottom:12px;left:65px;right:60px;margin:auto;width:fit-content;max-width:calc(100% - 130px);background:var(--warning-bg);color:var(--warning);padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none}
 </style>
