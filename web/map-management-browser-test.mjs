@@ -218,7 +218,11 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       const navigation = await page.getByRole('navigation', { name: '底部主导航' }).boundingBox()
       assert(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('.mobile-tabs'), { x: navigation.x + 20, y: navigation.y + 20 }))
       await page.screenshot({ path: path.join(evidence, 'map-fullscreen-375.png'), fullPage: true, animations: 'disabled' })
-      await page.keyboard.press('Escape'); await waitFullscreen(false)
+      // Synthetic Escape sent to a headless page does not dismiss the browser
+      // native fullscreen layer. Both a real Escape and the browser API emit
+      // fullscreenchange; exercise that observable contract explicitly.
+      await page.evaluate(() => document.exitFullscreen())
+      await waitFullscreen(false)
       await assertFullViewport()
     })
     await test('M03 clicking map center returns GCJ-02 coordinates instead of WGS84', async () => {
