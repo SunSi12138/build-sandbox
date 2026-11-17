@@ -314,7 +314,7 @@ public sealed class StoreV2Tests
         Assert.Single(saved.Photos);
         store.SaveCampaignType(type.Id, new("已改类型"));
         store.SaveCommunity(point.CommunityId, new("已改社区", "已改社区居民委员会"));
-        var edited = store.SaveCampaign(saved.Campaign.Id, request with { Content = "编辑内容", Revision = saved.Campaign.Revision });
+        var edited = store.SaveCampaign(saved.Campaign.Id, request with { Content = "编辑内容" });
         Assert.Equal(type.Name, edited.Campaign.TypeName);
         Assert.Equal(point.CommunityName, edited.Campaign.CommunityName);
         Assert.Throws<ApiException>(() => store.DeleteCampaignType(type.Id));

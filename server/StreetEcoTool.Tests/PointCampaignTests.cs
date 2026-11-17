@@ -30,7 +30,7 @@ public sealed class PointCampaignTests
         Assert.Null(store.GetPoint(point.Id).LastInspectionDate);
         store.SavePoint(point.Id, new("改名", point.CommunityId, point.TypeId, "新地址", Contact: "王五", Revision: point.Revision));
         store.SaveCommunity(point.CommunityId, new("新社区", "新社区居民委员会"));
-        var updated = store.SaveCampaign(detail.Campaign.Id, request with { Content = "修改活动内容", Revision = detail.Campaign.Revision });
+        var updated = store.SaveCampaign(detail.Campaign.Id, request with { Content = "修改活动内容" });
         Assert.Equal(point.Name, updated.Campaign.PointName);
         Assert.Equal(point.Address, updated.Campaign.Location);
         Assert.Equal(point.CommunityName, updated.Campaign.CommunityName);
@@ -56,7 +56,7 @@ public sealed class PointCampaignTests
         Assert.Equal(point.Id, store.GetCampaign(saved.Campaign.Id).PointId);
         store.SetPointDisabled(point.Id, new(true, Revision: store.GetPoint(point.Id).Revision));
         Assert.Equal(409, Assert.Throws<ApiException>(() => store.SaveCampaign(null, Campaign(store, point.Id))).StatusCode);
-        Assert.Equal("补充", store.SaveCampaign(saved.Campaign.Id, Campaign(store, point.Id) with { Notes = "补充", Revision = saved.Campaign.Revision }).Campaign.Notes);
+        Assert.Equal("补充", store.SaveCampaign(saved.Campaign.Id, Campaign(store, point.Id) with { Notes = "补充" }).Campaign.Notes);
     }
 
     [Fact]
