@@ -31,7 +31,16 @@ public static class CommunityApi
         {
             if (!int.TryParse(context.Request.RouteValues["z"]?.ToString(), out var z) || !int.TryParse(context.Request.RouteValues["x"]?.ToString(), out var x) || !int.TryParse(context.Request.RouteValues["y"]?.ToString(), out var y)) throw new ApiException(400, "地图编号不正确。");
             var path = store.FindTile((string)context.Request.RouteValues["layer"]!, z, x, y);
-            if (path is null) { context.Response.StatusCode = 404; return; }
+            if (path is null)
+            {
+                var archive = store.ReadArchiveTile((string)context.Request.RouteValues["layer"]!, z, x, y);
+                if (archive is null) { context.Response.StatusCode = 404; return; }
+                context.Response.Headers.CacheControl = "no-cache";
+                context.Response.ContentType = archive.ContentType;
+                if (archive.ContentEncoding is not null) context.Response.Headers.ContentEncoding = archive.ContentEncoding;
+                await context.Response.Body.WriteAsync(archive.Data, context.RequestAborted);
+                return;
+            }
             context.Response.Headers.CacheControl = "no-cache";
             context.Response.ContentType = Path.GetExtension(path) switch { ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".pbf" or ".mvt" => "application/vnd.mapbox-vector-tile", _ => "image/png" };
             if (Path.GetExtension(path) is ".mvt" or ".pbf")

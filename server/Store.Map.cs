@@ -168,6 +168,15 @@ public sealed partial class Store
         return (abC*abD<0 && cdA*cdB<0) || (abC==0 && On(a,b,c)) || (abD==0 && On(a,b,d)) || (cdA==0 && On(c,d,a)) || (cdB==0 && On(c,d,b));
     }
 
+    public LocalArchiveTile? ReadArchiveTile(string layerId, int z, int x, int y)
+    {
+        var layer = GetMapLayers().FirstOrDefault(item => item.Id == layerId) ?? throw new ApiException(404, "图层不存在。");
+        if (z < layer.MinZoom || z > layer.MaxZoom || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
+        var path = Path.IsPathFullyQualified(layer.Folder) ? layer.Folder : Path.Combine(RootDir, "tiles", layer.Folder);
+        if (!path.EndsWith(".pmtiles", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".pbtiles", StringComparison.OrdinalIgnoreCase)) return null;
+        return PmTiles.Read(path, z, x, y);
+    }
+
     public string? FindTile(string layerId, int z, int x, int y)
     {
         var layer = GetMapLayers().FirstOrDefault(x => x.Id == layerId) ?? throw new ApiException(404, "图层不存在。");
