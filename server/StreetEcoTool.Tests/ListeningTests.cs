@@ -93,6 +93,34 @@ public sealed class ListeningTests : IDisposable
     }
 
     [Fact]
+    public void SavedWindowsUtf8BomSettingsAreEditableAndKeepOtherConfiguration()
+    {
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, "appsettings.json");
+        var content = """{"port":5180,"listen":["127.0.0.1"],"futureOption":{"enabled":true}}""";
+        File.WriteAllBytes(path, [.. System.Text.Encoding.UTF8.GetPreamble(), .. System.Text.Encoding.UTF8.GetBytes(content)]);
+        var service = new ListeningService(_root, 5180, ["127.0.0.1"], Adapters);
+        var applied = service.Prepare(new(["0.0.0.0"]), IPAddress.Loopback);
+        Assert.Equal(["0.0.0.0"], applied.Listen);
+        using var saved = JsonDocument.Parse(File.ReadAllText(path));
+        Assert.Equal("0.0.0.0", saved.RootElement.GetProperty("listen")[0].GetString());
+        Assert.True(saved.RootElement.GetProperty("futureOption").GetProperty("enabled").GetBoolean());
+    }
+
+    [Fact]
+    public void MalformedSavedSettingsGetSpecificErrorAndAreNotOverwritten()
+    {
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, "appsettings.json");
+        File.WriteAllText(path, """{"port":5180,"listen":""");
+        var service = new ListeningService(_root, 5180, ["127.0.0.1"], Adapters);
+        var error = Assert.Throws<ApiException>(() => service.Prepare(new(["0.0.0.0"]), IPAddress.Loopback));
+        Assert.Equal(400, error.StatusCode);
+        Assert.Contains("appsettings.json", error.Message);
+        Assert.Equal("""{"port":5180,"listen":""", File.ReadAllText(path));
+    }
+
+    [Fact]
     public void AllInterfacesIncludeLoopbackAndEverySelectableIpv4Interface()
     {
         var addresses = ListeningService.AccessAddresses(["0.0.0.0"], 5180, Adapters());
