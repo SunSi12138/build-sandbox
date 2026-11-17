@@ -13,6 +13,15 @@ const useId=ref(''),useOpen=ref(false),inspectionId=ref(''),mobilePane=ref('plac
 const pending=ref<GeoShape|null>(null),saving=ref(false),editor=ref(false),editingPoint=ref<PointDto|null>(null),filterOpen=ref(false),searchResults=ref(false),gridEditor=ref(false),showGridBoundaries=ref(false)
 const editingGrid=ref<CommunityDto|null>(null)
 const highDefinition=useState('map-high-definition',()=>false)
+const loadDepth=useState<number>('community-map-depth',()=>0)
+const exportOpen=ref(false), exporting=ref(false), exportError=ref('')
+const exportScale=ref(2), exportPartitions=ref(2), exportMarkers=ref(true), exportGrids=ref(true)
+const exportLayerIds=ref<string[]>([]), exportBaseSize=ref<[number,number]>([0,0])
+const exportResolution=computed(()=>[exportBaseSize.value[0]*exportScale.value,exportBaseSize.value[1]*exportScale.value])
+function openExport(){exportLayerIds.value=mapState.value.layers.filter(x=>x.enabled).map(x=>x.id);exportBaseSize.value=canvas.value?.getExportSize()??[0,0];exportError.value='';exportOpen.value=true}
+function toggleExportLayer(id:string,checked:boolean){exportLayerIds.value=checked?[...exportLayerIds.value,id]:exportLayerIds.value.filter(x=>x!==id)}
+async function exportMap(){if(exporting.value)return;exporting.value=true;exportError.value='';try{await canvas.value?.exportImage({scale:Number(exportScale.value),partitions:Number(exportPartitions.value),layerIds:exportLayerIds.value,markers:exportMarkers.value,grids:exportGrids.value});exportOpen.value=false}catch(e){exportError.value=errorMessage(e)}finally{exporting.value=false}}
+async function toggleLayer(layer:MapState['layers'][number],checked:boolean){const previous=layer.enabled;layer.enabled=checked;try{await $fetch('/api/map/layers',{method:'POST',body:layer,retry:0})}catch(e){layer.enabled=previous;error.value=errorMessage(e)}}
 const filter=reactive(useState('community-map-filter',()=>({grid:'all',type:'all',purpose:'all',issues:false})).value)
 const canvas=useTemplateRef('canvas'),usePanel=useTemplateRef('usePanel')
 onBeforeRouteLeave(()=>mayLeaveUse())
@@ -55,9 +64,9 @@ useHead({title:'社区地图'})
 </script>
 <template>
   <div class="community-map" :class="{'panes-open':selected&&!pending}" data-testid="map-workspace">
-    <OfflineMap ref="canvas" v-model="pending" :features="filtered" :layers="mapState.layers" :selected-id="selected?.id" :focus-padding="focusPadding" immersive :high-definition="highDefinition" height="100%" @choose="choose" @edit="editFeature" @begin="beginDrawing" @sketching="sketching=$event" :editable="!usePanel?.dirty && !usePanel?.busy" />
-    <div class="map-search floating"><div class="flex gap-2"><UInput v-model="query" @update:model-value="searchResults=true" placeholder="搜索场所、店名或用途" icon="i-lucide-search" class="min-w-0 flex-1" /><UButton icon="i-lucide-list-filter" aria-label="筛选地图" color="neutral" :variant="filterOpen?'solid':'outline'" @click="openFilters" /></div><div v-if="filterOpen" class="space-y-3 mt-3"><div class="flex gap-1 flex-wrap"><UButton v-for="item in types" :key="item.value" :label="item.label" size="sm" :variant="filter.type===item.value?'solid':'ghost'" @click="filter.type=item.value" /></div><div class="flex gap-1 flex-wrap"><UButton v-for="item in purposeOptions" :key="item.value" :label="item.label" size="sm" :variant="filter.purpose===item.value?'solid':'ghost'" @click="selectPurpose(item.value)" /></div><UButton label="仅有未完成问题" size="sm" :variant="filter.issues?'solid':'outline'" @click="filter.issues=!filter.issues" /><div class="flex justify-between text-sm text-muted"><span>{{ matches.length }} 个场所</span><button @click="Object.assign(filter,{type:'all',purpose:'all',issues:false});query=''">清空筛选</button></div></div><div v-if="query && searchResults" class="map-search-results"><button v-for="item in matches.slice(0,20)" :key="item.id" @click="choose(item)">{{ item.name }}</button><p v-if="!matches.length" class="p-2 text-muted">没有匹配场所</p></div></div>
-    <div class="grid-toolbar floating"><GridTreeSelect v-model="filter.grid" allow-all placeholder="选择地图网格" @update:model-value="gridChanged" /><USwitch v-model="showGridBoundaries" label="网格边界" size="sm" /></div>
+    <OfflineMap ref="canvas" v-model="pending" :features="filtered" :layers="mapState.layers" :selected-id="selected?.id" :focus-padding="focusPadding" immersive :high-definition="highDefinition" :load-depth="loadDepth" :export-features="mapState.features" height="100%" @choose="choose" @edit="editFeature" @begin="beginDrawing" @sketching="sketching=$event" :editable="!usePanel?.dirty && !usePanel?.busy" />
+    <div class="map-search floating"><div class="flex gap-2"><UInput v-model="query" @update:model-value="searchResults=true" placeholder="搜索场所、店名或用途" icon="i-lucide-search" class="min-w-0 flex-1" /><UButton icon="i-lucide-list-filter" aria-label="筛选地图" color="neutral" :variant="filterOpen?'solid':'outline'" @click="openFilters" /></div><div v-if="filterOpen" class="space-y-3 mt-3"><div class="flex gap-1 flex-wrap"><UButton v-for="item in types" :key="item.value" :label="item.label" size="sm" :variant="filter.type===item.value?'solid':'ghost'" @click="filter.type=item.value" /></div><div class="flex gap-1 flex-wrap"><UButton v-for="item in purposeOptions" :key="item.value" :label="item.label" size="sm" :variant="filter.purpose===item.value?'solid':'ghost'" @click="selectPurpose(item.value)" /></div><UButton label="仅有未完成问题" size="sm" :variant="filter.issues?'solid':'outline'" @click="filter.issues=!filter.issues" /><div class="space-y-2 border-t border-default pt-3"><USwitch v-model="showGridBoundaries" label="网格边界" size="sm" /><USwitch v-for="layer in mapState.layers" :key="layer.id" :model-value="layer.enabled" :label="layer.name" size="sm" @update:model-value="value=>toggleLayer(layer,!!value)" /><UFormField label="加载深度"><USelect v-model="loadDepth" :items="[{label:'0',value:0},{label:'1',value:1},{label:'2',value:2},{label:'3',value:3},{label:'4',value:4}]" class="w-full" /></UFormField><UButton label="导出地图" icon="i-lucide-download" variant="outline" @click="openExport" /></div><div class="flex justify-between text-sm text-muted"><span>{{ matches.length }} 个场所</span><button @click="Object.assign(filter,{type:'all',purpose:'all',issues:false});query=''">清空筛选</button></div></div><div v-if="query && searchResults" class="map-search-results"><button v-for="item in matches.slice(0,20)" :key="item.id" @click="choose(item)">{{ item.name }}</button><p v-if="!matches.length" class="p-2 text-muted">没有匹配场所</p></div></div>
+    <div class="grid-toolbar floating"><GridTreeSelect v-model="filter.grid" allow-all placeholder="选择地图网格" @update:model-value="gridChanged" /></div>
     <UAlert v-if="error" :description="error" color="error" class="map-error" closable @update:open="value=>{if(!value)error=''}" />
     <div v-if="pending" class="map-save floating">
       <strong>{{ editingTarget ? `修改${editingTarget.kind==='grid'?'网格边界':'场所位置'} · ${editingTarget.name}` : pending.type==='Point'?'已标记位置':`已画 ${pending.type==='MultiPolygon'?pending.areas?.length:1} 个区域` }}</strong>
@@ -82,6 +91,16 @@ useHead({title:'社区地图'})
 
     <GridEditor v-model:open="gridEditor" :record="editingGrid" :shape="pending" :initial-parent-id="filter.grid==='all'?'':filter.grid" @saved="gridCreated" />
     <PointEditor v-model:open="editor" :point="editingPoint" :initial-coordinates="pendingCoordinates" :initial-shape="pending" @saved="created" />
+    <UModal v-model:open="exportOpen" title="导出地图" :dismissible="!exporting" :close="!exporting">
+      <template #body><div class="space-y-3">
+        <div class="field-grid"><UFormField label="倍率"><UInput v-model.number="exportScale" type="number" min="1" max="8" step="1" class="w-full" :disabled="exporting" /></UFormField><UFormField label="分区"><UInput v-model.number="exportPartitions" type="number" min="1" max="8" step="1" class="w-full" :disabled="exporting" /></UFormField></div>
+        <p>分辨率：{{ exportResolution[0] }} × {{ exportResolution[1] }}</p>
+        <div class="space-y-2"><UCheckbox v-for="layer in mapState.layers" :key="layer.id" :model-value="exportLayerIds.includes(layer.id)" :label="layer.name" :disabled="exporting" @update:model-value="value=>toggleExportLayer(layer.id,!!value)" /></div>
+        <div class="flex flex-wrap gap-4"><UCheckbox v-model="exportMarkers" label="场所标记" :disabled="exporting" /><UCheckbox v-model="exportGrids" label="网格区域" :disabled="exporting" /></div>
+        <UAlert v-if="exportError" :description="exportError" color="error" />
+      </div></template>
+      <template #footer><UButton label="取消" color="neutral" variant="outline" :disabled="exporting" @click="exportOpen=false" /><UButton label="导出 PNG" :loading="exporting" @click="exportMap" /></template>
+    </UModal>
   </div>
 </template>
 <style scoped>

@@ -21,7 +21,7 @@ import { defaults as defaultControls } from 'ol/control'
 import 'ol/ol.css'
 import type { GeoShape, MapFeature, MapLayer } from '~/types/community'
 
-const props = withDefaults(defineProps<{ features?: MapFeature[]; layers?: MapLayer[]; editable?: boolean; selectedId?: string; height?: string; immersive?: boolean; highDefinition?: boolean; focusPadding?: number[] }>(), { features: () => [], layers: () => [], editable: true, height: '65vh' })
+const props = withDefaults(defineProps<{ features?: MapFeature[]; layers?: MapLayer[]; editable?: boolean; selectedId?: string; height?: string; immersive?: boolean; highDefinition?: boolean; focusPadding?: number[]; loadDepth?: number; exportFeatures?: MapFeature[] }>(), { features: () => [], layers: () => [], editable: true, height: '65vh' })
 const shape = defineModel<GeoShape | null>({ default: null })
 const emit = defineEmits<{ choose: [feature: MapFeature]; coordinate: [coordinate: number[]]; edit: [feature: MapFeature]; begin: []; ready: []; sketching: [active: boolean] }>()
 const element = useTemplateRef<HTMLElement>('mapElement')
@@ -59,14 +59,18 @@ function refreshFeatures() {
   source.clear()
   source.addFeatures(props.features.filter(x => !x.disabled).map(item => { const f = new Feature({ geometry: geometry(item.shape), record: item }); f.setId(`${item.kind}:${item.id}`); return f }))
 }
+function tileLayer(item: MapLayer) {
+  const url = `/api/map/tiles/${encodeURIComponent(item.id)}/{z}/{x}/{y}?v=${item.cacheVersion ?? 0}`
+  const zIndex = item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder)
+  return item.tileType === 'mvt'
+    ? new VectorTileLayer({ source: new VectorTileSource({ url, format: new MVT(), minZoom: item.minZoom, maxZoom: item.maxZoom }), style: createMvtStyle(item.styleJson), opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
+    : new TileLayer({ source: new XYZ({ url, minZoom: item.minZoom, maxZoom: item.maxZoom, transition: 0, crossOrigin: 'anonymous' }), opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
+}
 function refreshLayers() {
   if (!map) return
   tiles.forEach(layer => map!.removeLayer(layer)); tiles = []
-  for (const item of [...props.layers].filter(x => x.enabled).sort((a,b) => a.sortOrder - b.sortOrder)) {
-    const url = `/api/map/tiles/${encodeURIComponent(item.id)}/{z}/{x}/{y}?v=${item.cacheVersion ?? 0}`
-    const layer = item.tileType === 'mvt'
-      ? new VectorTileLayer({ source: new VectorTileSource({ url, format: new MVT(), minZoom: item.minZoom, maxZoom: item.maxZoom }), style: createMvtStyle(item.styleJson), opacity: item.opacity, zIndex: item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder) })
-      : new TileLayer({ source: new XYZ({ url, minZoom: item.minZoom, maxZoom: item.maxZoom, transition: 0, crossOrigin: 'anonymous' }), opacity: item.opacity, zIndex: item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder) })
+  for (const item of [...props.layers].filter(x => x.enabled).sort((a, b) => a.sortOrder - b.sortOrder)) {
+    const layer = tileLayer(item)
     tiles.push(layer); map.addLayer(layer)
   }
 }
@@ -107,11 +111,101 @@ function cancel() { clearInteractions(); editing.clear(); shape.value = null; mo
 function edit(value: GeoShape) { const copy = structuredClone(toRaw(value)); cancel(); shape.value = copy; editing.addFeature(new Feature(geometry(copy))); startEdit() }
 function locate(lon: number, lat: number) { map?.getView().animate({ center: fromLonLat([lon, lat]), zoom: Math.max(map.getView().getZoom() ?? 16, 17), duration: 250 }) }
 function focus(value: GeoShape) { if (!map) return; map.getView().fit(geometry(value).getExtent(), { padding: (props.focusPadding ?? [60,60,60,60]).map(v=>v*(props.highDefinition?2:1)), maxZoom: 18, duration: 200 }) }
+
+function getExportSize(): [number, number] {
+  const size = map?.getSize() ?? [0, 0]
+  return [size[0] ?? 0, size[1] ?? 0]
+}
+function composite(target: HTMLCanvasElement, host: HTMLElement) {
+  const context = target.getContext('2d')
+  if (!context) throw new Error('无法创建地图渲染画布')
+  context.fillStyle = '#e6e9e5'
+  context.fillRect(0, 0, target.width, target.height)
+  const canvases = host.querySelectorAll<HTMLCanvasElement>('.ol-layer canvas, canvas.ol-layer')
+  for (const canvas of canvases) {
+    if (!canvas.width || !canvas.height) continue
+    const opacity = canvas.parentElement?.style.opacity || canvas.style.opacity || '1'
+    context.globalAlpha = Number(opacity)
+    const matrix = canvas.style.transform.match(/^matrix\(([^)]+)\)$/)
+    if (matrix) {
+      const values = matrix[1]!.split(',').map(Number)
+      if (values.length === 6 && values.every(Number.isFinite))
+        context.setTransform(values[0]!, values[1]!, values[2]!, values[3]!, values[4]!, values[5]!)
+      else context.setTransform(1, 0, 0, 1, 0, 0)
+    } else context.setTransform(target.width / canvas.width, 0, 0, target.height / canvas.height, 0, 0)
+    context.drawImage(canvas, 0, 0)
+  }
+  context.setTransform(1, 0, 0, 1, 0, 0)
+  context.globalAlpha = 1
+}
+async function exportImage(options: { scale: number; partitions: number; layerIds: string[]; markers: boolean; grids: boolean }) {
+  if (!map) throw new Error('地图尚未加载')
+  const [width, height] = getExportSize()
+  const scale = options.scale, partitions = options.partitions
+  if (!Number.isInteger(scale) || scale < 1 || scale > 8 || !Number.isInteger(partitions) || partitions < 1 || partitions > 8)
+    throw new Error('倍率或分区参数不正确')
+  const resultWidth = Math.round(width * scale), resultHeight = Math.round(height * scale)
+  if (!width || !height || resultWidth * resultHeight > 100_000_000 || resultWidth > 32767 || resultHeight > 32767)
+    throw new Error('导出分辨率过大')
+  const result = document.createElement('canvas')
+  result.width = resultWidth; result.height = resultHeight
+  const context = result.getContext('2d')
+  if (!context) throw new Error('无法创建地图导出画布')
+  const view = map.getView()
+  const resolution = view.getResolution(), rotation = view.getRotation()
+  if (!resolution) throw new Error('地图分辨率不可用')
+  const selectedLayers = props.layers.filter(x => options.layerIds.includes(x.id)).sort((a, b) => a.sortOrder - b.sortOrder)
+  const selectedFeatures = (props.exportFeatures ?? props.features).filter(x => !x.disabled && (x.kind === 'grid' ? options.grids : options.markers))
+  for (let row = 0; row < partitions; row++) {
+    for (let column = 0; column < partitions; column++) {
+      const x = Math.round(resultWidth * column / partitions), y = Math.round(resultHeight * row / partitions)
+      const nextX = Math.round(resultWidth * (column + 1) / partitions), nextY = Math.round(resultHeight * (row + 1) / partitions)
+      const widthPart = nextX - x, heightPart = nextY - y, bleed = 64
+      // Convert each partition center through the live rotated map's pixel transform.
+      const center = map.getCoordinateFromPixel([(x + widthPart / 2) / scale, (y + heightPart / 2) / scale])
+      if (!center) throw new Error('地图坐标转换失败')
+      const host = document.createElement('div')
+      host.style.cssText = `position:fixed;left:-100000px;top:0;width:${widthPart + 2 * bleed}px;height:${heightPart + 2 * bleed}px;pointer-events:none`
+      document.body.appendChild(host)
+      let exportMap: OLMap | undefined
+      try {
+        const source = new VectorSource<Feature<Geometry>>()
+        source.addFeatures(selectedFeatures.map(item => new Feature({ geometry: geometry(item.shape), record: item })))
+        exportMap = new OLMap({
+          target: host, pixelRatio: 1, controls: [], interactions: [],
+          view: new View({ projection: view.getProjection(), center, resolution: resolution / scale, rotation }),
+          layers: [...selectedLayers.map(tileLayer), new VectorLayer({ source, style: featureStyle, zIndex: 1100, declutter: false })],
+        })
+        const current = exportMap
+        await new Promise<void>((resolve, reject) => {
+          const timeout = window.setTimeout(() => reject(new Error('地图渲染超时')), 30000)
+          current.once('rendercomplete', () => { window.clearTimeout(timeout); resolve() })
+          current.renderSync()
+        })
+        const part = document.createElement('canvas')
+        part.width = widthPart + bleed * 2; part.height = heightPart + bleed * 2
+        composite(part, host)
+        context.drawImage(part, bleed, bleed, widthPart, heightPart, x, y, widthPart, heightPart)
+      } finally {
+        exportMap?.setTarget(undefined)
+        exportMap?.dispose()
+        host.remove()
+      }
+    }
+  }
+  const blob = await new Promise<Blob>((resolve, reject) => result.toBlob(value => value ? resolve(value) : reject(new Error('地图图片生成失败')), 'image/png'))
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  try {
+    anchor.href = url; anchor.download = '社区地图.png'; document.body.appendChild(anchor); anchor.click()
+  } finally { anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000) }
+}
 function bounds() { if (!map) return; const ext = map.getView().calculateExtent(map.getSize()); const sw = toLonLat([ext[0]!,ext[1]!]), ne = toLonLat([ext[2]!,ext[3]!]); return { west: Math.max(-180,sw[0]!), south: Math.max(-85,sw[1]!), east: Math.min(180,ne[0]!), north: Math.min(85,ne[1]!), zoom: Math.round(map.getView().getZoom() ?? 16) } }
 
-defineExpose({ start, cancel, edit, locate, focus, bounds })
+defineExpose({ start, cancel, edit, locate, focus, bounds, getExportSize, exportImage })
 watch(() => props.features, refreshFeatures, { deep: true })
 watch(() => props.layers, refreshLayers, { deep: true })
+watch(() => props.loadDepth, refreshLayers)
 watch(() => props.selectedId, () => source.changed())
 watch(()=>props.highDefinition,async(value,previous)=>{if(!map||value===previous)return;const zoom=map.getView().getZoom()??16;await nextTick();map.updateSize();map.getView().setZoom(zoom+(value?1:-1));source.changed()})
 watch(snapEnabled, () => { snaps.forEach(x => map?.removeInteraction(x)); snaps = []; if (mode.value !== 'view') addSnap() })
