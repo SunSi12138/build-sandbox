@@ -665,21 +665,6 @@
       outH = Math.max(1, Math.round(baseH * outScale));
     }
 
-    // 分块模式目前只可靠支持北向上；旋转导出自动退回单图模式，
-    // 单图模式受 80MP / 14000px 限制，会适当降低倍率。
-    if (chunked && exportRotationEl.checked) {
-      chunked = false;
-      const maxScale = Math.min(
-        requestedScale,
-        Math.sqrt(80e6 / (baseW * baseH)),
-        14000 / baseW,
-        14000 / baseH
-      );
-      outScale = Math.max(1, Math.min(outScale, maxScale));
-      outW = Math.max(1, Math.round(baseW * outScale));
-      outH = Math.max(1, Math.round(baseH * outScale));
-    }
-
     // 单图模式的离屏渲染深度
     let d = 0;
     if (!chunked) {
@@ -743,9 +728,9 @@
       );
     }
     if (p.chunked) {
-      lines.push('分块模式按北向上导出。');
-    } else if (exportRotationEl.checked) {
-      lines.push('旋转导出使用单图模式（分块只支持北向上）；倍率受 80MP 限制。');
+      lines.push(exportRotationEl.checked
+        ? '分块模式保留当前旋转，按旋转后的屏幕横带拼接。'
+        : '分块模式按北向上导出。');
     }
     lines.push('导出图只包含地图图层，不包含面板、缩放按钮等控件。');
     exportInfoEl.textContent = lines.join('\n');
@@ -813,44 +798,70 @@
     return [len, typeBytes, data, crc];
   }
 
-  function waitForTiles(offMap, sources, timeoutMs) {
-    return new Promise(function (resolve) {
-      let pending = 0;
-      let lastEvent = Date.now();
-      let done = false;
-      const listeners = [];
-
-      function cleanup() {
-        listeners.forEach(function (item) {
-          item.source.un('tileloadstart', item.start);
-          item.source.un('tileloadend', item.end);
-          item.source.un('tileloaderror', item.end);
-        });
+  // 使用 rendercomplete 等待当前视图的全部可见瓦片完成渲染。
+  // 只监听 tileloadstart/end 的空闲窗口可能漏掉尚未发起的新横带请求。
+  function waitForTiles(offMap, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      let settled = false;
+      const timer = setTimeout(function () {
+        finish(new Error('当前横带瓦片渲染超时（' + timeoutMs / 1000 + ' 秒）'));
+      }, timeoutMs);
+      function finish(error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        offMap.un('rendercomplete', onComplete);
+        if (error) reject(error);
+        else resolve();
       }
-      function finish() {
-        if (done) return;
-        done = true;
-        cleanup();
-        setTimeout(resolve, 120);
+      function onComplete() { finish(); }
+      offMap.on('rendercomplete', onComplete);
+      try {
+        offMap.renderSync();
+      } catch (error) {
+        finish(error);
       }
-      sources.forEach(function (source) {
-        const start = function () { pending++; lastEvent = Date.now(); };
-        const end = function () { pending = Math.max(0, pending - 1); lastEvent = Date.now(); };
-        source.on('tileloadstart', start);
-        source.on('tileloadend', end);
-        source.on('tileloaderror', end);
-        listeners.push({ source: source, start: start, end: end });
-      });
-
-      const startedAt = Date.now();
-      function check() {
-        if (done) return;
-        if (pending === 0 && Date.now() - lastEvent > 300) finish();
-        else if (Date.now() - startedAt > timeoutMs) finish();
-        else setTimeout(check, 100);
-      }
-      setTimeout(check, 120);
     });
+  }
+
+  // OpenLayers 的图层 Canvas 可能通过 CSS matrix 平移、旋转或缩放。
+  // 直接 drawImage(canvas, 0, 0, width, height) 会丢失这些变换，
+  // 对连续更新中心点的旋转分块尤其容易造成错位。
+  function drawOffscreenLayers(offMap, targetCtx) {
+    const canvases = offMap.getViewport().querySelectorAll('.ol-layer canvas, canvas.ol-layer');
+    if (!canvases.length) throw new Error('离屏地图没有生成图层 canvas');
+    canvases.forEach(function (canvas) {
+      if (!canvas.width || !canvas.height) return;
+      targetCtx.save();
+      const opacity = canvas.parentElement ? canvas.parentElement.style.opacity : '';
+      targetCtx.globalAlpha = opacity === '' ? 1 : Number(opacity);
+      const transform = getComputedStyle(canvas).transform;
+      if (transform && transform !== 'none') {
+        const matrix = new DOMMatrixReadOnly(transform);
+        targetCtx.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+      } else {
+        const styledWidth = parseFloat(canvas.style.width);
+        const styledHeight = parseFloat(canvas.style.height);
+        const scaleX = Number.isFinite(styledWidth) ? styledWidth / canvas.width : 1;
+        const scaleY = Number.isFinite(styledHeight) ? styledHeight / canvas.height : 1;
+        targetCtx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+      }
+      targetCtx.drawImage(canvas, 0, 0);
+      targetCtx.restore();
+    });
+  }
+
+  // 输出图片中的像素坐标 -> 地图坐标。屏幕右向量为 (cosθ, sinθ)，
+  // 下向量为 (sinθ, -cosθ)；每个横带的中心都必须用同一旋转基底计算。
+  function exportPixelToCoordinate(center, resolution, rotation, width, height, px, py) {
+    const dx = (px - width / 2) * resolution;
+    const dy = (py - height / 2) * resolution;
+    const cosR = Math.cos(rotation);
+    const sinR = Math.sin(rotation);
+    return [
+      center[0] + dx * cosR + dy * sinR,
+      center[1] + dx * sinR - dy * cosR
+    ];
   }
 
   async function runChunkedExport(p) {
@@ -885,14 +896,14 @@
         offLayers.push(new ol.layer.Tile({
           source: new ol.source.XYZ({
             url: './imagery/{z}/{x}/{y}.webp',
-            minZoom: 10, maxZoom: 17, crossOrigin: 'anonymous'
+            minZoom: 10, maxZoom: 17, crossOrigin: 'anonymous', transition: 0
           })
         }));
       }
       offLayers.push(new ol.layer.Tile({
         source: new ol.source.XYZ({
           url: './imagery/{z}/{x}/{y}.webp',
-          minZoom: 10, maxZoom: cap, crossOrigin: 'anonymous'
+          minZoom: 10, maxZoom: cap, crossOrigin: 'anonymous', transition: 0
         })
       }));
       if (exportLabelsEl.checked) {
@@ -900,14 +911,14 @@
           offLayers.push(new ol.layer.Tile({
             source: new ol.source.XYZ({
               url: './labels/{z}/{x}/{y}.png',
-              minZoom: 10, maxZoom: 17, crossOrigin: 'anonymous'
+              minZoom: 10, maxZoom: 17, crossOrigin: 'anonymous', transition: 0
             })
           }));
         }
         offLayers.push(new ol.layer.Tile({
           source: new ol.source.XYZ({
             url: './labels/{z}/{x}/{y}.png',
-            minZoom: 10, maxZoom: cap, crossOrigin: 'anonymous'
+            minZoom: 10, maxZoom: cap, crossOrigin: 'anonymous', transition: 0
           })
         }));
       }
@@ -927,21 +938,9 @@
       const center = view.getCenter();
       const baseRes = view.getResolution();
       const targetRes = baseRes / p.outScale;
-      // 分块模式只处理北向上；勾选旋转时 exportPlan 已改为单图模式。
-      const rot = 0;
-
-      // 把输出像素换算成地图坐标。
-      // 屏幕右方向 = (cosθ, sinθ)，屏幕下方向 = (sinθ, -cosθ)。
-      // 这样旋转视图也能正确切横带。
-      const cosR = Math.cos(rot);
-      const sinR = Math.sin(rot);
+      const rot = exportRotationEl.checked ? view.getRotation() : 0;
       function outputPixelToCoord(px, py) {
-        const dx = (px - p.outW / 2) * targetRes;
-        const dy = (py - p.outH / 2) * targetRes;
-        return [
-          center[0] + dx * cosR + dy * sinR,
-          center[1] + dx * sinR - dy * cosR
-        ];
+        return exportPixelToCoordinate(center, targetRes, rot, p.outW, p.outH, px, py);
       }
 
       const firstCenter = outputPixelToCoord(p.outW / 2, bandH / 2);
@@ -962,9 +961,6 @@
         interactions: [],
         pixelRatio: 1
       });
-      const offSources = offLayers.map(function (l) {
-        return l.getSource ? l.getSource() : null;
-      }).filter(Boolean);
       offMap.setSize([p.outW, bandH]);
       offMap.updateSize();
 
@@ -1014,18 +1010,14 @@
 
         // 不能只看 rendercomplete：它可能在上一段旧瓦片还在缓存时提前触发。
         // 注册 tileloadstart/end，等这一段的新瓦片真正加载完再取像素。
-        const rendered = waitForTiles(offMap, offSources, 60000);
-        offMap.renderSync();
-        await rendered;
+        await waitForTiles(offMap, 60000);
 
         bandCtx.clearRect(0, 0, p.outW, bh);
         if (fillColor) {
           bandCtx.fillStyle = fillColor;
           bandCtx.fillRect(0, 0, p.outW, bh);
         }
-        div.querySelectorAll('canvas').forEach(function (c) {
-          bandCtx.drawImage(c, 0, 0, p.outW, bh);
-        });
+        drawOffscreenLayers(offMap, bandCtx);
 
         const image = bandCtx.getImageData(0, 0, p.outW, bh);
         const bandBytes = new Uint8Array(stride * bh);
@@ -1178,9 +1170,6 @@
 
       await waitForOffscreen(offMap, 120000);
 
-      const canvases = Array.from(div.querySelectorAll('canvas'));
-      if (!canvases.length) throw new Error('离屏地图没有生成 canvas');
-
       const bg = exportBackgroundEl.value;
       const fillColor = bg === 'black' ? '#000000' : (bg === 'white' ? '#ffffff' : null);
       const raw = document.createElement('canvas');
@@ -1194,9 +1183,7 @@
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, raw.width, raw.height);
       }
-      canvases.forEach(function (c) {
-        ctx.drawImage(c, 0, 0, p.renderW, p.renderH);
-      });
+      drawOffscreenLayers(offMap, ctx);
 
       let finalCanvas = raw;
       if (p.outW !== p.renderW || p.outH !== p.renderH) {
