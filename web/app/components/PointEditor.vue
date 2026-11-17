@@ -8,8 +8,8 @@ const emit = defineEmits<{ saved: [point: PointDto] }>()
 const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false)
-interface PointState { shape: GeoShape | null; name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[]; tagIds: string[] }
-const defaults = (): PointState => ({ shape: null, name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [], tagIds: [] })
+interface PointState { shape: GeoShape | null; name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; temporary: boolean; notes: string; disabled: boolean; photos: PhotoUploadDto[]; tagIds: string[] }
+const defaults = (): PointState => ({ shape: null, name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', temporary: true, notes: '', disabled: false, photos: [], tagIds: [] })
 const state = reactive<PointState>(defaults())
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
@@ -45,7 +45,7 @@ async function save() {
   if (loading.value || saving.value || photosBusy.value || validate(state).length) return
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
-  const body: PointWriteRequest = { shape: state.shape, name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id), tagIds: state.tagIds }
+  const body: PointWriteRequest = { shape: state.shape, name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: state.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: state.temporary, photoIds: state.photos.map(photo => photo.id), tagIds: state.tagIds }
   try { const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/points', { method: props.point ? 'PUT' : 'POST', body, retry: 0 }); emit('saved', point); open.value = false }
   catch (value) { error.value = errorMessage(value) }
   finally { saving.value = false }
@@ -66,7 +66,8 @@ onBeforeUnmount(() => { overlayForm.value = false })
         <details class="field-full text-sm text-muted"><summary class="cursor-pointer">手动填写经纬度</summary><UFormField name="coordinates" class="mt-2"><UInput v-model="state.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" @update:model-value="state.shape = null" /></UFormField></details>
         <UFormField label="联系人" name="contact"><NameTagsInput :disabled="loading || saving" v-model="state.contact" maxlength="100" class="w-full" /></UFormField>
         <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
-        <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField>
+        <UFormField label="点位性质" name="temporary" class="field-full"><USelect v-model="state.temporary" :items="[{ label: '临时', value: true }, { label: '长期（常态）', value: false }]" class="w-full" data-testid="point-temporary" /></UFormField>
+        <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="state.temporary" class="w-full" /><p v-if="state.temporary" class="mt-1 text-xs text-muted">临时点位不参与常态排查提醒</p></UFormField>
         <UFormField label="标签" class="field-full"><TagPicker v-model="state.tagIds" :disabled="loading || saving" /></UFormField>
         <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="3" maxlength="8000" class="w-full" /></UFormField>
         <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" phase="point" :max="9" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" /></UFormField>
