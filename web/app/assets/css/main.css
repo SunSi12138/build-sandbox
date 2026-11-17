@@ -265,7 +265,7 @@ a.list-row:hover { background:var(--surface-2); }
 .main-shell>.workspace-content{position:relative;z-index:1}
 .has-background-map .workspace-content,.has-background-map .page-stack{pointer-events:none}
 .has-background-map .page-stack>:not(.record-map-shell){pointer-events:auto}
-.has-background-map .page-header,.has-background-map .filter-tool-row,.has-background-map .chip-row{background:var(--surface)}
+.has-background-map .page-header,.has-background-map .chip-row{background:var(--surface)}
 @media(min-width:768px){.main-shell{--main-map-left:56px}}
 @media(min-width:1024px){.main-shell{--main-map-left:208px}}
 @media(max-width:767px){
