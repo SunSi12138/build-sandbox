@@ -90,7 +90,7 @@ public sealed partial class Store
             PrepareWrite();
             // A missing PhotoIds property means a legacy metadata-only update.
             // When supplied, reconcile removals and additions in one transaction.
-            var removed = id is null || request.PhotoIds is null ? [] :
+            var removed = id is null || request.PhotoIds is null ? Array.Empty<string>() :
                 ReadPhotos(pointId: id).Where(photo => !request.PhotoIds.Contains(photo.Id, StringComparer.Ordinal))
                     .Select(photo => photo.Id).ToArray();
             string actualId = "";
