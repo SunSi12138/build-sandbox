@@ -88,7 +88,6 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            if (id is null && request.Temporary) throw new ApiException(400, "临时点位请随排查或整治一起保存。");
             string actualId;
             using (var transaction = _db.BeginTransaction())
             {
@@ -126,7 +125,7 @@ public sealed partial class Store
     private string SavePointCore(string? id, PointWriteRequest request, SqliteTransaction transaction, bool createTemporary = false)
     {
         var existing = id is null ? null : GetPointInternal(id, transaction);
-        var temporary = createTemporary || existing?.Temporary == true;
+        var temporary = createTemporary || (request.Temporary ?? existing?.Temporary ?? false);
         var name = Text(request.Name, "点位名称", 200, true);
         var community = RequireCommunity(Text(request.CommunityId, "所属社区", 100, true), transaction);
         var type = RequirePointType(Text(request.TypeId, "点位类型", 100, true), transaction);
