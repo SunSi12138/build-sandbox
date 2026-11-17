@@ -24,6 +24,7 @@ const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape
 const emit = defineEmits<{ select: [ids: string[]]; change: [shape: GeoShape]; drawing: [active: boolean] }>()
 const host = ref<HTMLElement>(), missingTiles = ref(false)
 const locateError = ref('')
+const failedTiles = new Set<object>()
 const layerRequest = new AbortController()
 const sketchVertices = ref(0)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
@@ -131,8 +132,10 @@ onMounted(() => {
     if (layerRequest.signal.aborted || !map) return
     layers.forEach((layer, index) => {
       const source = new XYZ({ url: `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`, maxZoom: 18 })
-      source.on('tileloaderror', () => { missingTiles.value = true })
-      source.on('tileloadend', () => { missingTiles.value = false })
+      // A successful tile must not clear the error caused by another tile.
+      source.on('tileloaderror', event => { failedTiles.add(event.tile); missingTiles.value = failedTiles.size > 0 })
+      source.on('tileloadend', event => { failedTiles.delete(event.tile); missingTiles.value = failedTiles.size > 0 })
+      source.on('tileloadstart', event => { failedTiles.delete(event.tile); missingTiles.value = failedTiles.size > 0 })
       map!.getLayers().insertAt(index, new TileLayer({ source }))
     })
   }).catch(() => { if (!layerRequest.signal.aborted) missingTiles.value = true })
