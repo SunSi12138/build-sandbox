@@ -7,6 +7,13 @@ namespace StreetEcoTool.Tests;
 
 public sealed class WordStoreTests
 {
+    private static FeedbackRequest Feedback(Store store, string id, string date, string notes, string[]? photos = null) =>
+        new(date, notes, photos, store.GetIssue(id).Revision);
+    private static ReviewRequest Review(Store store, string id, string date, string notes, string[]? photos = null) =>
+        new(date, notes, photos, store.GetIssue(id).Revision);
+    private static ReturnIssueRequest Return(Store store, string id, string reason) =>
+        new(reason, store.GetIssue(id).Revision);
+
     [Fact]
     public void NormalInspectionExportsRecordButRejectsUnnecessaryNotice()
     {
@@ -61,11 +68,11 @@ public sealed class WordStoreTests
             [new("问题甲", "要求甲", Store.Today, PhotoIds: [first.Id]), new("问题乙", "要求乙", Store.Today, PhotoIds: [second.Id])], [overall.Id]));
         var issue = detail.Issues[0];
         var after = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(800, 1200), "after");
-        fixture.Store.RecordFeedback(issue.Id, new(Store.Today, "整改已完成", [after.Id]));
+        fixture.Store.RecordFeedback(issue.Id, Feedback(fixture.Store, issue.Id, Store.Today, "整改已完成", [after.Id]));
         var review = fixture.Store.UploadPhoto(WordExporterTests.Jpeg(500, 700), "review");
-        fixture.Store.ReviewAndClose(issue.Id, new(Store.Today, "复查通过", [review.Id]));
+        fixture.Store.ReviewAndClose(issue.Id, Review(fixture.Store, issue.Id, Store.Today, "复查通过", [review.Id]));
         fixture.Store.SaveCommunity(fixture.Community.Id, new("改名后的社区", "改名后的居民委员会"));
-        fixture.Store.SavePoint(fixture.Point.Id, new("改名后的点位", fixture.Community.Id, fixture.Point.TypeId, "新地址", Frequency: "weekly"));
+        fixture.Store.SavePoint(fixture.Point.Id, new("改名后的点位", fixture.Community.Id, fixture.Point.TypeId, "新地址", Frequency: "weekly", Revision: fixture.Store.GetPoint(fixture.Point.Id).Revision));
 
         foreach (var notice in new[] { false, true })
         {
@@ -97,7 +104,7 @@ public sealed class WordStoreTests
         const string reason = "再次发现新增堆放，退回继续整改并加强日常巡查。";
         fixture.Store.RecordFeedback(issue.Id, new(Day(-2), feedback));
         fixture.Store.ReviewAndClose(issue.Id, new(Day(-1), conclusion));
-        var returned = fixture.Store.ReturnIssue(issue.Id, new(reason));
+        var returned = fixture.Store.ReturnIssue(issue.Id, Return(fixture.Store, issue.Id, reason));
         Assert.Equal("pending", returned.Issue.Status);
         Assert.Null(returned.Issue.FeedbackDate);
         Assert.Empty(returned.Issue.FeedbackNotes);
@@ -165,15 +172,15 @@ public sealed class WordStoreTests
         Assert.Equal(400, rejected.StatusCode); Assert.Equal("尚有 2 项问题未闭环", rejected.Message);
         foreach (var issue in detail.Issues)
         {
-            fixture.Store.RecordFeedback(issue.Id, new(Store.Today, "首轮反馈"));
-            fixture.Store.ReviewAndClose(issue.Id, new(Store.Today, "首轮复查"));
+            fixture.Store.RecordFeedback(issue.Id, Feedback(fixture.Store, issue.Id, Store.Today, "首轮反馈"));
+            fixture.Store.ReviewAndClose(issue.Id, Review(fixture.Store, issue.Id, Store.Today, "首轮复查"));
         }
         var id = detail.Issues[0].Id;
-        fixture.Store.ReturnIssue(id, new("再次发现堆放"));
+        fixture.Store.ReturnIssue(id, Return(fixture.Store, id, "再次发现堆放"));
         var returned = Assert.Throws<ApiException>(() => fixture.Store.ExportRectificationWord(detail.Inspection.Id));
         Assert.Equal("尚有 1 项问题未闭环", returned.Message);
-        fixture.Store.RecordFeedback(id, new(Store.Today, "再次清理"));
-        fixture.Store.ReviewAndClose(id, new(Store.Today, "再次复查通过"));
+        fixture.Store.RecordFeedback(id, Feedback(fixture.Store, id, Store.Today, "再次清理"));
+        fixture.Store.ReviewAndClose(id, Review(fixture.Store, id, Store.Today, "再次复查通过"));
         var document = fixture.Store.ExportRectificationWord(detail.Inspection.Id);
         Assert.StartsWith("整改记录单_", document.FileName, StringComparison.Ordinal);
         var text = DocumentText(document.FilePath);
@@ -186,8 +193,8 @@ public sealed class WordStoreTests
         using var fixture = new StoreFixture();
         _ = fixture.Store.CreateInspection(new(fixture.Point.Id, Store.Today, "测试排查人", "normal"));
         var detail = fixture.CreateIssue();
-        fixture.Store.RecordFeedback(detail.Issues[0].Id, new(Store.Today, "反馈完成"));
-        fixture.Store.SavePoint(fixture.Point.Id, new("新点位名", fixture.Community.Id, fixture.Point.TypeId, "新地址"));
+        fixture.Store.RecordFeedback(detail.Issues[0].Id, Feedback(fixture.Store, detail.Issues[0].Id, Store.Today, "反馈完成"));
+        fixture.Store.SavePoint(fixture.Point.Id, new("新点位名", fixture.Community.Id, fixture.Point.TypeId, "新地址", Revision: fixture.Store.GetPoint(fixture.Point.Id).Revision));
         var document = fixture.Store.ExportInspectionLedgerWord(Store.Today, Store.Today, fixture.Community.Id);
         var text = DocumentText(document.FilePath);
         Assert.Contains("共 2 次排查，正常 1，发现问题 1；问题共 1 项，已闭环 0", text);
@@ -219,7 +226,8 @@ public sealed class WordStoreTests
         Assert.DoesNotContain("新社区名称", text, StringComparison.Ordinal); Assert.DoesNotContain("新整治类型", text, StringComparison.Ordinal);
         var ledger = fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, fixture.Community.Id, type.Id, true);
         Assert.Equal(new[] { "1200x800", "1600x900", "900x1200" }, MediaDimensions(ledger.FilePath));
-        Assert.Contains("累计参加 12 人、出动车辆 1 辆、清运垃圾 2.35 吨、清理面积 100.50 ㎡", DocumentText(ledger.FilePath));
+        Assert.Contains("共 1 次整治", DocumentText(ledger.FilePath));
+        Assert.DoesNotContain("清运垃圾", DocumentText(ledger.FilePath), StringComparison.Ordinal);
         var noPhotos = fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, includePhotos: false);
         Assert.Empty(MediaDimensions(noPhotos.FilePath));
         Assert.Equal(400, Assert.Throws<ApiException>(() => fixture.Store.ExportCampaignLedgerWord(Store.Today, Store.Today, typeId: "missing")).StatusCode);
