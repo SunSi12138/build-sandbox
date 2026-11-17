@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
+import { mkdir, writeFile, unlink } from 'node:fs/promises'
+import MVT from 'ol/format/MVT'
+import { createMvtPmtilesFixture } from './pmtiles-mvt-test-fixture.mjs'
 
 export async function verifyMapManagement({ browser, origin, api, test, bootstrap, evidence }) {
   const context = await browser.newContext({ viewport: { width: 375, height: 812 }, locale: 'zh-CN', reducedMotion: 'no-preference' })
@@ -93,7 +96,7 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       const reopened = await editLayer('自定义卫星底图')
       assert.equal(await reopened.getByLabel('缓存目录', { exact: true }).inputValue(), 'custom-satellite')
       assert.equal(await reopened.getByRole('checkbox', { name: '强制更新缓存', exact: true }).isChecked(), true)
-      await expect(reopened.getByLabel('加载深度', { exact: true })).toContainText('2 · 预加载 2 级')
+      assert((await reopened.getByLabel('加载深度', { exact: true }).textContent()).includes('2 · 预加载 2 级'))
       await page.screenshot({ path: path.join(evidence, 'map-layer-editor-375.png'), fullPage: true, animations: 'disabled' })
       await page.keyboard.press('Escape')
     })
@@ -181,6 +184,56 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await north.waitFor({ state: 'hidden', timeout: 5000 })
       await picker.getByRole('button', { name: '取消', exact: true }).click()
       await editor.getByRole('button', { name: '取消', exact: true }).click()
+    })
+    await test('M05 real offline PMTiles MVT displays geometry without name tags', async () => {
+      const { archive, tile } = createMvtPmtilesFixture()
+      assert.equal(new MVT().readFeatures(tile).length, 1, 'Fixture should decode as a real MVT/PBF tile')
+      const config = await api('/map/settings')
+      const existingEnabled = config.providers.filter(layer => layer.enabled)
+      const fixturePath = path.join(config.cacheRoot, 'mvt-render-fixture.pmtiles')
+      let layer
+      await mkdir(config.cacheRoot, { recursive: true })
+      await writeFile(fixturePath, archive)
+      try {
+        for (const existing of existingEnabled) {
+          await api('/map/settings/' + existing.id + '/enabled', { method: 'PUT', body: { enabled: false } })
+        }
+        layer = await api('/map/settings', { method: 'POST', body: {
+          ...config.providers[0], id: '', name: '矢量渲染回归',
+          folder: 'mvt-render-fixture.pmtiles', scheme: 'xyz', format: 'pmtiles',
+          urlTemplate: '', forceRefresh: false, enabled: true, preload: 1,
+        } })
+        assert.equal(layer.format, 'pmtiles')
+        const checked = await api('/map/settings/' + layer.id + '/check')
+        assert.equal(checked.status, 'cached')
+        assert(checked.message.includes('MVT/PBF 矢量'))
+        const fetched = page.waitForResponse(response =>
+          new URL(response.url()).pathname.endsWith('/api/map/archive/' + layer.id) && response.status() === 206)
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await go('/points?view=map')
+        await fetched
+        await page.locator('.simple-map-canvas canvas').first().waitFor()
+        await page.waitForFunction(() => {
+          const host = document.querySelector('.simple-map-canvas')
+          return [...(host?.querySelectorAll('canvas') ?? [])].some(canvas => {
+            const context = canvas.getContext('2d')
+            if (!context || canvas.width < 50 || canvas.height < 50) return false
+            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+            let visible = 0, sampled = 0
+            for (let y = 10; y < canvas.height - 10; y += 20)
+              for (let x = 10; x < canvas.width - 10; x += 20) {
+                sampled++
+                if (pixels[(y * canvas.width + x) * 4 + 3] > 12) visible++
+              }
+            return sampled > 0 && visible > sampled * 0.30
+          })
+        }, null, { timeout: 12000 })
+      } finally {
+        if (layer) await api('/map/settings/' + layer.id + '?confirm=true', { method: 'DELETE' })
+        for (const existing of existingEnabled)
+          await api('/map/settings/' + existing.id + '/enabled', { method: 'PUT', body: { enabled: true } })
+        await unlink(fixturePath).catch(() => {})
+      }
     })
     assert.deepEqual(errors, [])
   } catch (error) {
