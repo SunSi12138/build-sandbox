@@ -31,16 +31,6 @@ const columns: TableColumn<CampaignDto>[] = [
   { accessorKey: 'typeName', header: '类型' },
   { accessorKey: 'communityName', header: '社区' },
   { accessorKey: 'location', header: '地点' },
-  {
-    accessorKey: 'participantCount',
-    header: '参加人数',
-    meta: { class: { th: 'text-right', td: 'text-right' } },
-  },
-  {
-    accessorKey: 'garbageTons',
-    header: '清运垃圾（吨）',
-    meta: { class: { th: 'text-right', td: 'text-right' } },
-  },
 ]
 let version = 0
 async function load() {
@@ -71,14 +61,6 @@ async function load() {
 }
 function detailLink(record: CampaignDto) {
   return { path: `/campaigns/${record.id}`, query: { returnTo: route.fullPath } }
-}
-function quantities(record: CampaignDto) {
-  return [
-    record.participantCount !== null ? `${record.participantCount} 人` : '',
-    record.garbageTons !== null ? `${record.garbageTons.toFixed(2)} 吨` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
 }
 function clearDates() {
   void navigateTo(
@@ -196,12 +178,7 @@ watch(() => route.fullPath, load, { immediate: true })
               ></template
             ><template #location-cell="{ row }"
               ><span class="block max-w-64 truncate">{{ row.original.location }}</span></template
-            ><template #participantCount-cell="{ row }">{{
-              row.original.participantCount ?? '—'
-            }}</template
-            ><template #garbageTons-cell="{ row }">{{
-              row.original.garbageTons?.toFixed(2) ?? '—'
-            }}</template></UTable
+            ></UTable
           >
         </div>
         <div class="group-list mobile-records">
@@ -219,7 +196,7 @@ watch(() => route.fullPath, load, { immediate: true })
               <div class="row-secondary">{{ record.communityName }} · {{ record.typeName }}</div>
               <div class="row-footer">
                 <span>{{ record.location }}</span
-                ><span v-if="quantities(record)" class="shrink-0">{{ quantities(record) }}</span>
+                >
               </div>
             </div></NuxtLink
           >

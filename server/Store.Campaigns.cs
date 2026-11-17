@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
 
 namespace StreetEcoTool;
 
@@ -8,20 +9,20 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,name FROM campaign_types ORDER BY rowid;");
+            using var command = Command("SELECT id,name,fields FROM campaign_types ORDER BY rowid;");
             using var rows = command.ExecuteReader();
             var result = new List<CampaignTypeDto>();
-            while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1)));
+            while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1), JsonSerializer.Deserialize(rows.GetString(2), CommunityJsonContext.Default.PurposeFieldArray) ?? []));
             return result.ToArray();
         }
     }
 
     private CampaignTypeDto RequireCampaignType(string id)
     {
-        using var command = Command("SELECT id,name FROM campaign_types WHERE id=$id;", null, ("$id", id));
+        using var command = Command("SELECT id,name,fields FROM campaign_types WHERE id=$id;", null, ("$id", id));
         using var row = command.ExecuteReader();
         if (!row.Read()) throw new ApiException(400, "所选整治类型不存在，请重新选择。");
-        return new(row.GetString(0), row.GetString(1));
+        return new(row.GetString(0), row.GetString(1), JsonSerializer.Deserialize(row.GetString(2), CommunityJsonContext.Default.PurposeFieldArray) ?? []);
     }
 
     public CampaignTypeDto SaveCampaignType(string? id, CampaignTypeWriteRequest request)
@@ -30,13 +31,15 @@ public sealed partial class Store
         {
             PrepareWrite();
             var name = Text(request.Name, "整治类型", 100, true);
+            ValidateFieldDefinitions(request.Fields ?? []);
+            var fieldsJson = JsonSerializer.Serialize(request.Fields ?? [], CommunityJsonContext.Default.PurposeFieldArray);
             using (var duplicate = Command("SELECT COUNT(*) FROM campaign_types WHERE name=$name AND id<>$id;", null, ("$name", name), ("$id", id ?? "")))
                 if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0) throw new ApiException(409, "已有同名整治类型。");
             var actualId = id ?? NewId();
-            using var command = Command(id is null ? "INSERT INTO campaign_types(id,name) VALUES($id,$name);" : "UPDATE campaign_types SET name=$name WHERE id=$id;", null,
-                ("$id", actualId), ("$name", name));
+            using var command = Command(id is null ? "INSERT INTO campaign_types(id,name,fields) VALUES($id,$name,$fields);" : "UPDATE campaign_types SET name=$name,fields=$fields WHERE id=$id;", null,
+                ("$id", actualId), ("$name", name), ("$fields", fieldsJson));
             RequireChanged(command.ExecuteNonQuery(), "整治类型");
-            return new(actualId, name);
+            return new(actualId, name, request.Fields ?? []);
         }
     }
 
@@ -55,7 +58,7 @@ public sealed partial class Store
     private const string CampaignSelect = """
         SELECT c.id,c.name,c.type_id,c.type_name,c.community_id,c.community_name,c.location,c.campaign_date,c.end_date,
         c.organizer,c.participants,c.participant_count,c.vehicle_count,c.garbage_tons,c.area_sqm,c.content,c.outcome,c.notes,
-        (SELECT COUNT(*) FROM photos p WHERE p.campaign_id=c.id),c.point_id,c.point_name,pt.temporary
+        (SELECT COUNT(*) FROM photos p WHERE p.campaign_id=c.id),c.point_id,c.point_name,pt.temporary,c.extra_values
         FROM campaigns c JOIN points pt ON pt.id=c.point_id
         """;
     private const string CampaignWhere = """
@@ -68,7 +71,7 @@ public sealed partial class Store
     private static CampaignDto ReadCampaign(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), NullableString(row, 8), row.GetString(9), row.GetString(10),
         row.IsDBNull(11) ? null : row.GetInt32(11), row.IsDBNull(12) ? null : row.GetInt32(12),
-        row.IsDBNull(13) ? null : row.GetDecimal(13), row.IsDBNull(14) ? null : row.GetDecimal(14), row.GetString(15), row.GetString(16), row.GetString(17), row.GetInt32(18), row.GetString(19), row.GetString(20), row.GetInt32(21) != 0);
+        row.IsDBNull(13) ? null : row.GetDecimal(13), row.IsDBNull(14) ? null : row.GetDecimal(14), row.GetString(15), row.GetString(16), row.GetString(17), row.GetInt32(18), row.GetString(19), row.GetString(20), row.GetInt32(21) != 0, JsonDocument.Parse(row.GetString(22)).RootElement.Clone());
 
     private CampaignDto[] ReadCampaigns(string suffix, (string Name, object? Value)[] parameters)
     {
@@ -140,6 +143,7 @@ public sealed partial class Store
             var date = DateText(request.Date, "整治日期");
             string? endDate = null;
             const string organizer = "";
+            var extra = NormalizeFieldValues(type.Fields ?? [], request.ExtraValues, request.BeforePhotoIds).GetRawText();
             var actualId = id ?? NewId();
             using (var transaction = _db.BeginTransaction())
             {
@@ -153,15 +157,15 @@ public sealed partial class Store
                     ("$organizer", organizer),
                     ("$participants", ""), ("$people", null), ("$vehicles", null), ("$garbage", null), ("$area", null),
                     ("$content", Text(request.Content, "整治内容", 12000, true)), ("$outcome", Text(request.Outcome, "整治成效", 12000)),
-                    ("$notes", Text(request.Notes, "备注", 8000))];
+                    ("$notes", Text(request.Notes, "备注", 8000)), ("$extra", extra)];
                 using (var command = Command(id is null ? """
                     INSERT INTO campaigns(id,name,point_id,point_name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,
-                    organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes)
-                    VALUES($id,$name,$point,$pointName,$type,$typeName,$community,$communityName,$location,$date,$end,$organizer,$participants,$people,$vehicles,$garbage,$area,$content,$outcome,$notes);
+                    organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes,extra_values)
+                    VALUES($id,$name,$point,$pointName,$type,$typeName,$community,$communityName,$location,$date,$end,$organizer,$participants,$people,$vehicles,$garbage,$area,$content,$outcome,$notes,$extra);
                     """ : """
                     UPDATE campaigns SET name=$name,type_id=$type,type_name=$typeName,campaign_date=$date,end_date=$end,
                     organizer=$organizer,participants=$participants,participant_count=$people,vehicle_count=$vehicles,
-                    garbage_tons=$garbage,area_sqm=$area,content=$content,outcome=$outcome,notes=$notes WHERE id=$id;
+                    garbage_tons=$garbage,area_sqm=$area,content=$content,outcome=$outcome,notes=$notes,extra_values=$extra WHERE id=$id;
                     """, transaction, parameters)) RequireChanged(command.ExecuteNonQuery(), "整治记录");
                 AttachPhotos(request.BeforePhotoIds, "before", null, null, transaction, campaignId: actualId);
                 AttachPhotos(request.ProcessPhotoIds, "process", null, null, transaction, campaignId: actualId);

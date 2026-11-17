@@ -106,15 +106,17 @@ export interface IssueQuery {
   overdue?: boolean; dueSoon?: boolean; from?: string; to?: string; q?: string; page?: number; pageSize?: number
 }
 
-export interface CampaignTypeDto { id: string; name: string }
+export interface CampaignTypeDto { id: string; name: string; fields?: import('./community').PurposeField[] }
 export interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
 export interface CampaignWriteRequest {
+  extraValues?: Record<string,string|number>
   name: string; typeId: string; pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; content: string
   endDate?: string | null; organizer?: string | null; participants?: string | null; participantCount?: number | null; vehicleCount?: number | null
   garbageTons?: number | null; areaSqm?: number | null; outcome?: string | null; notes?: string | null
   beforePhotoIds?: string[]; processPhotoIds?: string[]; afterPhotoIds?: string[]
 }
 export interface CampaignDto {
+  extraValues?: Record<string,string|number>
   id: string; name: string; pointId: string; pointName: string; pointTemporary: boolean; typeId: string; typeName: string; communityId: string; communityName: string; location: string; date: string
   endDate: string | null; organizer: string; participants: string; participantCount: number | null; vehicleCount: number | null
   garbageTons: number | null; areaSqm: number | null; content: string; outcome: string; notes: string; photoCount: number

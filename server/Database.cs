@@ -104,7 +104,7 @@ public sealed partial class Store : IDisposable
                 id TEXT PRIMARY KEY, issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE RESTRICT,
                 kind TEXT NOT NULL CHECK(kind IN ('feedback','review','return')), action_date TEXT NOT NULL, notes TEXT NOT NULL
             );
-            CREATE TABLE campaign_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE campaign_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, fields TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fields)));
                 CREATE TABLE campaigns (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL,
                     point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT, point_name TEXT NOT NULL,
@@ -116,7 +116,7 @@ public sealed partial class Store : IDisposable
                     vehicle_count INTEGER CHECK(vehicle_count IS NULL OR vehicle_count >= 0),
                     garbage_tons REAL CHECK(garbage_tons IS NULL OR garbage_tons >= 0),
                     area_sqm REAL CHECK(area_sqm IS NULL OR area_sqm >= 0),
-                    content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values)),
                     CHECK(end_date IS NULL OR end_date >= campaign_date)
                 );
             CREATE TABLE photos (

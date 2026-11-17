@@ -15,6 +15,7 @@ const conflictOpen = ref(false)
 const requestedPoint = ref('')
 function emptyPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
 interface CampaignState {
+  extraValues: Record<string,string|number>
   name: string
   typeId: string
   pointId: string
@@ -29,6 +30,7 @@ interface CampaignState {
   afterPhotos: PhotoUploadDto[]
 }
 const state = reactive<CampaignState>({
+  extraValues: {},
   name: '',
   typeId: '',
   pointId: '',
@@ -59,6 +61,11 @@ const communities = computed(() =>
 const types = computed(() =>
   (bootstrap.value?.campaignTypes ?? []).map((item) => ({ label: item.name, value: item.id })),
 )
+const extraFields = computed(() => bootstrap.value?.campaignTypes?.find(x=>x.id===state.typeId)?.fields ?? [])
+const extraPhotoIds = computed<string[]>({
+  get: () => state.beforePhotos.map(x => x.id),
+  set: ids => { state.beforePhotos = ids.map(id => state.beforePhotos.find(x=>x.id===id)??{ id, width: 1, height: 1 }) },
+})
 let ready = false,
   completed = false,
   original = '',
@@ -95,10 +102,8 @@ function restoreDraft() {
     }
     for (const field of textFields)
       if (typeof saved.state[field] === 'string') state[field] = saved.state[field] as string
-    for (const field of quantityFields) {
-      const value = saved.state[field]
-      if (typeof value === 'string' || typeof value === 'number') state[field] = String(value)
-    }
+    if (saved.state.extraValues && typeof saved.state.extraValues === 'object')
+      state.extraValues = saved.state.extraValues as Record<string,string|number>
     for (const field of photoFields) {
       const values = saved.state[field]
       if (Array.isArray(values))
@@ -143,6 +148,7 @@ onMounted(async () => {
       const record = props.initial.campaign
       for (const field of textFields)
         state[field] = record[field] === null ? '' : String(record[field])
+      state.extraValues = record.extraValues ?? {}
       state.beforePhotos = props.initial.photos
         .filter((photo) => photo.phase === 'before')
         .map((photo) => ({ id: photo.id, width: photo.width, height: photo.height }))
@@ -203,6 +209,7 @@ async function save() {
   error.value = ''
   const body: CampaignWriteRequest = {
     name: state.name,
+    extraValues: state.extraValues,
     typeId: state.typeId,
     pointId: props.initial ? props.initial.campaign.pointId : state.pointMode === 'regular' ? state.pointId : null,
     newPoint: !props.initial && state.pointMode === 'temporary' ? {
@@ -321,6 +328,7 @@ function useRequestedPoint() {
         /></UFormField>
       </div>
     </section>
+    <section v-if="extraFields.length" class="form-section"><ExtraFieldValues v-model="state.extraValues" v-model:photo-ids="extraPhotoIds" :fields="extraFields" phase="before" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="phaseBusy.before=$event" @failed="phaseFailed.before=$event" /></section>
     <section class="form-section">
       <h2>整治情况</h2>
       <div class="field-grid">

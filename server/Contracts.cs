@@ -53,15 +53,15 @@ public sealed record InspectionFeedbackItem(string IssueId, string Notes, string
 public sealed record InspectionFeedbackRequest(string Date, InspectionFeedbackItem[] Items);
 public sealed record InspectionReviewItem(string IssueId, string Conclusion, string[]? PhotoIds = null, int? Revision = null);
 public sealed record InspectionReviewRequest(string Date, InspectionReviewItem[] Items);
-public sealed record CampaignTypeDto(string Id, string Name);
-public sealed record CampaignTypeWriteRequest(string Name);
+public sealed record CampaignTypeDto(string Id, string Name, PurposeField[]? Fields = null);
+public sealed record CampaignTypeWriteRequest(string Name, PurposeField[]? Fields = null);
 public sealed record CampaignWriteRequest(string Name, string TypeId, string? PointId, string Date, string Content,
     string? EndDate = null, string? Organizer = null, string? Participants = null, int? ParticipantCount = null, int? VehicleCount = null,
     decimal? GarbageTons = null, decimal? AreaSqm = null, string? Outcome = null, string? Notes = null,
-    string[]? BeforePhotoIds = null, string[]? ProcessPhotoIds = null, string[]? AfterPhotoIds = null, PointWriteRequest? NewPoint = null);
+    string[]? BeforePhotoIds = null, string[]? ProcessPhotoIds = null, string[]? AfterPhotoIds = null, PointWriteRequest? NewPoint = null, JsonElement? ExtraValues = null);
 public sealed record CampaignDto(string Id, string Name, string TypeId, string TypeName, string CommunityId, string CommunityName,
     string Location, string Date, string? EndDate, string Organizer, string Participants, int? ParticipantCount, int? VehicleCount,
-    decimal? GarbageTons, decimal? AreaSqm, string Content, string Outcome, string Notes, int PhotoCount, string PointId = "", string PointName = "", bool PointTemporary = false);
+    decimal? GarbageTons, decimal? AreaSqm, string Content, string Outcome, string Notes, int PhotoCount, string PointId = "", string PointName = "", bool PointTemporary = false, JsonElement? ExtraValues = null);
 public sealed record CampaignDetailDto(CampaignDto Campaign, PhotoDto[] Photos);
 public sealed record CampaignQuery(string? Q = null, string? CommunityId = null, string? TypeId = null, string? From = null,
     string? To = null, int Page = 1, int PageSize = 30, string? PointId = null);
