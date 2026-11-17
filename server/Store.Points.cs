@@ -11,7 +11,12 @@ public sealed partial class Store
         (SELECT COUNT(*) FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id AND x.status<>'closed'),
         p.longitude,p.latitude,p.temporary,
         (SELECT ph.id FROM photos ph WHERE ph.point_id=p.id ORDER BY ph.uploaded_at,ph.rowid LIMIT 1),
-        (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id),p.shape
+        (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id),p.shape,
+        (SELECT COUNT(*) FROM inspections n WHERE n.point_id=p.id),
+        (SELECT COUNT(*) FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE n.point_id=p.id),
+        (SELECT COUNT(*) FROM activities a WHERE a.point_id=p.id),
+        (SELECT COUNT(*) FROM matters m WHERE m.point_id=p.id),
+        (SELECT COUNT(*) FROM attachments a WHERE a.point_id=p.id)
         FROM points p JOIN communities c ON c.id=p.community_id JOIN point_types t ON t.id=p.type_id
         """;
     private const string PointWhere = """
@@ -26,7 +31,9 @@ public sealed partial class Store
     private PointDto ReadPoint(SqliteDataReader row, SqliteTransaction? tx = null) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetInt32(11) != 0, NullableString(row, 12), row.GetInt32(13), row.IsDBNull(14) ? null : row.GetDouble(14),
-        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), ReadShape(NullableString(row, 19))) { Tags = ReadTags("point", row.GetString(0), tx) };
+        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), ReadShape(NullableString(row, 19))) { Tags = ReadTags("point", row.GetString(0), tx),
+          InspectionCount = row.GetInt32(20), IssueCount = row.GetInt32(21),
+          ActivityCount = row.GetInt32(22), MatterCount = row.GetInt32(23), AttachmentCount = row.GetInt32(24) };
 
     public PointDto GetPoint(string id)
     {
@@ -214,18 +221,39 @@ public sealed partial class Store
     private static (string Name, object? Value)[] LedgerPointParameters(string[]? pointIds) =>
         (pointIds ?? []).Select((id, i) => ("$point" + i, (object?)id)).ToArray();
 
-    public void DeletePoint(string id)
+    // Delete a selection only when every point is safe to remove.
+    // No cascading removal of inspections, activities, matters or attachments.
+    public void DeletePoint(string id) => DeletePoints([id]);
+
+    public void DeletePoints(string[] ids)
     {
+        if (ids is null || ids.Length is 0 or > 100 ||
+            ids.Any(string.IsNullOrWhiteSpace) ||
+            ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
+            throw new ApiException(400, "请选择 1 至 100 个不同的有效点位。");
         lock (_gate)
         {
             PrepareWrite();
-            _ = GetPoint(id);
-            using (var used = Command("SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id) + (SELECT COUNT(*) FROM activities WHERE point_id=$id)+(SELECT COUNT(*) FROM matters WHERE point_id=$id)+(SELECT COUNT(*) FROM attachments WHERE point_id=$id);", null, ("$id", id)))
-                if (Convert.ToInt32(used.ExecuteScalar()) > 0) throw new ApiException(409, "该点位仍有业务记录或附件，不能删除；可停用点位。");
-            ExecuteWithPhotoDeletion(ReadPhotos(pointId: id).Select(photo => photo.Id).ToArray(), transaction =>
+            foreach (var id in ids)
             {
-                using var command = Command("DELETE FROM points WHERE id=$id;", transaction, ("$id", id));
-                RequireChanged(command.ExecuteNonQuery(), "点位");
+                _ = GetPointInternal(id);
+                using var used = Command("""
+                    SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$id)
+                         + (SELECT COUNT(*) FROM activities WHERE point_id=$id)
+                         + (SELECT COUNT(*) FROM matters WHERE point_id=$id)
+                         + (SELECT COUNT(*) FROM attachments WHERE point_id=$id);
+                    """, null, ("$id", id));
+                if (Convert.ToInt32(used.ExecuteScalar()) > 0)
+                    throw new ApiException(409, "所选点位中存在关联排查、活动、事项或附件的记录；已取消整批删除。");
+            }
+            var photos = ids.SelectMany(id => ReadPhotos(pointId: id).Select(photo => photo.Id)).ToArray();
+            ExecuteWithPhotoDeletion(photos, transaction =>
+            {
+                foreach (var id in ids)
+                {
+                    using var command = Command("DELETE FROM points WHERE id=$id;", transaction, ("$id", id));
+                    RequireChanged(command.ExecuteNonQuery(), "点位");
+                }
             });
         }
     }

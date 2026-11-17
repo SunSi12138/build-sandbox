@@ -28,7 +28,7 @@ export interface PointDto {
   id: string; name: string; communityId: string; communityName: string; typeId: string; typeName: string
   address: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean
   shape?: GeoShape | null; lastInspectionDate: string | null; openIssueCount: number
-  longitude: number | null; latitude: number | null; temporary: boolean; coverPhotoId: string | null; photoCount: number; tags: TagDto[]
+  longitude: number | null; latitude: number | null; temporary: boolean; coverPhotoId: string | null; photoCount: number; inspectionCount: number; issueCount: number; activityCount: number; matterCount: number; attachmentCount: number; tags: TagDto[]
 }
 export interface PointDetailDto { point: PointDto; inspections: InspectionDto[]; openIssues: IssueDto[]; photos?: PhotoDto[]; activities: ActivityDto[]; attachments: AttachmentDto[]; matters: MatterLinkDto[] }
 export interface InspectionCreateRequest {

@@ -83,6 +83,33 @@ public sealed class PointMutationTests
     }
 
     [Fact]
+    public void BulkPointDeleteRejectsEntireSelectionIfAnyPointHasLinkedWork()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var linked = environment.CreatePoint(store);
+        var first = store.SavePoint(null, new("待删点位一", linked.CommunityId, linked.TypeId, "测试地址一"));
+        var second = store.SavePoint(null, new("待删点位二", linked.CommunityId, linked.TypeId, "测试地址二"));
+        var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
+        store.AttachPointPhotos(first.Id, new([photo.Id]));
+        store.CreateInspection(new(linked.Id, Store.Today, "测试排查人", "normal"));
+        Assert.Equal(1, store.GetPoint(linked.Id).InspectionCount);
+        Assert.Equal(0, store.GetPoint(first.Id).InspectionCount);
+        Assert.Equal(1, store.GetPoint(first.Id).PhotoCount);
+        Assert.Equal(409, Assert.Throws<ApiException>(() => store.DeletePoints([first.Id, linked.Id, second.Id])).StatusCode);
+        Assert.NotNull(store.GetPoint(first.Id));
+        Assert.NotNull(store.GetPoint(second.Id));
+        using (var retained = store.OpenPhoto(photo.Id)) Assert.True(retained.CanRead);
+
+        store.DeletePoints([first.Id, second.Id]);
+        Assert.Equal(404, Assert.Throws<ApiException>(() => store.GetPoint(first.Id)).StatusCode);
+        Assert.Equal(404, Assert.Throws<ApiException>(() => store.GetPoint(second.Id)).StatusCode);
+        Assert.Equal(404, Assert.Throws<ApiException>(() => store.OpenPhoto(photo.Id)).StatusCode);
+        Assert.Equal(1, store.GetPoint(linked.Id).InspectionCount);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Fact]
     public async Task ConcurrentPhotoCompletionsKeepBothAssociations()
     {
         using var environment = new V2Environment();

@@ -97,9 +97,16 @@ public static class Api
         RequestDelegate createPoint = async context => await Write(context, store.SavePoint(null, await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto, 201);
         RequestDelegate updatePoint = async context => await Write(context, store.SavePoint(Id(context), await Read(context, AppJsonContext.Default.PointWriteRequest)), AppJsonContext.Default.PointDto);
         RequestDelegate deletePoint = context => { RequireDeleteConfirmation(context); store.DeletePoint(Id(context)); return Deleted(context); };
+        RequestDelegate bulkDeletePoints = async context => {
+            RequireDeleteConfirmation(context);
+            var request = await Read(context, AppJsonContext.Default.PointBulkDeleteRequest);
+            store.DeletePoints(request.Ids);
+            await Deleted(context);
+        };
         app.MapGet("/api/points", points);
         app.MapGet("/api/points/{id}", point);
         app.MapPost("/api/points", createPoint);
+        app.MapPost("/api/points/batch-delete", bulkDeletePoints);
         app.MapPut("/api/points/{id}", updatePoint);
         RequestDelegate pointPhotos = async context => await Write(context,
             store.AttachPointPhotos(Id(context), await Read(context, AppJsonContext.Default.PointPhotosRequest)), AppJsonContext.Default.PointDto);

@@ -20,7 +20,14 @@ public sealed record ActivityTypeDto(string Id, string Name, string Template = "
 public sealed record ActivityTypeWriteRequest(string Name);
 public sealed record BootstrapDto(SettingsDto Settings, CommunityDto[] Communities, PointTypeDto[] PointTypes, string Today, CampaignTypeDto[] RemediationTypes, IssueTypeDto[] IssueTypes, ActivityTypeDto[] ActivityTypes, TagDto[] Tags);
 public sealed record PointWriteRequest(string Name, string CommunityId, string TypeId, string Address, string? Contact = null, string? Phone = null, string Frequency = "irregular", string? Notes = null, bool Disabled = false, double? Longitude = null, double? Latitude = null, string[]? PhotoIds = null, bool? Temporary = null, string[]? TagIds = null, GeoShape? Shape = null);
-public sealed record PointDto(string Id, string Name, string CommunityId, string CommunityName, string TypeId, string TypeName, string Address, string Contact, string Phone, string Frequency, string Notes, bool Disabled, string? LastInspectionDate, int OpenIssueCount, double? Longitude = null, double? Latitude = null, bool Temporary = false, string? CoverPhotoId = null, int PhotoCount = 0, GeoShape? Shape = null) { public TagDto[] Tags { get; init; } = []; }
+public sealed record PointDto(string Id, string Name, string CommunityId, string CommunityName, string TypeId, string TypeName, string Address, string Contact, string Phone, string Frequency, string Notes, bool Disabled, string? LastInspectionDate, int OpenIssueCount, double? Longitude = null, double? Latitude = null, bool Temporary = false, string? CoverPhotoId = null, int PhotoCount = 0, GeoShape? Shape = null) {
+    public TagDto[] Tags { get; init; } = [];
+    public int InspectionCount { get; init; }
+    public int IssueCount { get; init; }
+    public int ActivityCount { get; init; }
+    public int MatterCount { get; init; }
+    public int AttachmentCount { get; init; }
+}
 public sealed record PointDetailDto(PointDto Point, InspectionDto[] Inspections, IssueDto[] OpenIssues, PhotoDto[]? Photos = null, ActivityDto[]? Activities = null, AttachmentDto[]? Attachments = null, MatterLinkDto[]? Matters = null);
 public sealed record InspectionCreateRequest(string? PointId, string Date, string Inspector, string Result, string? Notes = null, string? NoticeNumber = null, IssueCreateRequest[]? Issues = null, string[]? PhotoIds = null, PointWriteRequest? NewPoint = null, string Source = "routine", string[]? MatterIds = null, string[]? TagIds = null, GeoShape? Shape = null);
 public sealed record IssueCreateRequest(string Description, string Requirement, string Deadline, string? ResponsibleUnit = null, string[]? PhotoIds = null, string? IssueTypeId = null, string[]? MatterIds = null);
@@ -45,6 +52,7 @@ public sealed record IssueQuery(string? Status = null, string? CommunityId = nul
 
 
 public sealed record PointPhotosRequest(string[] PhotoIds);
+public sealed record PointBulkDeleteRequest(string[] Ids);
 public sealed record PointStatusRequest(bool? Disabled);
 public sealed record PointPromoteRequest(string Frequency = "irregular");
 public sealed record InspectionUpdateRequest(string Date, string Inspector, string? NoticeNumber = null, string? Notes = null, string? Source = null);
