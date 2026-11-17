@@ -34,6 +34,13 @@ public static class CommunityApi
             if (path is null) { context.Response.StatusCode = 404; return; }
             context.Response.Headers.CacheControl = "no-cache";
             context.Response.ContentType = Path.GetExtension(path) switch { ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".pbf" or ".mvt" => "application/vnd.mapbox-vector-tile", _ => "image/png" };
+            if (Path.GetExtension(path) is ".mvt" or ".pbf")
+            {
+                await using var stream = File.OpenRead(path);
+                var signature = new byte[2];
+                var count = await stream.ReadAsync(signature, context.RequestAborted);
+                if (count == 2 && signature[0] == 0x1f && signature[1] == 0x8b) context.Response.Headers.ContentEncoding = "gzip";
+            }
             await context.Response.SendFileAsync(path, context.RequestAborted);
         };
         app.MapGet("/api/map/tiles/{layer}/{z}/{x}/{y}", tile);

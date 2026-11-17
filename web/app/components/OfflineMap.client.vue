@@ -7,9 +7,13 @@ import Polygon from 'ol/geom/Polygon'
 import MultiPolygon from 'ol/geom/MultiPolygon'
 import Geometry from 'ol/geom/Geometry'
 import TileLayer from 'ol/layer/Tile'
+import VectorTileLayer from 'ol/layer/VectorTile'
 import VectorLayer from 'ol/layer/Vector'
 import VectorSource from 'ol/source/Vector'
 import XYZ from 'ol/source/XYZ'
+import VectorTileSource from 'ol/source/VectorTile'
+import MVT from 'ol/format/MVT'
+import { createMvtStyle } from '~/utils/mvtStyle'
 import { Draw, Modify, Snap, DragRotate, defaults as defaultInteractions } from 'ol/interaction'
 import { fromLonLat, toLonLat } from 'ol/proj'
 import { Fill, Stroke, Style, Circle, Text } from 'ol/style'
@@ -30,7 +34,7 @@ watch(sketching, value => emit('sketching', value), { flush: 'sync' })
 let map: OLMap | undefined, draw: Draw | undefined, modify: Modify | undefined, snaps: Snap[] = []
 const source = new VectorSource<Feature<Geometry>>()
 const editing = new VectorSource<Feature<Geometry>>()
-let tiles: TileLayer<XYZ>[] = []
+let tiles: (TileLayer<XYZ> | VectorTileLayer)[] = []
 let resizing: ResizeObserver | undefined
 function geometry(value: GeoShape) { return value.type === 'Point' ? new Point(fromLonLat(value.coordinates[0]!)) : value.type === 'MultiPolygon' ? new MultiPolygon((value.areas ?? []).map(area => [area.map(x => fromLonLat(x))])) : new Polygon([value.coordinates.map(x => fromLonLat(x))]) }
 function readShape(g: Geometry): GeoShape {
@@ -59,8 +63,10 @@ function refreshLayers() {
   if (!map) return
   tiles.forEach(layer => map!.removeLayer(layer)); tiles = []
   for (const item of [...props.layers].filter(x => x.enabled).sort((a,b) => a.sortOrder - b.sortOrder)) {
-    const tileSource = new XYZ({ url: `/api/map/tiles/${encodeURIComponent(item.id)}/{z}/{x}/{y}?v=${item.cacheVersion ?? 0}`, minZoom: item.minZoom, maxZoom: item.maxZoom, transition: 0, crossOrigin: 'anonymous' })
-    const layer = new TileLayer({ source: tileSource, opacity: item.opacity, zIndex: item.annotation ? 1000 + item.sortOrder : Math.min(90,item.sortOrder) })
+    const url = `/api/map/tiles/${encodeURIComponent(item.id)}/{z}/{x}/{y}?v=${item.cacheVersion ?? 0}`
+    const layer = item.tileType === 'mvt'
+      ? new VectorTileLayer({ source: new VectorTileSource({ url, format: new MVT(), minZoom: item.minZoom, maxZoom: item.maxZoom }), style: createMvtStyle(item.styleJson), opacity: item.opacity, zIndex: item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder) })
+      : new TileLayer({ source: new XYZ({ url, minZoom: item.minZoom, maxZoom: item.maxZoom, transition: 0, crossOrigin: 'anonymous' }), opacity: item.opacity, zIndex: item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder) })
     tiles.push(layer); map.addLayer(layer)
   }
 }
