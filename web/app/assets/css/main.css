@@ -275,5 +275,4 @@ a.list-row:hover { background:var(--surface-2); }
   .main-map-layer .map-fit{bottom:calc(184px + env(safe-area-inset-bottom))}
   .main-map-layer .map-locate{bottom:calc(230px + env(safe-area-inset-bottom))}
   .main-map-layer .simple-map .ol-scale-line{bottom:calc(68px + env(safe-area-inset-bottom))}
-  .main-map-layer .map-cache-hint{bottom:calc(68px + env(safe-area-inset-bottom))}
 }

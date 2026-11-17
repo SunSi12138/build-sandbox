@@ -130,3 +130,4 @@ export interface AttachmentDto { id: string; pointId: string; name: string; note
 
 export interface TileProvider { id: string; folder: string; scheme: 'xyz' | 'tms'; urlTemplate: string; apiKey: string; mapKey: string; subdomains: string; name: string; forceRefresh: boolean; enabled: boolean; sortOrder: number }
 export interface MapSettingsDto { providers: TileProvider[]; defaults: TileProvider[]; cacheRoot: string }
+export interface MapLayerCheckDto { status: 'online' | 'cached' | 'empty' | 'unavailable' | 'error'; message: string; hasCache: boolean; hasUrl: boolean }

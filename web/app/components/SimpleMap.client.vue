@@ -22,9 +22,8 @@ import 'ol/ol.css'
 
 const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[] }>(), { records: () => [], shape: null, mode: 'view', selected: () => [] })
 const emit = defineEmits<{ select: [ids: string[]]; change: [shape: GeoShape]; drawing: [active: boolean] }>()
-const host = ref<HTMLElement>(), missingTiles = ref(false)
+const host = ref<HTMLElement>()
 const locateError = ref('')
-const failedTiles = new Set<object>()
 const layerRequest = new AbortController()
 const sketchVertices = ref(0)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
@@ -132,13 +131,9 @@ onMounted(() => {
     if (layerRequest.signal.aborted || !map) return
     layers.forEach((layer, index) => {
       const source = new XYZ({ url: `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`, maxZoom: 18 })
-      // A successful tile must not clear the error caused by another tile.
-      source.on('tileloaderror', event => { failedTiles.add(event.tile); missingTiles.value = failedTiles.size > 0 })
-      source.on('tileloadend', event => { failedTiles.delete(event.tile); missingTiles.value = failedTiles.size > 0 })
-      source.on('tileloadstart', event => { failedTiles.delete(event.tile); missingTiles.value = failedTiles.size > 0 })
       map!.getLayers().insertAt(index, new TileLayer({ source }))
     })
-  }).catch(() => { if (!layerRequest.signal.aborted) missingTiles.value = true })
+  }).catch(() => { /* No base layers is a supported offline state. */ })
   map.on('singleclick', event => {
     if (props.mode === 'point') {
       const feature = new Feature(new Point(event.coordinate)); editingSource.clear(); editingSource.addFeature(feature); report(feature)
@@ -156,8 +151,8 @@ onMounted(() => {
 onBeforeUnmount(() => { layerRequest.abort(); observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
 </script>
 <template>
-  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图" /><div v-if="missingTiles" class="map-cache-hint" role="status">部分图层暂不可用</div><div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
+  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图" /><div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
-.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-locate{position:absolute;right:12px;bottom:174px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:24px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-location-hint{position:absolute;left:12px;bottom:12px;max-width:calc(100% - 78px);background:var(--surface);padding:6px 9px;border-radius:6px;font-size:12px;z-index:2}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-cache-hint{position:absolute;bottom:12px;left:65px;right:60px;margin:auto;width:fit-content;max-width:calc(100% - 130px);background:var(--warning-bg);color:var(--warning);padding:6px 10px;border-radius:6px;font-size:12px;pointer-events:none}
+.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-locate{position:absolute;right:12px;bottom:174px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:24px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-location-hint{position:absolute;left:12px;bottom:12px;max-width:calc(100% - 78px);background:var(--surface);padding:6px 9px;border-radius:6px;font-size:12px;z-index:2}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}
 </style>

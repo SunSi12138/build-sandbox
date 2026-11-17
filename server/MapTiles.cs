@@ -11,6 +11,7 @@ public sealed record MapLayerDto(string Id);
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
 public sealed record MapSettingsDto(TileProvider[] Providers, TileProvider[] Defaults, string CacheRoot);
+public sealed record MapLayerCheckDto(string Status, string Message, bool HasCache, bool HasUrl);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(TileProvider))]
 [JsonSerializable(typeof(TileProvider[]))]
@@ -18,6 +19,7 @@ public sealed record MapSettingsDto(TileProvider[] Providers, TileProvider[] Def
 [JsonSerializable(typeof(MapLayerDto[]))]
 [JsonSerializable(typeof(MapOrderRequest))]
 [JsonSerializable(typeof(MapEnabledRequest))]
+[JsonSerializable(typeof(MapLayerCheckDto))]
 public partial class MapConfigJsonContext : JsonSerializerContext;
 
 public sealed partial class Store
@@ -155,6 +157,82 @@ public sealed partial class Store
             return layers.ToArray();
         }
     }
+    // Availability checks are explicit, read-only diagnostics. In offline mode
+    // they only inspect the configured cache directory, never attempt network IO.
+    private static (int Z, int X, int Row)? SampleCachedMapTile(string directory)
+    {
+        if (!Directory.Exists(directory)) return null;
+        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            if (!TileExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)) continue;
+            var path = Path.GetRelativePath(directory, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (path.Length != 3 ||
+                !int.TryParse(path[0], NumberStyles.None, CultureInfo.InvariantCulture, out var z) ||
+                !int.TryParse(path[1], NumberStyles.None, CultureInfo.InvariantCulture, out var x) ||
+                !int.TryParse(Path.GetFileNameWithoutExtension(path[2]), NumberStyles.None, CultureInfo.InvariantCulture, out var row) ||
+                z is < 0 or > 18 || x < 0 || row < 0 || x >= 1 << z || row >= 1 << z)
+                continue;
+            return (z, x, row);
+        }
+        return null;
+    }
+
+    public async Task<MapLayerCheckDto> CheckMapLayerAsync(string id, CancellationToken cancellationToken)
+    {
+        TileProvider provider;
+        lock (_gate) provider = GetMapProvider(id);
+        var hasUrl = !string.IsNullOrWhiteSpace(provider.UrlTemplate);
+        (int Z, int X, int Row)? cached;
+        try { cached = SampleCachedMapTile(MapCacheDirectory(provider.Folder)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return new("error", "无法读取该图层的缓存目录，请检查目录和访问权限。", false, hasUrl);
+        }
+        var hasCache = cached.HasValue;
+        if (!hasUrl)
+            return hasCache
+                ? new("cached", "检测到本地图块，可在已缓存区域离线使用；未检查全部区域。", true, false)
+                : new("empty", "未配置调用链接，也未发现本地图块。空白底图不影响点位和区域操作。", false, false);
+
+        // Test one representative image tile using the same URL formatter as
+        // actual map requests. A successful sample does not guarantee coverage.
+        const int defaultZoom = 12;
+        var zoom = cached?.Z ?? defaultZoom;
+        var xTile = cached?.X ?? (int)Math.Floor((88.893426 + 180) / 360 * (1 << defaultZoom));
+        var latitude = 29.274331 * Math.PI / 180;
+        var xyzY = (int)Math.Floor((1 - Math.Log(Math.Tan(latitude) + 1 / Math.Cos(latitude)) / Math.PI) / 2 * (1 << defaultZoom));
+        var row = cached?.Row ?? (provider.Scheme == "tms" ? (1 << defaultZoom) - 1 - xyzY : xyzY);
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(6));
+            using var request = new HttpRequestMessage(HttpMethod.Get, MapTileUrl(provider, zoom, xTile, row));
+            using var response = await MapHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (response.IsSuccessStatusCode)
+            {
+                await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
+                var header = new byte[12];
+                var length = 0;
+                while (length < header.Length)
+                {
+                    var read = await input.ReadAsync(header.AsMemory(length), timeout.Token);
+                    if (read == 0) break;
+                    length += read;
+                }
+                var valid = length >= 8 && header[0] == 137 && header[1] == 80 && header[2] == 78 && header[3] == 71
+                    || length >= 3 && header[0] == 255 && header[1] == 216 && header[2] == 255
+                    || length >= 12 && header[0] == 82 && header[1] == 73 && header[2] == 70 && header[3] == 70
+                        && header[8] == 87 && header[9] == 69 && header[10] == 66 && header[11] == 80;
+                if (valid) return new("online", "调用链接的样例图块请求成功；其他区域和缩放级别未逐一检查。", hasCache, true);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException) { /* Report below without exposing keys or the requested URL. */ }
+        return hasCache
+            ? new("cached", "调用链接未通过样例请求，但本地图块仍可在已缓存区域使用。", true, true)
+            : new("unavailable", "调用链接样例图块不可访问，且未发现本地缓存；请检查网络、链接和密钥。", false, true);
+    }
+
     private static string MapTileUrl(TileProvider provider, int z, int x, int row)
     {
         var hosts = provider.Subdomains.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -219,6 +297,8 @@ public sealed partial class Store
     public void MapApi(WebApplication app)
     {
         RequestDelegate settings = context => Api.Write(context, GetMapSettings(), MapConfigJsonContext.Default.MapSettingsDto);
+        RequestDelegate check = async context => await Api.Write(context,
+            await CheckMapLayerAsync(Api.Id(context), context.RequestAborted), MapConfigJsonContext.Default.MapLayerCheckDto);
         RequestDelegate save = async context => await Api.Write(context, SaveMapProvider(Api.Id(context), await Api.Read(context, MapConfigJsonContext.Default.TileProvider)), MapConfigJsonContext.Default.TileProvider);
         RequestDelegate create = async context => await Api.Write(context, CreateMapProvider(await Api.Read(context, MapConfigJsonContext.Default.TileProvider)), MapConfigJsonContext.Default.TileProvider, 201);
         RequestDelegate enabled = async context => await Api.Write(context, SetMapProviderEnabled(Api.Id(context), await Api.Read(context, MapConfigJsonContext.Default.MapEnabledRequest)), MapConfigJsonContext.Default.TileProvider);
@@ -231,6 +311,7 @@ public sealed partial class Store
         app.MapPut("/api/map/settings/{id}/enabled", enabled);
         app.MapDelete("/api/map/settings/{id}", delete);
         app.MapGet("/api/map/settings", settings);
+        app.MapGet("/api/map/settings/{id}/check", check);
         app.MapPut("/api/map/settings/{id}", save);
         RequestDelegate tile = async context =>
         {

@@ -5,6 +5,34 @@ namespace StreetEcoTool.Tests;
 public sealed class MapSettingsTests
 {
     [Fact]
+    public async Task OfflineLayerCheckUsesOnlyLocalCacheAndNeverChangesSettings()
+    {
+        using var env = new V2Environment();
+        using var store = env.Open();
+        var initial = Assert.Single(store.GetMapSettings().Providers);
+        var offline = store.SaveMapProvider(initial.Id, initial with
+        {
+            Folder = "offline-check", UrlTemplate = "", ForceRefresh = false
+        });
+        var before = store.GetMapSettings();
+
+        var empty = await store.CheckMapLayerAsync(offline.Id, CancellationToken.None);
+        Assert.Equal("empty", empty.Status);
+        Assert.False(empty.HasCache);
+        Assert.False(empty.HasUrl);
+
+        var tile = Path.Combine(env.Root, "tiles", offline.Folder, "12", "3059", "1702.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(tile)!);
+        File.WriteAllBytes(tile, [137, 80, 78, 71, 13, 10, 26, 10]);
+        var cached = await store.CheckMapLayerAsync(offline.Id, CancellationToken.None);
+        Assert.Equal("cached", cached.Status);
+        Assert.True(cached.HasCache);
+        Assert.False(cached.HasUrl);
+        Assert.Equal(before.Providers, store.GetMapSettings().Providers);
+        Assert.Equal(before.CacheRoot, store.GetMapSettings().CacheRoot);
+    }
+
+    [Fact]
     public void LayerSettingsPersistInDatabaseWithoutChangingOtherLayers()
     {
         using var env = new V2Environment(); TileProvider saved;
