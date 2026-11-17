@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace StreetEcoTool.Tests;
@@ -112,7 +113,7 @@ public sealed class MapSettingsTests
         {
             pmtiles with { Scheme = "tms" },
             pmtiles with { Folder = "archive" },
-            pmtiles with { ForceRefresh = true },
+            pmtiles with { Preload = -1 },
             pmtiles with { Format = "other" }
         })
         {
@@ -220,7 +221,7 @@ public sealed class MapSettingsTests
             var provider = first with
             {
                 Name = "我的底图", Folder = Path.Combine(env.Root, "地图缓存"), Scheme = "xyz",
-                UrlTemplate = "https://example.invalid/{z}/{x}/{y}?key={key}&mk={mk}", ApiKey = "test-key", MapKey = "test-map", ForceRefresh = true
+                Preload = 2
             };
             saved = store.SaveMapProvider(provider.Id, provider);
             Assert.Equal(provider, saved); Assert.True(Directory.Exists(provider.Folder));
@@ -240,13 +241,73 @@ public sealed class MapSettingsTests
         Assert.True(Directory.Exists(Path.Combine(env.Root, "tiles", "custom-cache")));
         foreach (var invalid in new[]
         {
-            provider with { Name = "" }, provider with { Scheme = "other" }, provider with { ForceRefresh = true },
-            provider with { UrlTemplate = "file:///tmp/{z}/{x}/{y}" }, provider with { UrlTemplate = "https://example.invalid/{z}/{x}/{y}?key={key}" }
+            provider with { Name = "" }, provider with { Scheme = "other" },
+            provider with { Format = "unknown" }, provider with { Preload = 4 },
+            provider with { Format = "pmtiles", Folder = "archive", Scheme = "xyz" }
         })
         {
             Assert.Equal(400, Assert.Throws<ApiException>(() => store.SaveMapProvider(provider.Id, invalid)).StatusCode);
             Assert.Equal(provider, Assert.Single(store.GetMapSettings().Providers));
         }
+    }
+
+    [Fact]
+    public async Task LegacyOnlineColumnsRemainCompatibleButCannotBeReactivated()
+    {
+        using var env = new V2Environment();
+        using var store = env.Open();
+        var original = Assert.Single(store.GetMapSettings().Providers);
+        const string oldUrl = "https://example.invalid/{z}/{x}/{y}?key={key}";
+        // Simulate a database row saved by the former online-enabled version.
+        using (var connection = new SqliteConnection($"Data Source={store.DatabasePath};Pooling=False"))
+        {
+            connection.Open();
+            using var update = connection.CreateCommand();
+            update.CommandText = """
+                UPDATE map_providers SET url_template=$url,api_key=$key,map_key=$map,force_refresh=1
+                WHERE id=$id;
+                """;
+            update.Parameters.AddWithValue("$url", "hb-preload-2+" + oldUrl);
+            update.Parameters.AddWithValue("$key", "historic-service-secret");
+            update.Parameters.AddWithValue("$map", "historic-map-secret");
+            update.Parameters.AddWithValue("$id", original.Id);
+            Assert.Equal(1, update.ExecuteNonQuery());
+        }
+        var existing = Assert.Single(store.GetMapSettings().Providers);
+        Assert.Equal(oldUrl, existing.UrlTemplate);
+        Assert.True(existing.ForceRefresh);
+        Assert.Equal(2, existing.Preload);
+        var check = await store.CheckMapLayerAsync(existing.Id, CancellationToken.None);
+        Assert.Equal("empty", check.Status);
+        Assert.False(check.HasUrl);
+
+        var edited = store.SaveMapProvider(existing.Id, existing with
+        {
+            Folder = "offline-after-upgrade", Name = "只读本地旧图层",
+            // New online settings sent by clients are ignored, not written.
+            UrlTemplate = "https://different.invalid/new", ApiKey = "", MapKey = "", ForceRefresh = false
+        });
+        Assert.Equal(oldUrl, edited.UrlTemplate);
+        Assert.Equal("historic-service-secret", edited.ApiKey);
+        Assert.Equal("historic-map-secret", edited.MapKey);
+        Assert.True(edited.ForceRefresh);
+        Assert.Equal(2, edited.Preload);
+
+        var created = store.CreateMapProvider(edited with
+        {
+            Id = "", Name = "新建离线图层", Folder = "local-only",
+            UrlTemplate = "https://example.invalid/never-fetch", ApiKey = "inert", ForceRefresh = true
+        });
+        Assert.Equal("", created.UrlTemplate);
+        Assert.Equal("", created.ApiKey);
+        Assert.False(created.ForceRefresh);
+        using var reopened = env.Open();
+        var persisted = reopened.GetMapSettings().Providers.Single(item => item.Id == edited.Id);
+        Assert.Equal(oldUrl, persisted.UrlTemplate);
+        Assert.Equal(2, persisted.Preload);
+        Assert.Equal("historic-service-secret", persisted.ApiKey);
+        Assert.False((await reopened.CheckMapLayerAsync(edited.Id, CancellationToken.None)).HasUrl);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
     }
 
     [Fact]
