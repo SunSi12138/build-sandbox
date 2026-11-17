@@ -200,22 +200,14 @@ public static class WordExporter
         document.Table(null,
         [
             ["整治名称", campaign.Name], ["场所名称", campaign.PointName], ["整治类型", campaign.TypeName], ["所属网格", campaign.CommunityName],
-            ["整治地点", campaign.Location], ["整治日期", DateRange(campaign.Date, campaign.EndDate)],
-            ["组织单位", campaign.Organizer], ["参加单位及人员", campaign.Participants]
+            ["整治地点", campaign.Location], ["整治日期", campaign.Date]
         ], [24, 76], labelColumn: true);
         document.Section("整治内容");
         document.Paragraph(campaign.Content);
-        var quantities = new List<(string Label, string Value)>();
-        if (campaign.ParticipantCount is not null) quantities.Add(("参加人数（人）", Number(campaign.ParticipantCount)));
-        if (campaign.VehicleCount is not null) quantities.Add(("出动车辆（辆）", Number(campaign.VehicleCount)));
-        if (campaign.GarbageTons is not null) quantities.Add(("清运垃圾（吨）", DecimalNumber(campaign.GarbageTons)));
-        if (campaign.AreaSqm is not null) quantities.Add(("清理面积（㎡）", DecimalNumber(campaign.AreaSqm)));
-        if (quantities.Count > 0 || !string.IsNullOrWhiteSpace(campaign.Outcome))
+        if (!string.IsNullOrWhiteSpace(campaign.Outcome))
         {
             document.Section("整治成效");
-            if (quantities.Count > 0) document.Table(quantities.Select(item => item.Label).ToArray(),
-                [quantities.Select(item => item.Value).ToArray()], Enumerable.Repeat(1, quantities.Count).ToArray(), centeredColumns: Enumerable.Range(0, quantities.Count).ToArray());
-            if (!string.IsNullOrWhiteSpace(campaign.Outcome)) document.Paragraph(campaign.Outcome);
+            document.Paragraph(campaign.Outcome);
         }
         // Keep short notes with the written record, not on a tail page after photographs.
         if (!string.IsNullOrWhiteSpace(campaign.Notes))
@@ -287,13 +279,12 @@ public static class WordExporter
         WriteLedgerInfo(document, ledger.From, ledger.To, ledger.CommunityName, settings, ledger.PreparedDate, ledger.PointScope);
         var rows = ledger.Campaigns.Select((campaign, index) => new[]
         {
-            Number(index + 1), DateRange(campaign.Date, campaign.EndDate), campaign.Name, campaign.TypeName, campaign.CommunityName,
-            campaign.Location, Number(campaign.ParticipantCount), Number(campaign.VehicleCount), DecimalNumber(campaign.GarbageTons),
-            DecimalNumber(campaign.AreaSqm), CampaignSummary(campaign)
+            Number(index + 1), campaign.Date, campaign.Name, campaign.TypeName, campaign.CommunityName,
+            campaign.Location, CampaignSummary(campaign)
         });
-        document.Table(["序号", "整治日期", "整治名称", "类型", "所属网格", "整治地点", "参加人数", "出动车辆", "清运垃圾（吨）", "清理面积（㎡）", "整治内容及成效（摘要）"],
-            rows, [4, 9, 14, 8, 8, 11, 6, 6, 7, 7, 20], centeredColumns: [0, 1], rightAlignedColumns: [6, 7, 8, 9], repeatColumns: [1, 2, 4],
-            summary: $"共 {ledger.Campaigns.Length} 次整治，累计参加 {ledger.Campaigns.Sum(item => (long)(item.ParticipantCount ?? 0))} 人、出动车辆 {ledger.Campaigns.Sum(item => (long)(item.VehicleCount ?? 0))} 辆、清运垃圾 {DecimalNumber(ledger.Campaigns.Sum(item => item.GarbageTons ?? 0))} 吨、清理面积 {DecimalNumber(ledger.Campaigns.Sum(item => item.AreaSqm ?? 0))} ㎡");
+        document.Table(["序号", "整治日期", "整治名称", "类型", "所属网格", "整治地点", "整治内容及成效（摘要）"],
+            rows, [5, 11, 17, 12, 13, 16, 26], centeredColumns: [0, 1], repeatColumns: [1, 2, 4],
+            summary: $"共 {ledger.Campaigns.Length} 次整治");
         if (!ledger.IncludePhotos) return;
         var attachments = ledger.Campaigns.Select((campaign, index) => (Campaign: campaign, Index: index,
             Photos: SortPhotos(ledger.Photos.Where(photo => photo.Photo.CampaignId == campaign.Id)))).Where(item => item.Photos.Length > 0).ToArray();
