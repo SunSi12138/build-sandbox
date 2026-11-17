@@ -8,14 +8,13 @@ const formPage = computed(() => Boolean(route.meta.formPage) || overlayForm.valu
 const links = [
   { to: '/', label: '工作首页', short: '首页', icon: 'i-lucide-house' },
   { to: '/map', label: '社区地图', short: '地图', icon: 'i-lucide-map' },
-  { to: '/points', label: '场所档案', short: '场所', icon: 'i-lucide-map-pin' },
   { to: '/inspections', label: '检查记录', short: '检查', icon: 'i-lucide-clipboard-list' },
   { to: '/campaigns', label: '整治记录', short: '整治', icon: 'i-lucide-hard-hat' },
   { to: '/reports', label: '统计导出', short: '导出', icon: 'i-lucide-file-down' },
   { to: '/settings', label: '工具设置', short: '设置', icon: 'i-lucide-settings' }
 ]
 function active(path: string) {
-  const groups:Record<string,string[]>= {'/settings':['/catalogs','/imports','/management','/archive'], '/inspections':['/plans','/drafts','/reminders'], '/reports':['/statistics']}
+  const groups:Record<string,string[]>= {'/map':['/points'], '/settings':['/catalogs','/imports','/management','/archive'], '/inspections':['/plans','/drafts','/reminders'], '/reports':['/statistics']}
   return path==='/'?route.path==='/':route.path.startsWith(path)||(groups[path]??[]).some(prefix=>route.path.startsWith(prefix))
 }
 function refreshOnReturn() { if (document.visibilityState === 'visible') void load().catch(() => {}) }
@@ -25,7 +24,7 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshOn
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'form-page': formPage, 'map-page': route.path === '/map', 'sidebar-collapsed': sidebarCollapsed }">
+  <div class="app-shell" :class="{ 'form-page': formPage, 'map-page': route.path === '/map' && route.query.view !== 'list', 'sidebar-collapsed': sidebarCollapsed }">
     <a href="#main-content" class="skip-link" @click.prevent="skipToContent">跳到主要内容</a>
     <aside class="desktop-sidebar">
       <NuxtLink to="/" class="brand" aria-label="社区管理首页"><UIcon name="i-lucide-leaf" /><strong>社区管理</strong></NuxtLink>
