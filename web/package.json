@@ -6,6 +6,7 @@
     "dev": "nuxt dev --host 0.0.0.0",
     "generate": "nuxt generate",
     "typecheck": "nuxt typecheck",
+    "test:coordinates": "node --experimental-strip-types --test coordinate-conversion.test.mjs",
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
