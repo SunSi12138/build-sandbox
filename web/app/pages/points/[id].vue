@@ -2,7 +2,6 @@
 import {downloadWord} from '~/utils/wordDownload'
 import type { PointDetailDto } from '~/types/api'
 import {
-  coordinatesText,
   errorMessage,
   frequencyLabel,
   queryText,
@@ -123,11 +122,11 @@ watch(id, load, { immediate: true })
           color="neutral"
           variant="outline"
           @click="editorOpen = true" /><UButton
-          :to="{ path: '/inspections/new', query: { pointId: id } }"
+          :to="{ path: '/inspections/new', query: { pointId: id, returnTo:route.fullPath } }"
           :disabled="detail.point.disabled"
           class="header-action"
           ><span class="mobile-only">检查</span><span class="desktop-only">新增检查</span></UButton
-        ><UButton :to="{ path: '/campaigns/new', query: { pointId: id } }" :disabled="detail.point.disabled" color="neutral" variant="outline" class="header-action" data-testid="point-new-campaign"><span class="mobile-only">整治</span><span class="desktop-only">新增整治</span></UButton><UDropdownMenu :items="menu"
+        ><UButton :to="{ path: '/campaigns/new', query: { pointId: id, returnTo:route.fullPath } }" :disabled="detail.point.disabled" color="neutral" variant="outline" class="header-action" data-testid="point-new-campaign"><span class="mobile-only">整治</span><span class="desktop-only">新增整治</span></UButton><UDropdownMenu :items="menu"
           ><UButton
             label="更多" icon="i-lucide-ellipsis"
             color="neutral"
@@ -172,17 +171,8 @@ watch(id, load, { immediate: true })
               <dt>详细地址</dt>
               <dd class="flex items-center justify-between gap-2">
                 <span>{{ detail.point.address }}</span
-                ><MapLinks
-                  :name="detail.point.name"
-                  :longitude="detail.point.longitude"
-                  :latitude="detail.point.latitude"
-                  labels
-                />
+                ><UButton v-if="detail.point.longitude!=null" :to="{path:'/map',query:{place:id}}" label="地图查看" variant="link" icon="i-lucide-map-pin" />
               </dd>
-            </div>
-            <div v-if="detail.point.longitude != null" class="detail-wide">
-              <dt>经纬度</dt>
-              <dd>{{ coordinatesText(detail.point.longitude, detail.point.latitude) }}</dd>
             </div>
             <div>
               <dt>联系人</dt>

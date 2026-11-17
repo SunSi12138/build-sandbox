@@ -120,7 +120,7 @@ onBeforeUnmount(() => { clearTimeout(pointTimer); pointSequence++ })
             <UButton v-if="pointOptions.length < pointTotal" label="加载更多" color="neutral" variant="link" :loading="pointsBusy" :disabled="disabled" @click="listPoints(false)" />
           </div>
         </template>
-        <UFormField label="时间范围" help="日期单独选择，默认本月">
+        <UFormField label="时间范围">
           <div class="chip-row"><UButton v-for="option in ranges" :key="option.value" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="range === option.value" :disabled="disabled" @click="selectRange(option.value)">{{ option.label }}</UButton></div>
         </UFormField>
         <p v-if="range !== 'custom'" class="text-sm" data-testid="ledger-dates">{{ from }} 至 {{ to }}</p>

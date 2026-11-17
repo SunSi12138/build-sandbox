@@ -1,43 +1,41 @@
-CommunityGIS 开发与交付说明
+CommunityGIS 开发与交付
 
-技术栈：.NET 10 Native AOT Web API + SQLite；Nuxt 4 + Nuxt UI，静态构建；OpenLayers 10；浏览器本地 WASM 图片压缩；BCL 生成 DOCX/XLSX。
-来源：SunSi12138/build-sandbox 的 hbtool 分支；本项目分支 community-gis。
-运行目标：Windows x64。当前目录已包含源码及运行版。其他平台尚未构建交付。
+源码分支：community-gis。技术栈：.NET 10 Native AOT + SQLite；Nuxt 4 / Nuxt UI；OpenLayers 10。
+目标平台：Windows x64。前后端一起发布，运行时不需要安装 .NET 或 Node.js。
 
-开发：
-安装 .NET SDK 10.0.302、Windows C++ 构建工具、Node.js、pnpm。
-在 web 运行 pnpm install --frozen-lockfile。
-前端：web 下 pnpm dev；后端：dotnet run --project server/StreetEcoTool.csproj -- --no-browser。
-Nuxt 开发代理连接 localhost:5180。后端开发数据保存在其输出目录，独立于运行版。
+构建
+.NET SDK 10.0.302、Windows C++ 构建工具、Node.js、pnpm。
+web：pnpm install --frozen-lockfile；pnpm typecheck；pnpm generate。
+后端：dotnet publish server/StreetEcoTool.csproj -c Release -r win-x64 -p:PublishAot=true -o release。
+scripts/build-community.ps1 可构建并装配“运行版”；更新前先关闭该运行目录中的程序。
+运行版包含 CommunityGIS.exe、wwwroot、地图缓存及本地地图配置。配置中的密钥不提交 Git。
 
-构建：
-PowerShell 中执行 ./scripts/build-community.ps1。
-可传 -Pnpm "pnpm.cmd完整路径"。
-已完成构建后可用 -SkipBuild 仅装配运行版。
-脚本保留运行版已有的 data、photos、backup、tiles、appsettings.json。
-更新时先停止运行版；前后端必须同时更新，不支持旧页面调用新版接口。
+当前数据契约
+数据库仅接受 schema 6，并检查最终结构。新库在一个事务内创建完整结构及默认分类。
+没有旧版本升级、启动补字段、修订旧模板或重写用户默认值的分支。
+其他数据版本会拒绝打开或恢复，不会转换或删除原数据；需要使用新目录启动。
+Excel / CSV 网格导入、备份恢复、历史记录快照属于当前业务功能，保留。
+坐标统一保存 WGS84；文件导入中的来源坐标换算保留。
 
-数据：
-数据库 schema 6。兼容本项目 schema 4/5，启动升级前自动保留数据库备份。
-不直接打开旧 hbtool schema 3 数据库。旧 Map 通过 Excel 网格导入迁移。
-业务备份 ZIP 包含数据库及照片，地图缓存需要另存。
-不包含登录、角色权限、互联网部署或手机离线同步。局域网协作沿用 hbtool 模式。
+2026-10-28 本轮检查
+Nuxt 类型检查、静态构建及 Windows x64 Native AOT 构建完成。
+CommunityCacheMigrationTests 的 4 项定向测试通过：缓存导入、拒绝旧版本且不改动数据、重开不改写用户配置。
+web/usability-review.mjs 使用构建产物、内存测试资料及本地图块，检查搜索店名、取消编辑、保留区域、边界操作、设置分类及移动页面。
+--drawing-only 检查连续圈画两个区域，并阻止保存尚未结束的区域；--mobile-only 生成手机地图截图。
+截图在 work/usability-review。该 UI 检查不连接或修改用户数据库。
+现有用户程序保持运行，本轮没有启动第二个原生实例，也未重复全部业务回归。
+类型检查有现有 vue-router/volar 插件解析警告，退出码为 0；静态构建成功。
 
-坐标和地图：
-统一保存 WGS84。旧高德 GCJ-02 可在导入/坐标输入时换算。
-高德 SDK 未打包；当前使用本地 OpenLayers，引擎、图标、压缩 WASM 都在 wwwroot。
-已复制吉林一号缓存3,272张（31,831,064字节），12—18级。未复制不明来源的约10.7 GB其他缓存。
-不含地图下载器、离线地址搜索、导航路线或三维功能。
+本机开发
+web 的 pnpm dev 代理 localhost:5180。Nuxt 使用 hash 路由，例如 /#/map。
+服务端开发数据独立于运行版；浏览器检查不要使用真实业务库作测试资料。
+手机和电脑使用同一页面与数据；局域网访问需在首页“手机连接”中开启。
 
-已做的检查：
-后端定向业务测试覆盖照片归属、导入事务、单元层级、并发冲突、合并、人员交接、作废恢复、草稿备份、缓存导入、数据升级、周期提醒、导出范围和 Word 内容。
-Nuxt 类型检查和静态构建通过；Windows x64 Native AOT 发布通过。
-最终原生程序流程检查覆盖场所/区域/多用途、问题反馈复查、未完成检查、共享草稿、浏览器照片压缩上传、统计、Word/Excel及勾选导出。
-新浏览器上下文阻断外网请求下，地图、页面、图片压缩正常，未发生外网资源请求或页面错误。
-移动尺寸390px无整页横向溢出，宽报表在表格内部滚动；实际手机仍需连接用户局域网确认防火墙和Wi-Fi隔离设置。
-Office 文件已检查生成与内容，未对所有 WPS/Office 版本做排版兼容认证。
-
-定向测试：dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj --filter FullyQualifiedName~Community
-浏览器流程：先启动独立测试目录中的程序，端口5199，再于 web 执行 node community-smoke.mjs。
-注意：流程脚本会建立测试资料，仅在空白测试数据库上运行，不要对正式库运行。
-旧 hbtool 测试包含原有版本号、类型和无修订号接口断言；不应把它们当作本项目最新产品契约。
+第二轮优化
+列表和检查详情的“地图查看”按场所编号打开对应档案。
+检查类型切换保护已填项目；明确操作后可将未填且无说明的项目设为正常，已有问题和备注不覆盖。
+整改办理每次新开表单，取消内容不残留；反馈、复查可选择实际日期；上传失败时不能提交遗漏照片的记录。
+安排支持网格及下级筛选、已选筛选和批量取消，登记检查后能返回原安排。
+报表、统计按查询快照判断可否导出，较早返回的请求不会覆盖较新的查询；清空筛选、取消勾选和半选状态可直接操作。
+修复报表、统计、检查对象、检查类型周期设置和提醒中的空值选项导致页面报错；API 的“全部”仍为空，不改变数据含义。
+第二轮仅修改网页，复用上一轮已完成的原生构建。类型检查和静态构建完成；UI 测试资料检查覆盖报表查询期间修改条件、取消勾选、地图跳转、整改取消重开、反馈日期、检查类型保护和安排批量选择。桌面报表和手机安排截图已查看。

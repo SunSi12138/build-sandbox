@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { MapLayer } from '~/types/community'
 import { errorMessage } from '~/utils/format'
+const route=useRoute()
 const layers=ref<MapLayer[]>([]),error=ref(''),busy=ref(false),adding=ref(false),expanded=ref('')
 const fresh=():MapLayer=>({id:'layer-'+Date.now().toString(36),name:'',folder:'layer-'+Date.now().toString(36),scheme:'xyz',enabled:true,isDefault:false,opacity:1,minZoom:0,maxZoom:18,sortOrder:3,urlTemplate:'',apiKey:'',subdomains:'0,1,2,3',updateCache:false,annotation:false,mapKey:'',cacheVersion:0})
 const draft=reactive(fresh())
@@ -12,11 +13,11 @@ onMounted(load)
 </script>
 <template>
 <div class="page-stack">
-<PageHeader title="地图图层设置" back="/map">
+<PageHeader title="地图图层设置" :back="route.query.from==='map'?'/map':'/settings'">
 <UButton label="新增图层" icon="i-lucide-plus" @click="Object.assign(draft,fresh());adding=true" />
 </PageHeader>
 <UAlert v-if="error" :description="error" color="error" />
-<p class="text-sm text-muted">本地有缓存时直接使用；缺失时自动联网获取并缓存。勾选“更新缓存”后，浏览地图时重新获取并替换对应缓存。</p>
+
 
 <section v-for="layer in layers" :key="layer.id" class="panel panel-body space-y-4">
 <div class="flex gap-3 items-center">
@@ -27,8 +28,8 @@ onMounted(load)
 </div>
 <template v-if="expanded===layer.id">
 <div class="field-grid">
-<div class="field-full flex flex-wrap gap-5"><UCheckbox v-model="layer.updateCache" label="更新缓存" /><UCheckbox v-model="layer.annotation" label="地名标注（显示在最上层）" /></div>
-<UFormField label="瓦片链接模板" class="field-full" help="填完整链接，可在路径或查询参数中拼接变量">
+<div class="field-full flex flex-wrap gap-5"><UCheckbox v-model="layer.updateCache" label="更新缓存" /><UCheckbox v-model="layer.annotation" label="地名标注" /></div>
+<UFormField label="瓦片链接模板" class="field-full">
 <UTextarea v-model="layer.urlTemplate" placeholder="https://tiles.example.com/{z}/{x}/{y}.png?key={key}" :rows="3" class="w-full" />
 <p class="text-xs text-muted mt-2" v-text="'支持 {z} 级别、{x} 列、{y} 行、{-y} 反向行号、{s} 子域、{key} 密钥、{mk} 图层标识、{quadkey} 四叉树编码。WMTS 可直接拼接 TileMatrix={z}&TileCol={x}&TileRow={y}。'" />
 </UFormField>
@@ -62,7 +63,8 @@ onMounted(load)
 
 </template>
 </section>
-<UModal v-model:open="adding" title="新增图层">
+<details class="panel panel-body"><summary class="cursor-pointer">导入地图缓存</summary><div class="mt-4"><CacheImport /></div></details>
+<UModal v-model:open="adding" title="新增图层" :dismissible="!busy" :close="!busy">
 <template #body>
 <div class="space-y-3">
 <UFormField label="图层名称" required>
@@ -74,11 +76,11 @@ onMounted(load)
 <UFormField label="密钥">
 <UInput v-model="draft.apiKey" type="password" class="w-full" />
 </UFormField>
-<p class="text-sm text-muted">添加后展开详细设置，配置链接格式和更新缓存。</p>
+<UAlert v-if="error" :description="error" color="error" />
 </div>
 </template>
 <template #footer>
-<UButton label="添加图层" :loading="busy" @click="add" />
+<UButton label="取消" color="neutral" variant="outline" :disabled="busy" @click="adding=false" /><UButton label="添加图层" :disabled="!draft.name.trim()" :loading="busy" @click="add" />
 </template>
 </UModal>
 </div>

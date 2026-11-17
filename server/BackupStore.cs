@@ -240,7 +240,7 @@ public sealed partial class Store
         }
         var application = Number(connection, "PRAGMA application_id;");
         var version = Number(connection, "PRAGMA user_version;");
-        if (application != DatabaseApplicationId || version is not (4 or 5 or SchemaVersion))
+        if (application != DatabaseApplicationId || version != SchemaVersion)
             throw new InvalidDataException("这不是本工具支持的备份，或数据库来自更新版本。");
         using (var integrity = connection.CreateCommand())
         {
@@ -259,7 +259,7 @@ public sealed partial class Store
             throw new InvalidDataException("备份的设置记录不完整。");
         // Read all required columns before replacing a live database, including columns
         // whose absence SQLite's generic integrity_check would not consider an error.
-        foreach (var sql in SchemaQueriesFor(version))
+        foreach (var sql in RequiredSchemaQueries)
         {
             using var schema = connection.CreateCommand(); schema.CommandText = sql;
             using var reader = schema.ExecuteReader();
@@ -317,10 +317,6 @@ public sealed partial class Store
             checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM campaigns;")));
     }
 
-    private static IEnumerable<string> SchemaQueriesFor(long version) => RequiredSchemaQueries.Where(sql =>
-        (version != 4 || (!sql.Contains("FROM record_photos", StringComparison.Ordinal) && !sql.Contains("FROM imported_rows", StringComparison.Ordinal))) &&
-        (version >= 6 || (!sql.Contains("voided", StringComparison.Ordinal) && !sql.Contains("active_", StringComparison.Ordinal))));
-
     private static readonly string[] RequiredSchemaQueries =
     [
         "SELECT voided,void_reason FROM inspections LIMIT 0;",
@@ -328,16 +324,16 @@ public sealed partial class Store
         "SELECT id FROM active_inspections LIMIT 0;",
         "SELECT id FROM active_issues LIMIT 0;",
         "SELECT id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality FROM settings LIMIT 0;",
-        "SELECT id,name,title FROM communities LIMIT 0;",
+        "SELECT id,name,title,parent_id,color FROM communities LIMIT 0;",
         "SELECT id,name FROM point_types LIMIT 0;",
-        "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary FROM points LIMIT 0;",
+        "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,color FROM points LIMIT 0;",
         "SELECT id,point_id,inspection_date,inspector,result,notes,notice_number,point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone,inspection_type_id,inspection_type_name,use_id,use_name,created_at,incomplete_reason,checklist,submission_key FROM inspections LIMIT 0;",
         "SELECT id,kind,parent_id,name,body,revision,updated_at,archived FROM community_records LIMIT 0;",
         "SELECT record_id,photo_id,active FROM record_photos LIMIT 0;",
         "SELECT source_key,record_id,kind FROM imported_rows LIMIT 0;",
         "SELECT id,kind,record_id,at,action,before_json,after_json FROM community_history LIMIT 0;",
         "SELECT kind,record_id,shape,revision FROM map_shapes LIMIT 0;",
-        "SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order FROM map_layers LIMIT 0;",
+        "SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,annotation,map_key,cache_version FROM map_layers LIMIT 0;",
         "SELECT id,inspection_id,description,requirement,deadline,responsible_unit,status,feedback_date,feedback_notes,review_date,review_conclusion,closed_date FROM issues LIMIT 0;",
         "SELECT id,issue_id,kind,action_date,notes FROM issue_actions LIMIT 0;",
         "SELECT id,inspection_id,issue_id,action_id,point_id,campaign_id,phase,relative_path,width,height,uploaded_at,has_thumb FROM photos LIMIT 0;",
@@ -413,7 +409,6 @@ public sealed partial class Store
     public static void RecoverInterruptedRestore(string dataDir)
     {
         var root = Directory.GetParent(Path.GetFullPath(dataDir))?.FullName ?? throw new IOException("数据目录无效。");
-        RejectUnsupportedLayout(dataDir);
         var journalPath = Path.Combine(root, "temp", "restore-journal.json");
         if (!File.Exists(journalPath)) return;
         RestoreJournal journal;

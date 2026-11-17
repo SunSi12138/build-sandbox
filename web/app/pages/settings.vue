@@ -15,7 +15,8 @@ const error = ref('')
 const dictionaryError = ref('')
 const tabs = [
   { value: 'basic', label: '基本信息' },
-  { value: 'dictionaries', label: '网格与分类' },
+  { value: 'grids', label: '网格' },
+  { value: 'places', label: '场所与用途' },
   { value: 'backup', label: '备份与恢复' }
 ]
 const active = ref<string | number>(tabs.some(t => t.value === route.query.tab) ? String(route.query.tab) : 'basic')
@@ -69,22 +70,21 @@ onMounted(() => { void fetchSettings() })
         <section class="form-section">
           <div class="field-grid">
             <UFormField class="field-full" label="单位名称" name="streetName" required><UInput v-model="form.streetName" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
-            <UFormField label="默认检查人" name="defaultInspector" help="可留空，每次检查时填写"><NameTagsInput data-testid="default-inspector" v-model="form.defaultInspector" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
-            <UFormField label="照片清晰度" name="jpegQuality"><USelect v-model="form.jpegQuality" :items="[{label:'标准（推荐）',value:75},{label:'更清晰，文件较大',value:90},{label:'更省空间',value:60},...([60,75,90].includes(form.jpegQuality)?[]:[{label:`原有设置（${form.jpegQuality}）`,value:form.jpegQuality}])]" class="w-full" :disabled="saving" /></UFormField>
+            <UFormField label="默认检查人" name="defaultInspector"><NameTagsInput data-testid="default-inspector" v-model="form.defaultInspector" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
+            <UFormField label="照片清晰度" name="jpegQuality"><USelect v-model="form.jpegQuality" :items="[{label:'标准（推荐）',value:75},{label:'更清晰，文件较大',value:90},{label:'更省空间',value:60}]" class="w-full" :disabled="saving" /></UFormField>
           </div>
         </section>
         <section class="form-section flex justify-end"><UButton data-testid="settings-save" type="submit" :loading="saving">保存</UButton></section>
       </UForm>
-      <div v-else-if="active === 'dictionaries'" class="space-y-4">
+      <div v-else-if="active === 'grids' || active === 'places'" class="space-y-4">
         <UAlert v-if="dictionaryError" :description="dictionaryError" color="error" variant="subtle"><template #actions><UButton color="neutral" variant="outline" @click="dictionaryChanged">重试</UButton></template></UAlert>
-        <div class="flex gap-3 flex-wrap"><UButton to="/imports?kind=grid" label="导入网格" icon="i-lucide-upload" variant="outline" /><UButton to="/imports?kind=point" label="导入场所" variant="outline" /></div>
-        <SettingsDictionary kind="communities" :items="bootstrap?.communities ?? []" @changed="dictionaryChanged" />
-        <SettingsDictionary kind="point-types" :items="bootstrap?.pointTypes ?? []" @changed="dictionaryChanged" /><MapCatalogSettings />
-        <SettingsDictionary kind="campaign-types" :items="bootstrap?.campaignTypes ?? []" @changed="dictionaryChanged" />
+        <div v-if="active==='grids'" class="flex gap-3 flex-wrap"><UButton to="/imports?kind=grid" label="导入网格" icon="i-lucide-upload" variant="outline" /><UButton to="/imports?kind=point" label="导入场所" variant="outline" /></div>
+        <SettingsDictionary v-if="active==='grids'" kind="communities" :items="bootstrap?.communities ?? []" @changed="dictionaryChanged" />
+        <SettingsDictionary v-if="active==='places'" kind="point-types" :items="bootstrap?.pointTypes ?? []" @changed="dictionaryChanged" /><MapCatalogSettings v-if="active==='places'" />
+        <SettingsDictionary v-if="active==='places'" kind="campaign-types" :items="bootstrap?.campaignTypes ?? []" @changed="dictionaryChanged" />
       </div>
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
-      <section class="panel panel-body"><h2 class="section-title mb-3">导入地图缓存</h2><CacheImport /></section>
-      <details class="panel panel-body"><summary class="cursor-pointer">更多工具：导入、合并、恢复</summary><div class="flex gap-3 flex-wrap mt-3"><UButton to="/management" label="重复资料合并、人员交接" variant="outline" /><UButton to="/archive" label="作废记录与恢复" variant="outline" /><UButton to="/campaigns" label="整治记录" variant="outline" /></div></details>
+      <details class="panel panel-body"><summary class="cursor-pointer">资料管理</summary><div class="flex gap-3 flex-wrap mt-3"><UButton to="/management" label="重复资料合并、人员交接" variant="outline" /><UButton to="/archive" label="作废记录与恢复" variant="outline" /><UButton to="/campaigns" label="整治记录" variant="outline" /></div></details>
     </template>
   </div>
 </template>

@@ -7,12 +7,7 @@ public sealed partial class Store
 {
     private void InitializeMapConfiguration(SqliteTransaction transaction)
     {
-        var columns = new HashSet<string>();
-        using (var info = Command("PRAGMA table_info(map_layers);", transaction))
-        using (var rows = info.ExecuteReader()) while (rows.Read()) columns.Add(rows.GetString(1));
-        foreach (var (name, definition) in new[] { ("url_template", "TEXT NOT NULL DEFAULT ''"), ("api_key", "TEXT NOT NULL DEFAULT ''"), ("subdomains", "TEXT NOT NULL DEFAULT '0,1,2,3'"), ("update_cache", "INTEGER NOT NULL DEFAULT 0"), ("annotation", "INTEGER NOT NULL DEFAULT 0"), ("map_key", "TEXT NOT NULL DEFAULT ''"), ("cache_version", "INTEGER NOT NULL DEFAULT 0") })
-            if (!columns.Contains(name)) { using var add = Command($"ALTER TABLE map_layers ADD COLUMN {name} {definition};", transaction); add.ExecuteNonQuery(); }
-        InitializeGridAndProviderDefaults(transaction);
+        LoadInitialMapProviders(transaction);
         foreach (var (id, name, icon, extra) in new[] {
             ("shop", "商店", "🏪", new[]{ new PurposeField("business","经营内容","text",false) }),
             ("warehouse", "仓库", "📦", new[]{ new PurposeField("storedGoods","存放物品","text",false) }),
@@ -23,10 +18,9 @@ public sealed partial class Store
         {
             var fields = JsonSerializer.Serialize(extra, CommunityJsonContext.Default.PurposeFieldArray);
             var body = "{\"icon\":\"" + icon + "\",\"fields\":" + fields + "}";
-            using var add = Command("INSERT OR IGNORE INTO community_records(id,kind,parent_id,name,body,updated_at) VALUES($id,'purpose-type','',$name,$body,$at);", transaction,
+            using var add = Command("INSERT INTO community_records(id,kind,parent_id,name,body,updated_at) VALUES($id,'purpose-type','',$name,$body,$at);", transaction,
                 ("$id", "purpose-" + id), ("$name", name), ("$body", body), ("$at", DateTimeOffset.Now.ToString("O")));
             add.ExecuteNonQuery();
-            using var define = Command("UPDATE community_records SET body=json_set(json_remove(body,'$.profile'),'$.fields',json($fields)) WHERE id=$id AND json_type(body,'$.fields') IS NULL;", transaction,("$id","purpose-"+id),("$fields",fields)); define.ExecuteNonQuery();
         }
     }
 

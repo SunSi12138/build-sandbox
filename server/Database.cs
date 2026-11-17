@@ -29,7 +29,6 @@ public sealed partial class Store : IDisposable
         PhotosDir = Path.Combine(RootDir, "photos");
         BackupDir = Path.Combine(RootDir, "backup");
         TemporaryDir = Path.Combine(RootDir, "temp");
-        RejectUnsupportedLayout(DataDir);
         RecoverInterruptedRestore(DataDir);
         if (!File.Exists(DatabasePath) && Directory.Exists(PhotosDir) && Directory.EnumerateFileSystemEntries(PhotosDir).Any())
             throw new ApiException(409, "照片目录已有内容但缺少数据库。已停止启动，请保留文件并检查完整备份。");
@@ -56,19 +55,8 @@ public sealed partial class Store : IDisposable
             DataSource = DatabasePath, Pooling = false, ForeignKeys = true, DefaultTimeout = 15
         }.ToString());
         _db.Open();
-        if (!initialize)
-        {
-            using var version = Command("PRAGMA user_version;");
-            if (Convert.ToInt32(version.ExecuteScalar()) is 4 or 5)
-            {
-                var path = Path.Combine(BackupDir, "before-v6-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + NewId()[..6] + ".db");
-                using var backup = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
-                backup.Open(); _db.BackupDatabase(backup);
-            }
-        }
         using (var pragmas = Command("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=15000;")) pragmas.ExecuteNonQuery();
         if (initialize) InitializeCurrentDatabase();
-        InitializeCommunityTables();
     }
 
     private void InitializeCurrentDatabase()
@@ -79,7 +67,7 @@ public sealed partial class Store : IDisposable
                 id INTEGER PRIMARY KEY CHECK(id=1), street_name TEXT NOT NULL, issuing_unit TEXT NOT NULL,
                 default_inspector TEXT NOT NULL, notice_template TEXT NOT NULL, jpeg_quality INTEGER NOT NULL CHECK(jpeg_quality BETWEEN 1 AND 100)
             );
-            CREATE TABLE communities (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL);
+            CREATE TABLE communities (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL, parent_id TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#64748b');
             CREATE TABLE point_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
             CREATE TABLE points (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
@@ -89,7 +77,7 @@ public sealed partial class Store : IDisposable
                 notes TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
                 longitude REAL CHECK(longitude IS NULL OR longitude BETWEEN -180 AND 180),
                 latitude REAL CHECK(latitude IS NULL OR latitude BETWEEN -90 AND 90),
-                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1))
+                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1)), color TEXT NOT NULL DEFAULT '#087f70'
             );
             CREATE TABLE inspections (
                 id TEXT PRIMARY KEY, point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT,
@@ -101,14 +89,16 @@ public sealed partial class Store : IDisposable
                 address TEXT NOT NULL, contact TEXT NOT NULL, phone TEXT NOT NULL,
                 inspection_type_id TEXT NOT NULL DEFAULT '', inspection_type_name TEXT NOT NULL DEFAULT '',
                 use_id TEXT NOT NULL DEFAULT '', use_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
-                incomplete_reason TEXT NOT NULL DEFAULT '', checklist TEXT NOT NULL DEFAULT '[]', submission_key TEXT UNIQUE
+                incomplete_reason TEXT NOT NULL DEFAULT '', checklist TEXT NOT NULL DEFAULT '[]', submission_key TEXT UNIQUE,
+                voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1)), void_reason TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE issues (
                 id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE RESTRICT,
                 description TEXT NOT NULL, requirement TEXT NOT NULL DEFAULT '', deadline TEXT NOT NULL, responsible_unit TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','feedback','closed')),
                 feedback_date TEXT, feedback_notes TEXT NOT NULL DEFAULT '', review_date TEXT,
-                review_conclusion TEXT NOT NULL DEFAULT '', closed_date TEXT
+                review_conclusion TEXT NOT NULL DEFAULT '', closed_date TEXT,
+                voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1)), void_reason TEXT NOT NULL DEFAULT ''
             );
             CREATE TABLE issue_actions (
                 id TEXT PRIMARY KEY, issue_id TEXT NOT NULL REFERENCES issues(id) ON DELETE RESTRICT,
@@ -160,7 +150,7 @@ public sealed partial class Store : IDisposable
             CREATE INDEX ix_campaigns_point_date ON campaigns(point_id,campaign_date);
             CREATE INDEX ix_points_temporary ON points(temporary,disabled);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=4;
+            PRAGMA user_version=6;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),
@@ -175,6 +165,7 @@ public sealed partial class Store : IDisposable
             using var command = Command("INSERT INTO campaign_types(id,name) VALUES($id,$name);", transaction, ("$id", NewId()), ("$name", name));
             command.ExecuteNonQuery();
         }
+        InitializeCommunityTables(transaction);
         transaction.Commit();
     }
 
@@ -211,9 +202,9 @@ public sealed partial class Store : IDisposable
             var version = Number(connection, "PRAGMA user_version;");
             var application = Number(connection, "PRAGMA application_id;");
             if (version == 0 && application == 0 && Number(connection, "SELECT COUNT(*) FROM sqlite_master;") == 0) return true;
-            if (version is not (4 or 5 or SchemaVersion) || application != DatabaseApplicationId)
-                throw new ApiException(409, "数据库版本或标识不受支持。现有文件未被重建，请保留数据并使用对应版本的程序。");
-            foreach (var sql in SchemaQueriesFor(version))
+            if (version != SchemaVersion || application != DatabaseApplicationId)
+                throw new ApiException(409, "数据版本不匹配，请使用新目录启动。现有数据未修改。");
+            foreach (var sql in RequiredSchemaQueries)
             {
                 using var command = connection.CreateCommand(); command.CommandText = sql;
                 using var reader = command.ExecuteReader();
@@ -221,16 +212,6 @@ public sealed partial class Store : IDisposable
             return false;
         }
         finally { Directory.Delete(probeDirectory, true); }
-    }
-
-    private static void RejectUnsupportedLayout(string dataDir)
-    {
-        foreach (var name in new[] { "photos", "backup", ".temporary", ".restore-staging", ".restore-journal.json", ".restore-journal.json.tmp" })
-        {
-            var path = Path.Combine(dataDir, name);
-            if (File.Exists(path) || Directory.Exists(path))
-                throw new ApiException(409, $"检测到不支持的旧版目录或恢复日志：{path}。已停止启动，未移动或删除任何文件。");
-        }
     }
 
     // Called at the actual mutation boundary under _gate, after HTTP body reads.

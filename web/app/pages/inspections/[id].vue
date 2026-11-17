@@ -28,7 +28,7 @@ const detail = ref<InspectionDetailDto | null>(null),
 const id = computed(() => queryText(route.params.id))
 const back = computed(() => {
   const value = queryText(route.query.returnTo)
-  return value.startsWith('/points/') || /^\/inspections\/?(?:\?|$)/.test(value)
+  return /^\/(?:map|plans|reminders)(?:\?|$)/.test(value) || value.startsWith('/points/') || /^\/inspections\/?(?:\?|$)/.test(value)
     ? value
     : '/inspections'
 })
@@ -378,7 +378,7 @@ watch(() => route.query.issue, revealIssue)
               <dd class="flex items-center justify-between gap-2">
                 <span>{{ detail.inspection.address }}</span
                 ><MapLinks
-                  :name="detail.inspection.pointName"
+                  :point-id="detail.inspection.pointId"
                   :longitude="detail.inspection.longitude"
                   :latitude="detail.inspection.latitude"
                   labels

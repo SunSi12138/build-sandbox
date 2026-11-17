@@ -19,10 +19,11 @@ import type { GeoShape, MapFeature, MapLayer } from '~/types/community'
 
 const props = withDefaults(defineProps<{ features?: MapFeature[]; layers?: MapLayer[]; editable?: boolean; selectedId?: string; height?: string; immersive?: boolean; highDefinition?: boolean; focusPadding?: number[] }>(), { features: () => [], layers: () => [], editable: true, height: '65vh' })
 const shape = defineModel<GeoShape | null>({ default: null })
-const emit = defineEmits<{ choose: [feature: MapFeature]; coordinate: [coordinate: number[]]; edit: [feature: MapFeature]; begin: [] }>()
+const emit = defineEmits<{ choose: [feature: MapFeature]; coordinate: [coordinate: number[]]; edit: [feature: MapFeature]; begin: []; ready: []; sketching: [active: boolean] }>()
 const element = useTemplateRef<HTMLElement>('mapElement')
 const mode = ref<'view' | 'Point' | 'Polygon' | 'edit'>('view')
-const coordinate = ref(''), missing = ref(false), snapEnabled = ref(true)
+const snapEnabled = ref(true), sketching = ref(false), vertices = ref(0)
+watch(sketching, value => emit('sketching', value), { flush: 'sync' })
 let map: OLMap | undefined, draw: Draw | undefined, modify: Modify | undefined, snaps: Snap[] = []
 const source = new VectorSource<Feature<Geometry>>()
 const editing = new VectorSource<Feature<Geometry>>()
@@ -53,15 +54,15 @@ function refreshFeatures() {
 }
 function refreshLayers() {
   if (!map) return
-  tiles.forEach(layer => map!.removeLayer(layer)); tiles = []; missing.value = false
+  tiles.forEach(layer => map!.removeLayer(layer)); tiles = []
   for (const item of [...props.layers].filter(x => x.enabled).sort((a,b) => a.sortOrder - b.sortOrder)) {
     const tileSource = new XYZ({ url: `/api/map/tiles/${encodeURIComponent(item.id)}/{z}/{x}/{y}?v=${item.cacheVersion ?? 0}`, minZoom: item.minZoom, maxZoom: item.maxZoom, transition: 0, crossOrigin: 'anonymous' })
-    tileSource.on('tileloaderror', () => { missing.value = true })
     const layer = new TileLayer({ source: tileSource, opacity: item.opacity, zIndex: item.annotation ? 1000 + item.sortOrder : Math.min(90,item.sortOrder) })
     tiles.push(layer); map.addLayer(layer)
   }
 }
 function clearInteractions() {
+  sketching.value = false; vertices.value = 0
   if (!map) return
   if (draw) map.removeInteraction(draw); if (modify) map.removeInteraction(modify)
   snaps.forEach(x => map!.removeInteraction(x)); snaps = []; draw = undefined; modify = undefined
@@ -78,9 +79,12 @@ function publishShape() {
 }
 function start(type: 'Point' | 'Polygon') {
   if (!map) return
+  if ((shape.value || sketching.value) && !window.confirm('重新标记会放弃当前未保存的位置，继续吗？')) return
   emit('begin');clearInteractions();editing.clear();shape.value=null;mode.value=type
   draw=new Draw({source:editing,type})
-  draw.on('drawend',()=>{window.setTimeout(()=>{publishShape();if(type==='Point')startEdit()},0)})
+  draw.on('drawstart', event => { sketching.value = true; vertices.value = 0; event.feature.getGeometry()?.on('change', e => { const g = e.target as Polygon; if (type === 'Polygon') vertices.value = Math.max(0, g.getCoordinates()[0]!.length - 2) }) })
+  draw.on('drawabort', () => { sketching.value = false; vertices.value = 0 })
+  draw.on('drawend',()=>{sketching.value=false;vertices.value=0;window.setTimeout(()=>{publishShape();if(type==='Point')startEdit()},0)})
   map.addInteraction(draw);addSnap()
 }
 function startEdit() {
@@ -114,7 +118,6 @@ watch(element, target => {
     controls: defaultControls({ attribution: false }).extend([new ScaleLine()]),
     layers: [new VectorLayer({ source, style: featureStyle, zIndex: 100 }), new VectorLayer({ source: editing, zIndex: 101, style: editStyle })]
   })
-  map.on('pointermove', event => { coordinate.value = toLonLat(event.coordinate).map(x => x.toFixed(6)).join(', ') })
   map.on('singleclick', event => {
     if (mode.value !== 'view') return
     const f = map!.forEachFeatureAtPixel(event.pixel, f => f, { hitTolerance: 8 })
@@ -128,8 +131,8 @@ watch(element, target => {
     const record=feature?.get('record') as MapFeature|undefined
     if(record){event.preventDefault();emit('edit',record)}
   })
-  map.on('movestart', () => { missing.value = false })
   refreshFeatures(); refreshLayers()
+  emit('ready')
   if (!props.editable && props.features.length === 1) focus(props.features[0]!.shape)
   resizing = new ResizeObserver(() => map?.updateSize()); if (element.value) resizing.observe(element.value)
 }, { flush: 'post' })
@@ -138,22 +141,21 @@ onBeforeUnmount(() => { resizing?.disconnect(); map?.setTarget(undefined); map?.
 <template>
   <div class="offline-map-wrap" :class="{immersive,hd:highDefinition}">
     <div v-if="editable" class="map-tools">
-      <UButton label="标点" icon="i-lucide-map-pin" :variant="mode === 'Point' ? 'solid' : 'outline'" @click="start('Point')" />
-      <UButton label="画区域" icon="i-lucide-square" :variant="mode === 'Polygon' ? 'solid' : 'outline'" @click="start('Polygon')" />
+      <UButton label="标点" icon="i-lucide-map-pin" :variant="mode === 'Point' ? 'solid' : 'outline'" :disabled="mode==='Point'" @click="start('Point')" />
+      <UButton label="画区域" icon="i-lucide-square" :variant="mode === 'Polygon' ? 'solid' : 'outline'" :disabled="mode==='Polygon'" @click="start('Polygon')" />
       <template v-if="mode !== 'view'">
-        <UButton v-if="mode === 'Polygon'" label="撤回一点" color="neutral" variant="outline" @click="draw?.removeLastPoint()" />
-        <UButton v-if="mode === 'Polygon'" label="结束当前区域" color="neutral" variant="outline" @click="draw?.finishDrawing()" />
-        <UButton label="取消" color="neutral" variant="ghost" @click="cancel" />
+        <UButton v-if="mode === 'Polygon'" label="撤回一点" color="neutral" variant="outline" :disabled="!sketching" @click="draw?.removeLastPoint()" />
+        <UButton v-if="mode === 'Polygon'" label="结束当前区域" color="neutral" variant="outline" :disabled="vertices < 3" @click="draw?.finishDrawing()" />
+        <UButton label="放弃标记" color="neutral" variant="ghost" @click="cancel" />
         <UCheckbox v-model="snapEnabled" label="吸附边界" />
       </template>
       <span v-if="mode === 'edit'" class="text-sm text-muted">{{ shape?.type === 'MultiPolygon' ? `${shape.areas?.length} 个区域 · ` : '' }}拖动节点调整</span>
     </div>
     <div ref="mapElement" class="offline-map" :style="{ height }" tabindex="0" aria-label="社区地图" />
-    <div class="map-footer"><span>{{ coordinate }} WGS84</span><span v-if="missing">部分区域暂无缓存</span><span v-else>本地地图</span></div>
   </div>
 </template>
 <style scoped>
-.offline-map-wrap{position:relative;background:#e6e9e5;border:1px solid var(--border);border-radius:10px;overflow:hidden}.map-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px;background:white}.offline-map{width:100%;min-height:300px;background:repeating-linear-gradient(45deg,#e5e8e4,#e5e8e4 10px,#e0e4df 10px,#e0e4df 20px)}.map-footer{display:flex;justify-content:space-between;gap:8px;padding:5px 10px;background:#fff;font-size:12px;color:var(--text-3)}:deep(.ol-zoom button){width:34px;height:34px;font-size:23px;background:white;color:#17211e}:deep(.ol-control){background:#ffffffaa}
-.immersive{height:100%;border:0;border-radius:0}.immersive .offline-map{height:100%!important}.immersive .map-tools{position:absolute;z-index:4;top:14px;right:14px;max-width:min(670px,calc(100% - 400px));border-radius:12px;box-shadow:0 3px 18px #17211e24}.immersive .map-footer{position:absolute;bottom:0;left:0;right:0;z-index:2;background:#ffffffbf;pointer-events:none}.immersive :deep(.ol-zoom){left:auto;right:14px;top:auto;bottom:60px}.immersive :deep(.ol-scale-line){bottom:30px}@media(max-width:900px){.immersive .map-tools{top:68px;left:12px;right:auto;max-width:calc(100% - 24px);gap:5px;padding:7px}}
+.offline-map-wrap{position:relative;background:#e6e9e5;border:1px solid var(--border);border-radius:10px;overflow:hidden}.map-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px;background:white}.offline-map{width:100%;min-height:300px;background:repeating-linear-gradient(45deg,#e5e8e4,#e5e8e4 10px,#e0e4df 10px,#e0e4df 20px)}:deep(.ol-zoom button){width:34px;height:34px;font-size:23px;background:white;color:#17211e}:deep(.ol-control){background:#ffffffaa}
+.immersive{height:100%;border:0;border-radius:0}.immersive .offline-map{height:100%!important}.immersive .map-tools{position:absolute;z-index:4;top:14px;right:14px;max-width:min(670px,calc(100% - 400px));border-radius:12px;box-shadow:0 3px 18px #17211e24}.immersive :deep(.ol-zoom){left:auto;right:14px;top:auto;bottom:60px}.immersive :deep(.ol-scale-line){bottom:10px}@media(max-width:900px){.immersive .map-tools{top:68px;left:12px;right:auto;max-width:calc(100% - 24px);gap:5px;padding:7px}}
 .immersive.hd .offline-map{width:200%;height:200%!important;transform:scale(.5);transform-origin:0 0}.immersive.hd :deep(.ol-zoom){transform:scale(2);transform-origin:bottom right;right:28px;bottom:120px}.immersive.hd :deep(.ol-scale-line){transform:scale(2);transform-origin:bottom left;left:16px;bottom:60px}
 </style>

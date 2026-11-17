@@ -8,59 +8,46 @@ public sealed partial class Store
 {
     private static readonly HashSet<string> CommunityKinds = ["unit", "use", "purpose-type", "inspection-type", "staff", "plan", "draft", "inspection-meta", "issue-meta"];
 
-    private void InitializeCommunityTables()
+    private void InitializeCommunityTables(SqliteTransaction transaction)
     {
-        using var transaction = _db.BeginTransaction();
-        foreach (var table in new[] { "inspections", "issues" })
-        {
-            var columns = new HashSet<string>();
-            using (var info = Command($"PRAGMA table_info({table});", transaction))
-            using (var rows = info.ExecuteReader()) while (rows.Read()) columns.Add(rows.GetString(1));
-            if (!columns.Contains("voided")) { using var add = Command($"ALTER TABLE {table} ADD COLUMN voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1));", transaction); add.ExecuteNonQuery(); }
-            if (!columns.Contains("void_reason")) { using var add = Command($"ALTER TABLE {table} ADD COLUMN void_reason TEXT NOT NULL DEFAULT '';", transaction); add.ExecuteNonQuery(); }
-        }
         using (var command = Command("""
-            CREATE TABLE IF NOT EXISTS community_records (
+            CREATE TABLE community_records (
               id TEXT PRIMARY KEY, kind TEXT NOT NULL, parent_id TEXT NOT NULL DEFAULT '', name TEXT NOT NULL,
               body TEXT NOT NULL CHECK(json_valid(body)), revision INTEGER NOT NULL DEFAULT 1,
               updated_at TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0 CHECK(archived IN(0,1)));
-            CREATE INDEX IF NOT EXISTS ix_community_records_parent ON community_records(kind,parent_id,archived);
-            CREATE UNIQUE INDEX IF NOT EXISTS ix_draft_submission ON community_records(json_extract(body,'$.submissionKey')) WHERE kind='draft';
-            CREATE TABLE IF NOT EXISTS record_photos (
+            CREATE INDEX ix_community_records_parent ON community_records(kind,parent_id,archived);
+            CREATE UNIQUE INDEX ix_draft_submission ON community_records(json_extract(body,'$.submissionKey')) WHERE kind='draft';
+            CREATE TABLE record_photos (
               record_id TEXT NOT NULL REFERENCES community_records(id),
               photo_id TEXT NOT NULL UNIQUE REFERENCES photos(id), active INTEGER NOT NULL DEFAULT 1,
               PRIMARY KEY(record_id,photo_id));
-            CREATE TABLE IF NOT EXISTS imported_rows(source_key TEXT PRIMARY KEY, record_id TEXT NOT NULL, kind TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS community_history (
+            CREATE TABLE imported_rows(source_key TEXT PRIMARY KEY, record_id TEXT NOT NULL, kind TEXT NOT NULL);
+            CREATE TABLE community_history (
               id TEXT PRIMARY KEY, kind TEXT NOT NULL, record_id TEXT NOT NULL, at TEXT NOT NULL,
               action TEXT NOT NULL, before_json TEXT NOT NULL, after_json TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS ix_community_history_record ON community_history(record_id,at);
-            CREATE TABLE IF NOT EXISTS map_shapes (
+            CREATE INDEX ix_community_history_record ON community_history(record_id,at);
+            CREATE TABLE map_shapes (
               kind TEXT NOT NULL CHECK(kind IN ('point','grid')), record_id TEXT NOT NULL,
               shape TEXT NOT NULL CHECK(json_valid(shape)), revision INTEGER NOT NULL DEFAULT 1,
               PRIMARY KEY(kind,record_id));
-            CREATE TABLE IF NOT EXISTS map_layers (
+            CREATE TABLE map_layers (
               id TEXT PRIMARY KEY, name TEXT NOT NULL, folder TEXT NOT NULL, scheme TEXT NOT NULL CHECK(scheme IN('xyz','tms')),
               enabled INTEGER NOT NULL, is_default INTEGER NOT NULL, opacity REAL NOT NULL,
-              min_zoom INTEGER NOT NULL, max_zoom INTEGER NOT NULL, sort_order INTEGER NOT NULL);
-            INSERT OR IGNORE INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('jlyh','吉林一号','jlyh','tms',1,1,1,12,18,0);
-            INSERT OR IGNORE INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('tdt-cva','地名标注','tdt-cva','xyz',0,0,1,0,18,2);
-            DROP VIEW IF EXISTS active_inspections;
-            DROP VIEW IF EXISTS active_issues;
+              min_zoom INTEGER NOT NULL, max_zoom INTEGER NOT NULL, sort_order INTEGER NOT NULL,
+              url_template TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '', subdomains TEXT NOT NULL DEFAULT '0,1,2,3',
+              update_cache INTEGER NOT NULL DEFAULT 0, annotation INTEGER NOT NULL DEFAULT 0, map_key TEXT NOT NULL DEFAULT '', cache_version INTEGER NOT NULL DEFAULT 0);
+            INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('jlyh','吉林一号','jlyh','tms',1,1,1,12,18,0);
+            INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,annotation) VALUES('tdt-cva','地名标注','tdt-cva','xyz',0,0,1,0,18,10000,1);
             CREATE VIEW active_inspections AS SELECT rowid AS rowid,* FROM inspections WHERE voided=0;
             CREATE VIEW active_issues AS SELECT x.rowid AS rowid,x.* FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE x.voided=0 AND n.voided=0;
-            PRAGMA user_version=6;
             """, transaction)) command.ExecuteNonQuery();
-        using (var count = Command("SELECT COUNT(*) FROM community_records WHERE kind='inspection-type';", transaction))
-            if (Convert.ToInt32(count.ExecuteScalar(), CultureInfo.InvariantCulture) == 0)
-                foreach (var name in new[] { "安全检查", "环境卫生", "消防通道", "出租房巡查" })
-                {
-                    using var add = Command("INSERT INTO community_records(id,kind,parent_id,name,body,updated_at) VALUES($id,'inspection-type','',$name,'{\"items\":[]}', $time);", transaction,
-                        ("$id", NewId()), ("$name", name), ("$time", DateTimeOffset.Now.ToString("O")));
-                    add.ExecuteNonQuery();
-                }
+        foreach (var name in new[] { "安全检查", "环境卫生", "消防通道", "出租房巡查" })
+        {
+            using var add = Command("INSERT INTO community_records(id,kind,parent_id,name,body,updated_at) VALUES($id,'inspection-type','',$name,'{\"items\":[]}', $time);", transaction,
+                ("$id", NewId()), ("$name", name), ("$time", DateTimeOffset.Now.ToString("O")));
+            add.ExecuteNonQuery();
+        }
         InitializeMapConfiguration(transaction);
-        transaction.Commit();
     }
 
     private static void RequireKind(string kind)

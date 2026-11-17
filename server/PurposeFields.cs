@@ -45,7 +45,6 @@ public sealed partial class Store
         }
         node["values"] = values;
         node["fieldSnapshot"] = JsonNode.Parse(JsonSerializer.Serialize(fields, CommunityJsonContext.Default.PurposeFieldArray));
-        node.Remove("business"); node.Remove("storedGoods"); node.Remove("owner"); node.Remove("ownerPhone"); node.Remove("tenantCount"); node.Remove("area");
         using var result = JsonDocument.Parse(node.ToJsonString()); return result.RootElement.Clone();
     }
 
