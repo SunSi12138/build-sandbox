@@ -65,7 +65,8 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await page.getByRole('button', { name: '上移地名标注层', exact: true }).waitFor()
       const reordered = response('/map/settings/order', 'PUT')
       await page.getByRole('button', { name: '上移地名标注层', exact: true }).click(); await reordered
-      assert((await page.getByTestId('map-layer-row').first().textContent()).includes('地名标注层'))
+      await page.waitForFunction(() =>
+        document.querySelector('[data-testid="map-layer-row"] .row-body')?.textContent?.includes('地名标注层'))
       const toggled = response('/map/settings/' + extra.id + '/enabled', 'PUT')
       await page.getByRole('checkbox', { name: '启用地名标注层', exact: true }).click(); await toggled
       await page.getByRole('checkbox', { name: '启用地名标注层', exact: true }).waitFor()
