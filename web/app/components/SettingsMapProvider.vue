@@ -10,12 +10,8 @@ watch(saving, value => emit('busy', value))
 const schemes = [{ label: 'XYZ', value: 'xyz' }, { label: 'TMS', value: 'tms' }]
 const tileFormats = [{ label: '图片（PNG / JPG / WebP）', value: 'raster' }, { label: 'MVT 矢量地名（PBF）', value: 'mvt' }]
 const tileFormat = computed<'raster' | 'mvt'>({
-  get: () => provider.scheme.startsWith('mvt-') ? 'mvt' : 'raster',
-  set: value => { provider.scheme = value === 'mvt' ? (coordinateScheme.value === 'tms' ? 'mvt-tms' : 'mvt-xyz') : coordinateScheme.value },
-})
-const coordinateScheme = computed<'xyz' | 'tms'>({
-  get: () => provider.scheme.endsWith('tms') ? 'tms' : 'xyz',
-  set: value => { provider.scheme = tileFormat.value === 'mvt' ? (value === 'tms' ? 'mvt-tms' : 'mvt-xyz') : value },
+  get: () => provider.format,
+  set: value => { provider.format = value },
 })
 function validate(state: TileProvider): FormError[] {
   const result: FormError[] = []
@@ -52,7 +48,7 @@ async function save() {
           <UFormField v-if="provider.urlTemplate.includes('{mk}') || provider.mapKey" label="地图密钥（mk）" name="mapKey" class="field-full"><UInput v-model="provider.mapKey" :type="showKeys ? 'text' : 'password'" :maxlength="2000" autocomplete="off" :disabled="saving" class="w-full" /></UFormField>
           <UFormField label="缓存目录" name="folder" required class="field-full"><UInput v-model="provider.folder" :maxlength="1000" :disabled="saving" class="w-full" /><p class="mt-1 break-all text-xs text-muted">相对目录基于 {{ cacheRoot }}，也可填写绝对路径。</p></UFormField>
           <UFormField label="图层格式"><USelect v-model="tileFormat" :items="tileFormats" :disabled="saving" class="w-full" /><p v-if="tileFormat === 'mvt'" class="mt-1 text-xs text-muted">MVT / PBF 需要包含 name、name:zh 等地名属性。当前采用内置中文地名样式，不读取外部 style.json。</p></UFormField>
-          <UFormField label="图块坐标"><USelect v-model="coordinateScheme" :items="schemes" :disabled="saving" class="w-full" /></UFormField>
+          <UFormField label="图块坐标"><USelect v-model="provider.scheme" :items="schemes" :disabled="saving" class="w-full" /></UFormField>
           <UFormField v-if="provider.urlTemplate.includes('{s}')" label="子域名"><UInput v-model="provider.subdomains" placeholder="0,1,2,3,4,5,6,7" :maxlength="200" :disabled="saving" class="w-full" /></UFormField>
           <div class="field-full"><UCheckbox v-model="provider.forceRefresh" label="强制更新缓存" :disabled="saving" /><p class="mt-1 text-xs text-muted">重新下载加载的图块；失败时使用已有缓存。</p></div>
         </div>

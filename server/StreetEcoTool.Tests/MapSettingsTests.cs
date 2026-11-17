@@ -40,9 +40,11 @@ public sealed class MapSettingsTests
         var original = Assert.Single(store.GetMapSettings().Providers);
         var vector = store.SaveMapProvider(original.Id, original with
         {
-            Scheme = "mvt-xyz", Folder = "vector-label-test", UrlTemplate = "", ForceRefresh = false
+            Scheme = "xyz", Format = "mvt", Folder = "vector-label-test", UrlTemplate = "", ForceRefresh = false
         });
-        Assert.Equal("mvt-xyz", vector.Scheme);
+        Assert.Equal("xyz", vector.Scheme);
+        Assert.Equal("mvt", vector.Format);
+        Assert.Equal("mvt", Assert.Single(store.GetMapSettings().Providers).Format);
         Assert.Equal("mvt", Assert.Single(store.GetMapLayers()).Kind);
 
         var cache = Path.Combine(env.Root, "tiles", vector.Folder, "12", "3000");
@@ -59,16 +61,16 @@ public sealed class MapSettingsTests
         Assert.True(hasVector.HasCache);
         Assert.False(hasVector.HasUrl);
 
-        var tms = store.SaveMapProvider(vector.Id, vector with { Scheme = "mvt-tms" });
-        Assert.Equal("mvt-tms", tms.Scheme);
+        var tms = store.SaveMapProvider(vector.Id, vector with { Scheme = "tms" });
+        Assert.Equal("tms", tms.Scheme);
         Assert.Equal("mvt", Assert.Single(store.GetMapLayers()).Kind);
-        var raster = store.SaveMapProvider(tms.Id, tms with { Scheme = "xyz" });
+        var raster = store.SaveMapProvider(tms.Id, tms with { Scheme = "xyz", Format = "raster" });
         Assert.Equal("raster", Assert.Single(store.GetMapLayers()).Kind);
         var rasterCheck = await store.CheckMapLayerAsync(raster.Id, CancellationToken.None);
         Assert.Equal("cached", rasterCheck.Status);
         Assert.True(rasterCheck.HasCache);
 
-        var invalid = raster with { Scheme = "mvt" };
+        var invalid = raster with { Format = "unknown" };
         Assert.Equal(400, Assert.Throws<ApiException>(() => store.SaveMapProvider(raster.Id, invalid)).StatusCode);
         Assert.Equal("xyz", Assert.Single(store.GetMapSettings().Providers).Scheme);
         V2Environment.AssertForeignKeys(store.DatabasePath);

@@ -47,7 +47,7 @@ function mvtLabel(text: string, line: boolean): Style {
         text,
         placement: line ? 'line' : 'point',
         font: '600 13px "Microsoft YaHei","Noto Sans CJK SC",sans-serif',
-        fill: new Fill({ color: '#263442' }),
+        fill: new Fill({ color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || 'rgb(38,52,66)' }),
         stroke: new Stroke({ color: 'rgba(255,255,255,0.94)', width: 3 }),
         overflow: false,
       }),

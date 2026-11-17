@@ -7,7 +7,7 @@ using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
 
-public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0);
+public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster");
 public sealed record MapLayerDto(string Id, string Kind = "raster");
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
@@ -30,8 +30,10 @@ public sealed partial class Store
     private int _mapGeneration;
     private static readonly string[] RasterTileExtensions = [".png", ".jpg", ".webp"];
     private static readonly string[] VectorTileExtensions = [".pbf", ".mvt"];
-    private static bool IsMvt(TileProvider provider) => provider.Scheme is "mvt-xyz" or "mvt-tms";
-    private static bool IsTms(TileProvider provider) => provider.Scheme is "tms" or "mvt-tms";
+    private const string MvtUrlPrefix = "mvt+";
+    private static bool IsMvt(TileProvider provider) => provider.Format == "mvt";
+    private static string StoredMapUrl(TileProvider provider) => IsMvt(provider) ? MvtUrlPrefix + provider.UrlTemplate : provider.UrlTemplate;
+    private static bool IsTms(TileProvider provider) => provider.Scheme == "tms";
     private static string[] TileExtensions(TileProvider provider) => IsMvt(provider) ? VectorTileExtensions : RasterTileExtensions;
     private static TileProvider[] DefaultMapProviders() =>
     [
@@ -39,7 +41,15 @@ public sealed partial class Store
         new("tdt-cva", "tdt-cva", "xyz", "https://t{s}.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk={key}", Name: "天地图地名标注")
     ];
     private const string MapProviderColumns = "id,folder,scheme,url_template,api_key,map_key,subdomains,name,force_refresh,enabled,sort_order";
-    private static TileProvider ReadMapProvider(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3), row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10));
+    private static TileProvider ReadMapProvider(SqliteDataReader row)
+    {
+        var storedUrl = row.GetString(3);
+        var mvt = storedUrl.StartsWith(MvtUrlPrefix, StringComparison.Ordinal);
+        return new(row.GetString(0), row.GetString(1), row.GetString(2),
+            mvt ? storedUrl[MvtUrlPrefix.Length..] : storedUrl,
+            row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7),
+            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), mvt ? "mvt" : "raster");
+    }
     private TileProvider GetMapProvider(string id)
     {
         using var command = Command("SELECT " + MapProviderColumns + " FROM map_providers WHERE id=$id;", null, ("$id", id));
@@ -65,7 +75,8 @@ public sealed partial class Store
             UrlTemplate = Text(request.UrlTemplate, "调用链接", 4000), ApiKey = Text(request.ApiKey, "服务密钥", 2000),
             MapKey = Text(request.MapKey, "地图密钥", 2000), Subdomains = Text(request.Subdomains, "子域名", 200)
         };
-        if (provider.Scheme is not ("xyz" or "tms" or "mvt-xyz" or "mvt-tms")) throw new ApiException(400, "图层格式应为图片或 MVT，图块坐标应为 XYZ 或 TMS。");
+        if (provider.Scheme is not ("xyz" or "tms")) throw new ApiException(400, "图块坐标应为 XYZ 或 TMS。");
+        if (provider.Format is not ("raster" or "mvt")) throw new ApiException(400, "图层类型应为图片或 MVT。");
         if (provider.ForceRefresh && provider.UrlTemplate.Length == 0) throw new ApiException(400, "强制更新缓存需要填写调用链接。");
         if (provider.UrlTemplate.Length > 0)
         {
@@ -99,7 +110,7 @@ public sealed partial class Store
             using var command = Command("""
                 INSERT INTO map_providers(id,name,folder,scheme,url_template,api_key,map_key,subdomains,force_refresh,enabled,sort_order)
                 VALUES($id,$name,$folder,$scheme,$url,$key,$map,$subdomains,$force,$enabled,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM map_providers));
-                """, null, ("$id", provider.Id), ("$name", provider.Name), ("$folder", provider.Folder), ("$scheme", provider.Scheme), ("$url", provider.UrlTemplate),
+                """, null, ("$id", provider.Id), ("$name", provider.Name), ("$folder", provider.Folder), ("$scheme", provider.Scheme), ("$url", StoredMapUrl(provider)),
                 ("$key", provider.ApiKey), ("$map", provider.MapKey), ("$subdomains", provider.Subdomains), ("$force", provider.ForceRefresh ? 1 : 0), ("$enabled", provider.Enabled ? 1 : 0));
             command.ExecuteNonQuery(); _mapGeneration++; return GetMapProvider(provider.Id);
         }
@@ -114,7 +125,7 @@ public sealed partial class Store
             using var command = Command("""
                 UPDATE map_providers SET name=$name,folder=$folder,scheme=$scheme,url_template=$url,api_key=$key,map_key=$map,subdomains=$subdomains,force_refresh=$force WHERE id=$id;
                 """, null, ("$id", provider.Id), ("$name", provider.Name), ("$folder", provider.Folder), ("$scheme", provider.Scheme),
-                ("$url", provider.UrlTemplate), ("$key", provider.ApiKey), ("$map", provider.MapKey), ("$subdomains", provider.Subdomains), ("$force", provider.ForceRefresh ? 1 : 0));
+                ("$url", StoredMapUrl(provider)), ("$key", provider.ApiKey), ("$map", provider.MapKey), ("$subdomains", provider.Subdomains), ("$force", provider.ForceRefresh ? 1 : 0));
             RequireChanged(command.ExecuteNonQuery(), "地图图层"); _mapGeneration++; return GetMapProvider(id);
         }
     }
@@ -156,9 +167,9 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,scheme FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
+            using var command = Command("SELECT id,url_template FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
             using var rows = command.ExecuteReader(); var layers = new List<MapLayerDto>();
-            while (rows.Read()) layers.Add(new(rows.GetString(0), rows.GetString(1) is "mvt-xyz" or "mvt-tms" ? "mvt" : "raster"));
+            while (rows.Read()) layers.Add(new(rows.GetString(0), rows.GetString(1).StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster"));
             return layers.ToArray();
         }
     }
