@@ -484,22 +484,21 @@ public sealed class WordExporterTests
     }
 
     [Fact]
-    public void CampaignRecordKeepsFullContentAndSparseQuantitiesIncludingZero()
+    public void CampaignRecordKeepsFullContentWithoutObsoleteMetricFields()
     {
         var campaign = Campaign() with { Content = new string('清', 2000), Outcome = "", Notes = "", ParticipantCount = 0, VehicleCount = null, GarbageTons = null, AreaSqm = null };
         using var package = new Package(Render(stream => WordExporter.WriteCampaignRecord(stream, new(campaign, []), Settings(), [])));
         ValidatePackage(package);
         var document = package.Xml("word/document.xml");
         Assert.Contains(campaign.Content, Text(document));
-        var quantities = Assert.Single(document.Descendants(W + "tbl"), table => Text(table).Contains("参加人数（人）", StringComparison.Ordinal));
-        Assert.Equal(1, quantities.Element(W + "tblGrid")?.Elements(W + "gridCol").Count());
-        Assert.Equal("0", Text(quantities.Elements(W + "tr").Last()));
+        Assert.DoesNotContain("参加人数", Text(document), StringComparison.Ordinal);
+        Assert.DoesNotContain("清运垃圾", Text(document), StringComparison.Ordinal);
         Assert.DoesNotContain("整治照片", Text(document), StringComparison.Ordinal);
         Assert.DoesNotContain("备注", Text(document), StringComparison.Ordinal);
     }
 
     [Fact]
-    public void InspectionAndCampaignLedgersHaveMergedLastSummaryRowsAndExactTotals()
+    public void InspectionAndCampaignLedgersHaveMergedSummaryRowsAndGeneralizedColumns()
     {
         var detail = ClosedInspection();
         var normal = detail.Inspection with { Id = "normal", Result = "normal", IssueCount = 0, ClosedCount = 0, OpenIssueCount = 0, RectifyStatus = "none" };
@@ -518,13 +517,13 @@ public sealed class WordExporterTests
         using var campaigns = new Package(Render(stream => WordExporter.WriteCampaignLedger(stream,
             new("2026-10-01", "2026-10-31", "全部社区", [first, second], [], false, "2026-10-12"), Settings())));
         ValidatePackage(campaigns);
-        var table = Assert.Single(campaigns.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 11);
+        var table = Assert.Single(campaigns.Xml("word/document.xml").Descendants(W + "tbl"), item => item.Element(W + "tblGrid")?.Elements(W + "gridCol").Count() == 7);
         var cells = table.Elements(W + "tr").Skip(1).First().Elements(W + "tc").ToArray();
         Assert.Equal(new string('清', 60) + "…", Text(cells[^1]));
-        Assert.Equal("right", (string?)cells[8].Element(W + "p")?.Element(W + "pPr")?.Element(W + "jc")?.Attribute(W + "val"));
         var merged = Assert.Single(table.Elements(W + "tr").Last().Elements(W + "tc"));
-        Assert.Equal("11", (string?)merged.Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val"));
-        Assert.Contains("共 2 次整治，累计参加 12 人、出动车辆 3 辆、清运垃圾 1.35 吨、清理面积 25.35 ㎡", Text(merged));
+        Assert.Equal("7", (string?)merged.Element(W + "tcPr")?.Element(W + "gridSpan")?.Attribute(W + "val"));
+        Assert.Contains("共 2 次整治", Text(merged));
+        Assert.DoesNotContain("参加人数", Text(table), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -589,7 +588,7 @@ public sealed class WordExporterTests
         var expected = new List<string> { "一、整治内容" };
         var number = 2;
         string[] numerals = ["零", "一", "二", "三", "四"];
-        if (outcome || quantities) expected.Add(numerals[number++] + "、整治成效");
+        if (outcome) expected.Add(numerals[number++] + "、整治成效");
         expected.Add(numerals[number++] + "、备注");
         if (photos) expected.Add(numerals[number] + "、整治照片");
         Assert.Equal(expected, headings);
