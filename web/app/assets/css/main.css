@@ -38,6 +38,9 @@ button:disabled { cursor:default; }
 .desktop-sidebar { display:none; }
 .workspace-content { max-width:1200px; margin:0 auto; padding:0 12px calc(68px + env(safe-area-inset-bottom)); outline:none; }
 .page-stack { display:flex; flex-direction:column; gap:12px; min-width:0; }
+/* Map view is a full-height page with a fixed, viewport-filling map behind its controls. */
+.page-stack.map-page { min-height:calc(100dvh - 128px); }
+
 .page-header { position:sticky; top:0; z-index:30; display:flex; align-items:center; justify-content:space-between; gap:8px; height:48px; min-height:48px; margin:0 -12px; padding:0 12px; background:var(--surface); border-bottom:1px solid var(--border); }
 .page-title-wrap { display:flex; align-items:center; min-width:0; gap:4px; }
 .page-header h1 { font-size:17px; line-height:24px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -258,7 +261,7 @@ a.list-row:hover { background:var(--surface-2); }
 .table-wrap .name-text { display:inline-block; max-width:24ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; vertical-align:middle; }
 
 @media (max-width:767px) {
-  .page-stack.map-page { height:calc(100dvh - 68px - env(safe-area-inset-bottom)); }
+  .page-stack.map-page { height:calc(100dvh - 68px - env(safe-area-inset-bottom)); min-height:0; }
   .page-stack.map-page .filter-box:not(.map-filters-expanded) > :not(.filter-search):not(.filter-clear-action),
   .page-stack.map-page .map-filter-extra-hidden { display:none; }
   .page-stack.map-page .filter-box:not(.map-filters-expanded) { grid-template-columns:minmax(0,1fr) 40px; }
