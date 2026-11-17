@@ -268,3 +268,14 @@ a.list-row:hover { background:var(--surface-2); }
 /* Table cells keep full name tags on one line; the existing table viewport scrolls. */
 .table-wrap .name-tags { flex-wrap: nowrap; max-width: none; white-space: nowrap; }
 .table-wrap .name-tags [data-slot="base"] { flex-shrink: 0; white-space: nowrap; overflow-wrap: normal; height: 20px; padding-top: 0; padding-bottom: 0; }
+
+/* Tag editor alignment. */
+.names-field { min-width:0; width:100%; }
+.names-editor { width:100%; min-height:var(--control-h); gap:6px; padding:4px 6px; border-radius:6px; background:var(--surface); }
+.names-editor .name-edit-tag { display:inline-flex; align-items:center; gap:0; max-width:100%; padding:0 0 0 8px; min-height:28px; border:0; border-radius:5px; background:var(--neutral-bg); color:var(--text-2); box-shadow:none; }
+.names-editor .name-tag-text { font-size:13px; line-height:20px; white-space:normal; overflow-wrap:anywhere; }
+.names-editor .name-remove { display:inline-flex; align-items:center; justify-content:center; flex:none; width:28px; height:28px; min-width:28px; min-height:28px; margin:0; border-radius:0 5px 5px 0; color:var(--text-3); }
+.names-editor .name-remove:hover { background:var(--border); color:var(--text); }
+.names-editor .names-input { flex:1; min-width:72px; min-height:28px; padding:2px 4px; font-size:14px; }
+  .names-editor .name-remove { width:40px; height:40px; min-width:40px; min-height:40px; }
+  .names-editor .name-edit-tag, .names-editor .names-input { min-height:40px; }
