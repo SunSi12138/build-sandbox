@@ -256,6 +256,8 @@ a.list-row:hover { background:var(--surface-2); }
 
 @media (max-width:767px) {
   .page-stack.map-page { height:calc(100dvh - 68px - env(safe-area-inset-bottom)); }
+  .page-stack.map-page .filter-box:not(.map-filters-expanded) > :not(.filter-search),
+  .page-stack.map-page .map-filter-extra-hidden { display:none; }
   .page-stack.map-page > :not(.record-map-shell) { flex-shrink:0; }
   .page-stack.map-page > .record-map-shell { flex:1 0 280px; height:auto; min-height:280px; }
 }
