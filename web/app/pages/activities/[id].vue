@@ -7,6 +7,8 @@ const id = computed(() => String(route.params.id))
 const toast = useToast()
 const detail = ref<ActivityDetailDto | null>(null)
 const loading = ref(true), error = ref(''), deleting = ref(false), deleteOpen = ref(false), actionError = ref(''), downloading = ref(false)
+const pendingLinkedIssues = computed(() => detail.value?.activity.template === 'remediation' ? detail.value.activity.relatedIssues.filter(issue => issue.status === 'pending') : [])
+const remediationWithoutIssue = computed(() => detail.value?.activity.template === 'remediation' && detail.value.activity.pointId && !detail.value.activity.relatedIssues.length)
 const back = computed(() => { const value = queryText(route.query.returnTo); return value === '/activities' || value.startsWith('/activities?') ? value : '/activities' })
 const menu = computed(() => [[{ label: '编辑', icon: 'i-lucide-pencil', to: `/activities/new?edit=${id.value}` },
   { label: '删除活动', icon: 'i-lucide-trash-2', color: 'error' as const, onSelect: () => { actionError.value = ''; deleteOpen.value = true } }]])
@@ -52,6 +54,16 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
     <UAlert v-if="actionError && !deleteOpen" :description="actionError" color="error" variant="subtle" />
     <PageState :loading="loading" :error="error" @retry="load">
       <template v-if="detail">
+        <section v-if="pendingLinkedIssues.length || remediationWithoutIssue" class="panel" aria-label="整改后续操作">
+          <div class="panel-head"><h2 class="section-title">下一步：登记整改反馈</h2></div>
+          <div class="panel-body space-y-2">
+            <p class="text-sm text-muted">整治活动已保存，但不会自动将排查问题改为“待复查”。请核实并登记对应问题的整改反馈。</p>
+            <template v-if="pendingLinkedIssues.length">
+              <UButton v-for="issue in pendingLinkedIssues" :key="issue.id" :to="{ path: `/inspections/${issue.inspectionId}`, query: { issue: issue.id } }" color="neutral" variant="outline" block class="justify-start" :label="`登记反馈：${issue.description.slice(0, 35)}`" />
+            </template>
+            <UButton v-else-if="detail.activity.pointId" :to="`/points/${detail.activity.pointId}`" color="neutral" variant="outline" label="查看该点位的待整改问题" />
+          </div>
+        </section>
         <section class="panel">
           <div class="panel-head"><h2 class="section-title">基本信息</h2></div>
           <div class="panel-body"><dl class="detail-grid">
