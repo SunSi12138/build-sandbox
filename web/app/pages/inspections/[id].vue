@@ -59,7 +59,8 @@ const returnOpen = ref(false),
   returnError = ref(''),
   returnReason = ref(''),
   issueToReturn = ref<IssueDto | null>(null)
-const editState = reactive<InspectionUpdateRequest>({
+const editState = reactive<InspectionUpdateRequest & { extraValues: Record<string,string|number> }>({
+  extraValues: {},
   date: '',
   inspector: '',
   noticeNumber: '',
@@ -193,7 +194,7 @@ function validateEdit(): FormError[] {
   return errors
 }
 async function saveEdit() {
-  if (editing.value || validateEdit().length) return
+  if (editing.value || editPhotoBusy.value || editPhotoFailed.value || validateEdit().length) return
   editing.value = true
   editError.value = ''
   try {

@@ -108,7 +108,7 @@ export interface IssueQuery {
 }
 
 export interface CampaignTypeDto { id: string; name: string; fields?: import('./community').PurposeField[] }
-export interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
+export interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string; extraValues: Record<string,string|number>; photoIds: string[] }
 export interface CampaignWriteRequest {
   extraValues?: Record<string,string|number>
   name: string; typeId: string; pointId?: string | null; newPoint?: PointWriteRequest | null; date: string; content: string

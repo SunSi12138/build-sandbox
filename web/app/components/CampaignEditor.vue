@@ -13,7 +13,7 @@ const selectedPoint = ref<PointDto | null>(null)
 const pointLoading = ref(false)
 const conflictOpen = ref(false)
 const requestedPoint = ref('')
-function emptyPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
+function emptyPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '', extraValues: {}, photoIds: [] } }
 interface CampaignState {
   extraValues: Record<string,string|number>
   name: string
@@ -97,8 +97,10 @@ function restoreDraft() {
     const point = saved.state.newPoint
     if (point && typeof point === 'object') {
       const values = point as Record<string, unknown>
-      for (const key of Object.keys(emptyPoint()) as (keyof NewPointDraft)[])
-        if (typeof values[key] === 'string') state.newPoint[key] = values[key]
+      for (const key of ['name','communityId','typeId','address','contact','phone','coordinates'] as const)
+        if (typeof values[key] === 'string') state.newPoint[key] = values[key] as string
+      state.newPoint.extraValues = typeof values.extraValues === 'object' && values.extraValues ? values.extraValues as Record<string,string|number> : {}
+      state.newPoint.photoIds = Array.isArray(values.photoIds) ? values.photoIds.filter((x): x is string => typeof x === 'string') : []
     }
     for (const field of textFields)
       if (typeof saved.state[field] === 'string') state[field] = saved.state[field] as string
@@ -215,6 +217,7 @@ async function save() {
     newPoint: !props.initial && state.pointMode === 'temporary' ? {
       name: state.newPoint.name, communityId: state.newPoint.communityId, typeId: state.newPoint.typeId,
       address: state.newPoint.address, contact: state.newPoint.contact, phone: state.newPoint.phone,
+      extraValues: state.newPoint.extraValues, photoIds: state.newPoint.photoIds,
       ...parseCoordinates(state.newPoint.coordinates), frequency: 'irregular', disabled: false, temporary: true,
     } : null,
     date: state.date,

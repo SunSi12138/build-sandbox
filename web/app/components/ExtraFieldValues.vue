@@ -21,7 +21,7 @@ function setImage(id: string, list: PhotoUploadDto[]) {
 <template>
   <div v-if="fields.length" class="field-grid">
     <UFormField v-for="field in fields" :key="field.id" :label="field.label" :required="field.required" :class="{ 'field-full': field.type !== 'number' }">
-      <UInput v-if="field.type==='number'" :model-value="values[field.id]" type="number" step="any" class="w-full" :disabled="disabled" @update:model-value="v=>setValue(field.id,Number(v))" />
+      <UInput v-if="field.type==='number'" :model-value="values[field.id]" type="number" step="any" class="w-full" :disabled="disabled" @update:model-value="v=>setValue(field.id,v===''?'':Number(v))" />
       <UTextarea v-else-if="field.type==='text' && field.multiline" :model-value="String(values[field.id]??'')" :rows="4" class="w-full" :disabled="disabled" @update:model-value="v=>setValue(field.id,String(v))" />
       <UInput v-else-if="field.type==='text'" :model-value="String(values[field.id]??'')" class="w-full" :maxlength="4000" :disabled="disabled" @update:model-value="v=>setValue(field.id,String(v))" />
       <NameTagsInput v-else-if="field.type==='tags'" :model-value="String(values[field.id]??'')" :maxlength="4000" :disabled="disabled" @update:model-value="v=>setValue(field.id,v)" />

@@ -8,6 +8,8 @@ const props = withDefaults(defineProps<{ disabled?: boolean; prefix?: string }>(
 const emit = defineEmits<{ selected: [point: PointDto | null]; busy: [value: boolean] }>()
 const { bootstrap } = useAppData()
 const selected = ref<PointDto | null>(null)
+const extraFields = computed(() => bootstrap.value?.pointTypes.find(x=>x.id===newPoint.value.typeId)?.fields??[])
+const extraBusy = ref(false), extraFailed = ref(false)
 const expanded = ref(true)
 const search = ref('')
 const points = ref<PointDto[]>([])
@@ -22,7 +24,7 @@ let sequence = 0
 let selectedSequence = 0
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(p => ({ label: p.name, value: p.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(p => ({ label: p.name, value: p.id })))
-watch(resolving, value => emit('busy', value), { immediate: true })
+watch([resolving,extraBusy], () => emit('busy', resolving.value || extraBusy.value), { immediate: true })
 async function list(reset = true) {
   controller?.abort()
   controller = new AbortController()
@@ -96,6 +98,7 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
       <UFormField label="名称" name="newPoint.name" required class="field-full"><UInput v-model="newPoint.name" :maxlength="200" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-name`" /></UFormField>
       <UFormField label="网格" name="newPoint.communityId" required><USelect v-model="newPoint.communityId" :items="communities" placeholder="请选择" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-community`" /></UFormField>
       <UFormField label="类型" name="newPoint.typeId" required><USelect v-model="newPoint.typeId" :items="types" placeholder="请选择" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-type`" /></UFormField>
+      <ExtraFieldValues v-model="newPoint.extraValues" v-model:photo-ids="newPoint.photoIds" :fields="extraFields" phase="point" :disabled="disabled" @busy="extraBusy=$event" @failed="extraFailed=$event" />
       <UFormField label="详细地址" name="newPoint.address" required class="field-full"><UInput v-model="newPoint.address" :maxlength="1000" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-address`" /></UFormField>
       <UFormField label="联系人" name="newPoint.contact"><NameTagsInput v-model="newPoint.contact" :maxlength="100" :disabled="disabled" :data-testid="`${prefix}-temporary-contact`" /></UFormField>
       <UFormField label="电话" name="newPoint.phone"><UInput v-model="newPoint.phone" type="tel" :maxlength="100" class="w-full" :disabled="disabled" /></UFormField>

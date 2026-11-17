@@ -11,7 +11,7 @@ interface IssueDraft {
   responsibleUnit: string
   photos: PhotoUploadDto[]
 }
-interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string }
+interface NewPointDraft { name: string; communityId: string; typeId: string; address: string; contact: string; phone: string; coordinates: string; extraValues: Record<string,string|number>; photoIds: string[] }
 interface InspectionDraft {
   sharedId: string
   sharedRevision: number
@@ -47,7 +47,7 @@ let searchRequest: AbortController | undefined
 let searchSequence = 0
 let leaveDecision: ((leave: boolean) => void) | undefined
 
-function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
+function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '', extraValues: {}, photoIds: [] } }
 function emptyDraft(pointId = ''): InspectionDraft {
   return { sharedId: '', sharedRevision: 0, tempShape: null, scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '', extraValues:{}, extraPhotoIds:[] }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
 }
@@ -66,6 +66,8 @@ const pointError = ref('')
 const pointPickerOpen = ref(true)
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const pointTypes = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
+const temporaryFields=computed(()=>bootstrap.value?.pointTypes.find(x=>x.id===draft.newPoint.typeId)?.fields??[])
+const temporaryPhotoBusy=ref(false),temporaryPhotoFailed=ref(false)
 const selectedCommunity = computed(() => draft.pointMode === 'temporary' ? bootstrap.value?.communities.find(item => item.id === draft.newPoint.communityId)?.name ?? '' : selectedPoint.value?.communityName ?? '')
 watch(selectedCommunity, (value, previous) => { for (const issue of draft.issues) if (!issue.responsibleUnit || issue.responsibleUnit === previous) issue.responsibleUnit = value })
 const pointSearch = ref('')
@@ -85,8 +87,8 @@ const leaveOpen = ref(false)
 
 const overallPhotosFailed = ref(false)
 const issuePhotosFailed = reactive<Record<string, boolean>>({})
-const photosFailed = computed(() => scopePhotosFailed.value || overallPhotosFailed.value || draft.issues.some(issue => issuePhotosFailed[issue.key]))
-const uploadsBusy = computed(() => scopePhotosBusy.value || overallPhotosBusy.value || Object.values(issuePhotosBusy).some(Boolean))
+const photosFailed = computed(() => temporaryPhotoFailed.value || scopePhotosFailed.value || overallPhotosFailed.value || draft.issues.some(issue => issuePhotosFailed[issue.key]))
+const uploadsBusy = computed(() => temporaryPhotoBusy.value || scopePhotosBusy.value || overallPhotosBusy.value || Object.values(issuePhotosBusy).some(Boolean))
 const photoCount = computed(() => draft.photos.length + draft.issues.reduce((count, issue) => count + issue.photos.length, 0))
 const formDisabled = computed(() => saving.value || initializing.value)
 const hasDraft = computed(() => Boolean(draft.pointMode === 'temporary' || Object.values(draft.newPoint).some(Boolean) || draft.pointId || draft.notes || draft.noticeNumber || draft.photos.length || draft.issues.length
@@ -132,7 +134,7 @@ function loadLocalDraft() {
       sharedId: text('sharedId'), sharedRevision: typeof value.sharedRevision === 'number' ? value.sharedRevision : 0,
       tempShape: value.tempShape && typeof value.tempShape === 'object' && 'coordinates' in value.tempShape ? value.tempShape : null,
       pointMode: value.pointMode === 'temporary' ? 'temporary' : 'regular',
-      newPoint: Object.fromEntries(Object.keys(emptyNewPoint()).map(key => [key, value.newPoint && typeof value.newPoint === 'object' && typeof (value.newPoint as Record<string, unknown>)[key] === 'string' ? (value.newPoint as Record<string, unknown>)[key] : ''])),
+      newPoint: { ...emptyNewPoint(), ...(value.newPoint && typeof value.newPoint === 'object' ? value.newPoint : {}) },
       pointId: text('pointId'), date: text('date') || today.value, inspector: text('inspector'),
       scope: value.scope && typeof value.scope === 'object' ? {...emptyDraft().scope, ...value.scope} : emptyDraft().scope, submissionKey: text('submissionKey') || emptyDraft().submissionKey,
       result: value.result === 'issues' ? 'issues' : value.result === 'incomplete' ? 'incomplete' : 'normal', notes: text('notes'), noticeNumber: text('noticeNumber'),
@@ -377,7 +379,7 @@ async function saveInspection() {
   const body: InspectionCreateRequest = {
     ...draft.scope, submissionKey: draft.submissionKey, draftId: draft.sharedId || undefined, draftRevision: draft.sharedRevision,
     pointId: draft.pointMode === 'regular' ? draft.pointId : null,
-    newPoint: draft.pointMode === 'temporary' ? { shape: draft.tempShape, name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
+    newPoint: draft.pointMode === 'temporary' ? { shape: draft.tempShape, name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true, extraValues: draft.newPoint.extraValues, photoIds: draft.newPoint.photoIds } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
     notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: [...draft.photos.map(photo => photo.id), ...draft.scope.extraPhotoIds],
     issues: draft.result !== 'normal' ? draft.issues.map(issue => ({
       description: issue.description.trim(), requirement: issue.requirement, deadline: issue.deadline,
@@ -452,7 +454,7 @@ const moreActions = computed(() => [{label:'打开草稿箱',to:'/drafts'}, {lab
             <div v-else class="field-grid">
               <UFormField name="newPoint.name" label="名称" required class="field-full"><UInput v-model="draft.newPoint.name" data-testid="temporary-point-name" :maxlength="200" class="w-full"  :disabled="formDisabled" /></UFormField>
               <UFormField name="newPoint.communityId" label="网格" required><USelect v-model="draft.newPoint.communityId" :items="communities" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.typeId" label="类型" required><USelect v-model="draft.newPoint.typeId" :items="pointTypes" placeholder="请选择" class="w-full"  :disabled="formDisabled" /></UFormField>
-              <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="位置" required class="field-full"><LocationPicker v-model="draft.tempShape" :disabled="formDisabled" @picked="shape => { draft.newPoint.coordinates = shape.coordinates[0]!.join(',') }" /><details class="mt-2"><summary class="cursor-pointer text-sm text-muted">填写或导入经纬度</summary><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" :disabled="formDisabled" @update:model-value="draft.tempShape = null" /><CoordinateConverter v-model="draft.newPoint.coordinates" :disabled="formDisabled" @converted="shape=>{draft.tempShape=shape}" /></details></UFormField>
+              <ExtraFieldValues v-model="draft.newPoint.extraValues" v-model:photo-ids="draft.newPoint.photoIds" :fields="temporaryFields" phase="point" :disabled="formDisabled" @busy="temporaryPhotoBusy=$event" @failed="temporaryPhotoFailed=$event" /><UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="位置" required class="field-full"><LocationPicker v-model="draft.tempShape" :disabled="formDisabled" @picked="shape => { draft.newPoint.coordinates = shape.coordinates[0]!.join(',') }" /><details class="mt-2"><summary class="cursor-pointer text-sm text-muted">填写或导入经纬度</summary><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" :disabled="formDisabled" @update:model-value="draft.tempShape = null" /><CoordinateConverter v-model="draft.newPoint.coordinates" :disabled="formDisabled" @converted="shape=>{draft.tempShape=shape}" /></details></UFormField>
             </div>
           </section>
           <InspectionScope v-model="draft.scope" :point-id="draft.pointMode === 'regular' ? draft.pointId : ''" :disabled="formDisabled" @busy="scopePhotosBusy=$event" @failed="scopePhotosFailed=$event" />
