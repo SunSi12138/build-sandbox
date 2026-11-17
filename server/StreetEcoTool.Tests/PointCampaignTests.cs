@@ -89,7 +89,7 @@ public sealed class PointCampaignTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void TemporaryPointLivesUntilLastInspectionAndCampaignAreBothRemoved(bool deleteInspectionFirst)
+    public void TemporaryPointSurvivesDeletingAllInspectionAndCampaignRecords(bool deleteInspectionFirst)
     {
         using var environment = new V2Environment();
         using var store = environment.Open();
@@ -106,8 +106,9 @@ public sealed class PointCampaignTests
         using (var photo = store.OpenPhoto(pointPhoto.Id)) Assert.True(photo.CanRead);
         if (deleteInspectionFirst) store.DeleteCampaign(campaign.Campaign.Id);
         else store.DeleteInspection(inspection.Inspection.Id);
-        Assert.Equal(404, Assert.Throws<ApiException>(() => store.GetPoint(id)).StatusCode);
-        Assert.Throws<ApiException>(() => store.OpenPhoto(pointPhoto.Id));
+        Assert.True(store.GetPoint(id).Temporary);
+        Assert.Equal(1, store.GetPoint(id).PhotoCount);
+        using (var retained = store.OpenPhoto(pointPhoto.Id)) Assert.True(retained.CanRead);
         Assert.Throws<ApiException>(() => store.OpenPhoto(campaignPhoto.Id));
         V2Environment.AssertForeignKeys(store.DatabasePath);
     }
