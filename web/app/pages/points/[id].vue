@@ -12,6 +12,9 @@ const route = useRoute(),
   toast = useToast()
 const detail = ref<PointDetailDto | null>(null)
 const photos = computed(() => detail.value?.photos ?? [])
+const { bootstrap, load: loadBootstrap } = useAppData()
+const typeFields = computed(() => bootstrap.value?.pointTypes.find(x=>x.id===detail.value?.point.typeId)?.fields ?? [])
+onMounted(() => { void loadBootstrap() })
 const loading = ref(true),
   error = ref(''),
   editorOpen = ref(false),
@@ -189,6 +192,7 @@ watch(id, load, { immediate: true })
                 ><span v-else>—</span>
               </dd>
             </div>
+            <ExtraFieldDetails :fields="typeFields" :values="detail.point.extraValues" />
             <div v-if="detail.point.notes" class="detail-wide">
               <dt>备注</dt>
               <dd class="whitespace-pre-wrap">{{ detail.point.notes }}</dd>

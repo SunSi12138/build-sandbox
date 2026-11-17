@@ -68,7 +68,7 @@ public sealed partial class Store : IDisposable
                 default_inspector TEXT NOT NULL, notice_template TEXT NOT NULL, jpeg_quality INTEGER NOT NULL CHECK(jpeg_quality BETWEEN 1 AND 100)
             );
             CREATE TABLE communities (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, title TEXT NOT NULL, parent_id TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '#64748b');
-            CREATE TABLE point_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            CREATE TABLE point_types (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, fields TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(fields)));
             CREATE TABLE points (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE RESTRICT,
                 type_id TEXT NOT NULL REFERENCES point_types(id) ON DELETE RESTRICT, address TEXT NOT NULL,
@@ -77,7 +77,7 @@ public sealed partial class Store : IDisposable
                 notes TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
                 longitude REAL CHECK(longitude IS NULL OR longitude BETWEEN -180 AND 180),
                 latitude REAL CHECK(latitude IS NULL OR latitude BETWEEN -90 AND 90),
-                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1)), color TEXT NOT NULL DEFAULT '#087f70'
+                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1)), color TEXT NOT NULL DEFAULT '#087f70', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values))
             );
             CREATE TABLE inspections (
                 id TEXT PRIMARY KEY, point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT,

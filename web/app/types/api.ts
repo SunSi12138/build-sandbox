@@ -10,12 +10,13 @@ export interface PageDto<T> { items: T[]; total: number; page: number; pageSize:
 export interface SettingsDto { streetName: string; issuingUnit: string; defaultInspector: string; noticeTemplate: string; jpegQuality: number }
 export interface CommunityDto { id: string; name: string; title: string; parentId: string; color: string }
 export interface CommunityWriteRequest { name: string; title: string; parentId: string; color: string }
-export interface PointTypeDto { id: string; name: string }
-export interface PointTypeWriteRequest { name: string }
+export interface PointTypeDto { id: string; name: string; fields?: import('./community').PurposeField[] }
+export interface PointTypeWriteRequest { name: string; fields?: import('./community').PurposeField[] }
 export interface BootstrapDto { settings: SettingsDto; communities: CommunityDto[]; pointTypes: PointTypeDto[]; campaignTypes?: CampaignTypeDto[]; today: string }
 
 export interface PointWriteRequest {
   color?: string
+  extraValues?: Record<string, string | number>
   revision?: number
   shape?: import('./community').GeoShape | null; shapeRevision?: number
   name: string; communityId: string; typeId: string; address: string
@@ -23,6 +24,7 @@ export interface PointWriteRequest {
   longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]
 }
 export interface PointDto {
+  extraValues?: Record<string, string | number>
   color: string
   revision: number
   id: string; name: string; communityId: string; communityName: string; typeId: string; typeName: string

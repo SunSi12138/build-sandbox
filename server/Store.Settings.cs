@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
 
 namespace StreetEcoTool;
 
@@ -109,20 +110,20 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,name FROM point_types ORDER BY rowid;");
+            using var command = Command("SELECT id,name,fields FROM point_types ORDER BY rowid;");
             using var rows = command.ExecuteReader();
             var result = new List<PointTypeDto>();
-            while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1)));
+            while (rows.Read()) result.Add(new(rows.GetString(0), rows.GetString(1), JsonSerializer.Deserialize(rows.GetString(2), CommunityJsonContext.Default.PurposeFieldArray) ?? []));
             return result.ToArray();
         }
     }
 
     private PointTypeDto RequirePointType(string id, SqliteTransaction? transaction = null)
     {
-        using var command = Command("SELECT id,name FROM point_types WHERE id=$id;", transaction, ("$id", id));
+        using var command = Command("SELECT id,name,fields FROM point_types WHERE id=$id;", transaction, ("$id", id));
         using var row = command.ExecuteReader();
         if (!row.Read()) throw new ApiException(400, "所选点位类型不存在，请刷新后重新选择。");
-        return new(row.GetString(0), row.GetString(1));
+        return new(row.GetString(0), row.GetString(1), JsonSerializer.Deserialize(row.GetString(2), CommunityJsonContext.Default.PurposeFieldArray) ?? []);
     }
 
     public PointTypeDto SavePointType(string? id, PointTypeWriteRequest request)
@@ -131,14 +132,16 @@ public sealed partial class Store
         {
             PrepareWrite();
             var name = Text(request.Name, "点位类型", 100, true);
+            ValidateFieldDefinitions(request.Fields ?? []);
+            var fieldsJson = JsonSerializer.Serialize(request.Fields ?? [], CommunityJsonContext.Default.PurposeFieldArray);
             using (var duplicate = Command("SELECT COUNT(*) FROM point_types WHERE name=$name AND id<>$id;", null, ("$name", name), ("$id", id ?? "")))
                 if (Convert.ToInt32(duplicate.ExecuteScalar()) > 0) throw new ApiException(409, "已有同名点位类型。");
             var actualId = id ?? NewId();
             using var command = id is null
-                ? Command("INSERT INTO point_types(id,name) VALUES($id,$name);", null, ("$id", actualId), ("$name", name))
-                : Command("UPDATE point_types SET name=$name WHERE id=$id;", null, ("$id", actualId), ("$name", name));
+                ? Command("INSERT INTO point_types(id,name,fields) VALUES($id,$name,$fields);", null, ("$id", actualId), ("$name", name), ("$fields", fieldsJson))
+                : Command("UPDATE point_types SET name=$name,fields=$fields WHERE id=$id;", null, ("$id", actualId), ("$name", name), ("$fields", fieldsJson));
             RequireChanged(command.ExecuteNonQuery(), "点位类型");
-            return new(actualId, name);
+            return new(actualId, name, request.Fields ?? []);
         }
     }
 

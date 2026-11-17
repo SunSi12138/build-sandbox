@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import type { FormError } from '@nuxt/ui'
-import type { CommunityDto, PointTypeDto } from '~/types/api'
+import type { CommunityDto, PointTypeDto, CampaignTypeDto } from '~/types/api'
 import { errorMessage } from '~/utils/format'
 
-const props = defineProps<{ kind: 'communities' | 'point-types' | 'campaign-types'; items: CommunityDto[] | PointTypeDto[] }>()
+const props = defineProps<{ kind: 'communities' | 'point-types' | 'campaign-types'; items: CommunityDto[] | PointTypeDto[] | CampaignTypeDto[] }>()
 const emit = defineEmits<{ changed: [] }>()
 const toast = useToast()
 const label = computed(() => props.kind === 'communities' ? '网格' : props.kind === 'point-types' ? '场所形态' : '整治类型')
@@ -12,20 +12,21 @@ const deleteOpen = ref(false)
 const saving = ref(false)
 const error = ref('')
 const editingId = ref<string | null>(null)
-const deleting = ref<CommunityDto | PointTypeDto | null>(null)
-const form = reactive({ name: '', title: '', parentId: '', color: '#64748b' })
+const deleting = ref<CommunityDto | PointTypeDto | CampaignTypeDto | null>(null)
+const form = reactive({ name: '', title: '', parentId: '', color: '#64748b', fields: [] as import('~/types/community').PurposeField[] })
 
-function beginEdit(item?: CommunityDto | PointTypeDto) {
+function beginEdit(item?: CommunityDto | PointTypeDto | CampaignTypeDto) {
   editingId.value = item?.id ?? null
   form.color = item && 'color' in item ? item.color : '#64748b'
   form.parentId = item && 'parentId' in item ? item.parentId : ''
   form.name = item?.name ?? ''
   form.title = item && 'title' in item ? item.title : ''
+  form.fields = item && 'fields' in item ? structuredClone(toRaw(item.fields ?? [])) : []
   error.value = ''
   editOpen.value = true
 }
 
-function beginDelete(item: CommunityDto | PointTypeDto) {
+function beginDelete(item: CommunityDto | PointTypeDto | CampaignTypeDto) {
   deleting.value = item
   error.value = ''
   deleteOpen.value = true
@@ -42,7 +43,7 @@ async function save() {
   saving.value = true
   error.value = ''
   try {
-    const body = props.kind === 'communities' ? { name: form.name.trim(), title: form.title.trim() || form.name.trim(), parentId: form.parentId, color: form.color } : { name: form.name.trim() }
+    const body = props.kind === 'communities' ? { name: form.name.trim(), title: form.title.trim() || form.name.trim(), parentId: form.parentId, color: form.color } : { name: form.name.trim(), fields: form.fields }
     await $fetch(`/api/${props.kind}${editingId.value ? `/${editingId.value}` : ''}`, { method: editingId.value ? 'PUT' : 'POST', body })
     editOpen.value = false
     emit('changed')
@@ -83,6 +84,7 @@ async function remove() {
       <UFormField :label="`${label}名称`" name="name" required><UInput v-model="form.name" :maxlength="100" class="w-full" :disabled="saving" /></UFormField>
       <UFormField v-if="kind==='communities'" label="父网格"><GridTreeSelect v-model="form.parentId" allow-root :exclude-id="editingId??undefined" :disabled="saving" /></UFormField>
       <UFormField v-if="kind==='communities'" label="网格颜色"><MapColorPicker v-model="form.color" :disabled="saving" /></UFormField>
+      <FieldDefinitionEditor v-if="kind!=='communities'" v-model="form.fields" :disabled="saving" />
     </UForm></template>
     <template #footer><UButton color="neutral" variant="outline" :disabled="saving" @click="editOpen = false">取消</UButton><UButton :form="`dictionary-${kind}-form`" type="submit" :loading="saving">保存</UButton></template>
   </UModal>

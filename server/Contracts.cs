@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace StreetEcoTool;
 
 public sealed class ApiException(int statusCode, string message) : Exception(message)
@@ -11,11 +13,11 @@ public sealed record PageDto<T>(T[] Items, int Total, int Page, int PageSize, in
 public sealed record SettingsDto(string StreetName, string IssuingUnit, string DefaultInspector, string NoticeTemplate, int JpegQuality);
 public sealed record CommunityDto(string Id, string Name, string Title, string ParentId = "", string Color = "#64748b");
 public sealed record CommunityWriteRequest(string Name, string Title, string ParentId = "", GeoShape? Shape = null, string Color = "#64748b");
-public sealed record PointTypeDto(string Id, string Name);
-public sealed record PointTypeWriteRequest(string Name);
+public sealed record PointTypeDto(string Id, string Name, PurposeField[]? Fields = null);
+public sealed record PointTypeWriteRequest(string Name, PurposeField[]? Fields = null);
 public sealed record BootstrapDto(SettingsDto Settings, CommunityDto[] Communities, PointTypeDto[] PointTypes, string Today, CampaignTypeDto[]? CampaignTypes = null);
-public sealed record PointWriteRequest(string Name, string CommunityId, string TypeId, string Address, string? Contact = null, string? Phone = null, string Frequency = "irregular", string? Notes = null, bool Disabled = false, double? Longitude = null, double? Latitude = null, string[]? PhotoIds = null, bool Temporary = false, GeoShape? Shape = null, int ShapeRevision = 0, int? Revision = null, string Color = "#087f70");
-public sealed record PointDto(string Id, string Name, string CommunityId, string CommunityName, string TypeId, string TypeName, string Address, string Contact, string Phone, string Frequency, string Notes, bool Disabled, string? LastInspectionDate, int OpenIssueCount, double? Longitude = null, double? Latitude = null, bool Temporary = false, string? CoverPhotoId = null, int PhotoCount = 0, int Revision = 0, string Color = "#087f70");
+public sealed record PointWriteRequest(string Name, string CommunityId, string TypeId, string Address, string? Contact = null, string? Phone = null, string Frequency = "irregular", string? Notes = null, bool Disabled = false, double? Longitude = null, double? Latitude = null, string[]? PhotoIds = null, bool Temporary = false, GeoShape? Shape = null, int ShapeRevision = 0, int? Revision = null, string Color = "#087f70", JsonElement? ExtraValues = null);
+public sealed record PointDto(string Id, string Name, string CommunityId, string CommunityName, string TypeId, string TypeName, string Address, string Contact, string Phone, string Frequency, string Notes, bool Disabled, string? LastInspectionDate, int OpenIssueCount, double? Longitude = null, double? Latitude = null, bool Temporary = false, string? CoverPhotoId = null, int PhotoCount = 0, int Revision = 0, string Color = "#087f70", JsonElement? ExtraValues = null);
 public sealed record PointDetailDto(PointDto Point, InspectionDto[] Inspections, IssueDto[] OpenIssues, PhotoDto[]? Photos = null, CampaignDto[]? Campaigns = null, string? MergedInto = null);
 public sealed record CheckItem(string Name, string Result, string Notes = "");
 public sealed record InspectionCreateRequest(string? PointId, string Date, string Inspector, string Result, string? Notes = null, string? NoticeNumber = null, IssueCreateRequest[]? Issues = null, string[]? PhotoIds = null, PointWriteRequest? NewPoint = null,
