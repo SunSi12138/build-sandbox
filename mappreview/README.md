@@ -47,7 +47,18 @@ mappreview/
 
 ---
 
-## 2. 启动
+## 2. 下载工具
+
+`tools/` 里放了两套下载器，产物不提交到仓库：
+
+- `tools/jl1mall_crawler.py`：官方接口，支持区界枚举、tk/mk 切换、断点续传
+- `tools/jl1tool/`：第三方 CDN 通道（本地 wasm 签名），适合大批量补 z18
+
+详细用法、分片方式和占位图清理见 [tools/README.md](tools/README.md)。
+
+---
+
+## 3. 启动
 
 ### HTTP/1.1（最简单）
 
@@ -82,7 +93,7 @@ certs/localhost.key
 
 ---
 
-## 3. 页面功能
+## 4. 页面功能
 
 ### 图层
 
@@ -199,7 +210,7 @@ source.getTilePixelRatio = function(pixelRatio) {
 
 ---
 
-## 4. 数据约定
+## 5. 数据约定
 
 - 影像：`imagery/{z}/{x}/{y}.webp`（XYZ，左上角原点）
 - 标注：`labels/{z}/{x}/{y}.png`（透明，缺失视为透明）
@@ -210,7 +221,7 @@ source.getTilePixelRatio = function(pixelRatio) {
 
 ---
 
-## 5. 已知限制
+## 6. 已知限制
 
 1. **旋转分块**：已支持；建议用实际瓦片检查横带接缝、标注和边界描边，尤其是大倍率及缺片场景。
 2. **分块宽度**：当前是整宽横带，宽度上限 32000px；极端宽图会降低倍率。
@@ -220,7 +231,7 @@ source.getTilePixelRatio = function(pixelRatio) {
 
 ---
 
-## 6. 快速改动入口
+## 7. 快速改动入口
 
 - 图层/UI：`preview.html` 顶部 panel 结构 + `initDeepTileSupport` 之前
 - 深度逻辑：搜索 `MAX_TILE_ZOOM`、`MIN_TILE_PIXEL_RATIO`、`renderDepthFor`
@@ -231,7 +242,7 @@ source.getTilePixelRatio = function(pixelRatio) {
 - PNG 编码：`CRC_TABLE`、`pngChunkParts()`
 - 服务：`start_preview.py` / `start_preview_h2.py`
 
-## 7. 回归测试
+## 8. 回归测试
 
 在仓库根目录运行（Node.js 18+，无需安装依赖）：
 

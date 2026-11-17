@@ -29,3 +29,6 @@ mappreview/labels/
 mappreview/certs/
 mappreview/*.zip
 mappreview/screenshots/
+mappreview/tools/**/out/
+mappreview/tools/**/*.part
+*.part
