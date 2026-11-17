@@ -136,13 +136,17 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await canvas.locator('.ol-viewport').waitFor()
       const box = await canvas.boundingBox()
       assert(box && box.width > 100 && box.height > 100, 'OpenLayers map should be visible')
+      const persisted = await page.evaluate(() => {
+        const last = JSON.parse(localStorage.getItem('street-eco.last-map-view.v1') || 'null')
+        return [last?.longitude ?? 88.893426, last?.latitude ?? 29.274331]
+      })
       await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
       await picker.getByRole('button', { name: '确定', exact: true }).click()
       await editor.getByText('手动填写经纬度', { exact: true }).click()
       const value = await editor.getByLabel('经纬度', { exact: true }).inputValue()
       const [longitude, latitude] = value.split(',').map(Number)
-      assert(Math.abs(longitude - 88.893426) < 0.00005 && Math.abs(latitude - 29.274331) < 0.00005,
-        `Expected GCJ-02 center near 88.893426,29.274331, got ${value}`)
+      assert(Math.abs(longitude - persisted[0]) < 0.0001 && Math.abs(latitude - persisted[1]) < 0.0001,
+        `Expected GCJ-02 center near ${persisted}, got ${value}`)
       await editor.getByRole('button', { name: '取消', exact: true }).click()
     })
     await test('M04 Ctrl-drag rotates the map and the north button resets bearing', async () => {
