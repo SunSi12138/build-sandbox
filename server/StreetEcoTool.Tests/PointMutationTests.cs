@@ -60,6 +60,29 @@ public sealed class PointMutationTests
     }
 
     [Fact]
+    public void PointEditAppliesPhotoRemovalOnlyAfterSuccessfulSave()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var point = environment.CreatePoint(store);
+        var original = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
+        store.AttachPointPhotos(point.Id, new([original.Id]));
+        var replacement = store.UploadPhoto(WordExporterTests.Jpeg(90, 90), "point");
+        // A failed edit must not remove an existing point photo.
+        Assert.Throws<ApiException>(() => store.SavePoint(point.Id, new(point.Name, point.CommunityId,
+            point.TypeId, point.Address, PhotoIds: [replacement.Id, "missing"])));
+        using (var unchanged = store.OpenPhoto(original.Id)) Assert.True(unchanged.CanRead);
+        Assert.Equal(1, store.GetPoint(point.Id).PhotoCount);
+
+        store.SavePoint(point.Id, new(point.Name, point.CommunityId, point.TypeId,
+            point.Address, PhotoIds: [replacement.Id]));
+        Assert.Equal(1, store.GetPoint(point.Id).PhotoCount);
+        Assert.Throws<ApiException>(() => store.OpenPhoto(original.Id));
+        using (var kept = store.OpenPhoto(replacement.Id)) Assert.True(kept.CanRead);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Fact]
     public async Task ConcurrentPhotoCompletionsKeepBothAssociations()
     {
         using var environment = new V2Environment();
