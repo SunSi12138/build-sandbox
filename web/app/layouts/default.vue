@@ -10,11 +10,12 @@ const links = [
   { to: '/map', label: '社区地图', short: '地图', icon: 'i-lucide-map' },
   { to: '/points', label: '场所档案', short: '场所', icon: 'i-lucide-map-pin' },
   { to: '/inspections', label: '检查记录', short: '检查', icon: 'i-lucide-clipboard-list' },
+  { to: '/campaigns', label: '整治记录', short: '整治', icon: 'i-lucide-hard-hat' },
   { to: '/reports', label: '统计导出', short: '导出', icon: 'i-lucide-file-down' },
   { to: '/settings', label: '工具设置', short: '设置', icon: 'i-lucide-settings' }
 ]
 function active(path: string) {
-  const groups:Record<string,string[]>= {'/settings':['/catalogs','/layers','/imports','/management','/archive','/campaigns'], '/inspections':['/plans','/drafts','/reminders'], '/reports':['/statistics']}
+  const groups:Record<string,string[]>= {'/settings':['/catalogs','/layers','/imports','/management','/archive'], '/inspections':['/plans','/drafts','/reminders'], '/reports':['/statistics']}
   return path==='/'?route.path==='/':route.path.startsWith(path)||(groups[path]??[]).some(prefix=>route.path.startsWith(prefix))
 }
 function refreshOnReturn() { if (document.visibilityState === 'visible') void load().catch(() => {}) }

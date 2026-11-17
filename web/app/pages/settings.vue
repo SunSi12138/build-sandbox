@@ -84,7 +84,7 @@ onMounted(() => { void fetchSettings() })
         <SettingsDictionary v-if="active==='places'" kind="campaign-types" :items="bootstrap?.campaignTypes ?? []" @changed="dictionaryChanged" />
       </div>
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
-      <details class="panel panel-body"><summary class="cursor-pointer">资料管理</summary><div class="flex gap-3 flex-wrap mt-3"><UButton to="/management" label="重复资料合并、人员交接" variant="outline" /><UButton to="/archive" label="作废记录与恢复" variant="outline" /><UButton to="/campaigns" label="整治记录" variant="outline" /></div></details>
+      <details class="panel panel-body"><summary class="cursor-pointer">资料管理</summary><div class="flex gap-3 flex-wrap mt-3"><UButton to="/management" label="重复资料合并、人员交接" variant="outline" /><UButton to="/archive" label="作废记录与恢复" variant="outline" /></div></details>
     </template>
   </div>
 </template>
