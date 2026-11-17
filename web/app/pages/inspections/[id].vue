@@ -402,7 +402,8 @@ watch(() => route.query.issue, revealIssue)
                 ><MapLinks
                   :name="detail.inspection.pointName"
                   :longitude="detail.inspection.longitude"
-                  :latitude="detail.inspection.latitude"
+                   :latitude="detail.inspection.latitude"
+                  :shape="detail.inspection.shape"
                   labels
                 />
               </dd>

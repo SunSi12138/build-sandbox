@@ -151,7 +151,8 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
                 ><MapLinks
                   :name="detail.point.name"
                   :longitude="detail.point.longitude"
-                  :latitude="detail.point.latitude"
+                   :latitude="detail.point.latitude"
+                  :shape="detail.point.shape"
                   labels
                 />
               </dd>
