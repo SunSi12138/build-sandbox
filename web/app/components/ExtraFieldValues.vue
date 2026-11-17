@@ -5,6 +5,10 @@ const props = defineProps<{ fields: PurposeField[]; phase: PhotoPhase; disabled?
 const values = defineModel<Record<string, string | number>>({ required: true })
 const photoIds = defineModel<string[]>('photoIds', { default: () => [] })
 const emit = defineEmits<{ busy: [value: boolean]; failed: [value: boolean] }>()
+const busyFields=reactive<Record<string, boolean>>({})
+const failedFields=reactive<Record<string, boolean>>({})
+watch([busyFields, () => props.fields], () => emit('busy', props.fields.some(field => !!busyFields[field.id])), { deep: true })
+watch([failedFields, () => props.fields], () => emit('failed', props.fields.some(field => !!failedFields[field.id])), { deep: true })
 function setValue(id: string, next: string | number) { values.value = { ...values.value, [id]: next } }
 function imageModel(id: string): PhotoUploadDto[] {
   const value = values.value[id]
@@ -25,7 +29,7 @@ function setImage(id: string, list: PhotoUploadDto[]) {
       <UTextarea v-else-if="field.type==='text' && field.multiline" :model-value="String(values[field.id]??'')" :rows="4" class="w-full" :disabled="disabled" @update:model-value="v=>setValue(field.id,String(v))" />
       <UInput v-else-if="field.type==='text'" :model-value="String(values[field.id]??'')" class="w-full" :maxlength="4000" :disabled="disabled" @update:model-value="v=>setValue(field.id,String(v))" />
       <NameTagsInput v-else-if="field.type==='tags'" :model-value="String(values[field.id]??'')" :maxlength="4000" :disabled="disabled" @update:model-value="v=>setValue(field.id,v)" />
-      <PhotoUploader v-else :model-value="imageModel(field.id)" :phase="phase" :max="1" :quality="quality" deferred-removal :disabled="disabled" @update:model-value="list=>setImage(field.id,list)" @busy="emit('busy',$event)" @failed="emit('failed',$event)" />
+      <PhotoUploader v-else :model-value="imageModel(field.id)" :phase="phase" :max="1" :quality="quality" deferred-removal :disabled="disabled" @update:model-value="list=>setImage(field.id,list)" @busy="busyFields[field.id]=$event" @failed="failedFields[field.id]=$event" />
     </UFormField>
   </div>
 </template>

@@ -50,8 +50,8 @@ const saving = ref(false),
   savedAt = ref(''),
   storageFailed = ref(false),
   leaveOpen = ref(false)
-const phaseBusy = reactive({ before: false, process: false, after: false })
-const phaseFailed = reactive({ before: false, process: false, after: false })
+const phaseBusy = reactive({ before: false, process: false, after: false, extra: false })
+const phaseFailed = reactive({ before: false, process: false, after: false, extra: false })
 const photosFailed = computed(() => Object.values(phaseFailed).some(Boolean))
 const formDisabled = computed(() => loading.value || saving.value)
 const photosBusy = computed(() => Object.values(phaseBusy).some(Boolean))
@@ -331,7 +331,7 @@ function useRequestedPoint() {
         /></UFormField>
       </div>
     </section>
-    <section v-if="extraFields.length" class="form-section"><ExtraFieldValues v-model="state.extraValues" v-model:photo-ids="extraPhotoIds" :fields="extraFields" phase="before" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="phaseBusy.before=$event" @failed="phaseFailed.before=$event" /></section>
+    <section v-if="extraFields.length" class="form-section"><ExtraFieldValues v-model="state.extraValues" v-model:photo-ids="extraPhotoIds" :fields="extraFields" phase="before" :quality="bootstrap?.settings.jpegQuality" :disabled="formDisabled" @busy="phaseBusy.extra=$event" @failed="phaseFailed.extra=$event" /></section>
     <section class="form-section">
       <h2>整治情况</h2>
       <div class="field-grid">

@@ -8,7 +8,7 @@ const props = defineProps<{ point?: PointDto | null; initialCoordinates?: string
 const emit = defineEmits<{ saved: [point: PointDto] }>()
 const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
-const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false), photosFailed = ref(false)
+const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false), photosFailed = ref(false), extraPhotosBusy = ref(false), extraPhotosFailed = ref(false)
 interface PointState { extraValues: Record<string,string|number>; color: string; name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; notes: string; disabled: boolean; photos: PhotoUploadDto[] }
 const defaults = (): PointState => ({ extraValues: {}, color: '#087f70', name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', notes: '', disabled: false, photos: [] })
 const state = reactive<PointState>(defaults())
@@ -23,7 +23,7 @@ const extraFields = computed(() => bootstrap.value?.pointTypes.find(t => t.id ==
 const extraPhotoIds = computed<string[]>({ get: () => state.photos.map(item => item.id), set: ids => { state.photos = ids.map(id => state.photos.find(p => p.id === id) ?? { id, width: 1, height: 1 }) } })
 const initialSnapshot=ref('')
 function snapshot(){return JSON.stringify({state,shape:mapShape.value,uses:inlineUses.value.map(x=>({name:x.name,data:x.data}))})}
-function mayClose(){return !saving.value&&!photosBusy.value&&!usesBusy.value&&(loading.value||snapshot()===initialSnapshot.value||window.confirm('场所资料尚未保存，放弃修改吗？'))}
+function mayClose(){return !saving.value&&!photosBusy.value&&!extraPhotosBusy.value&&!usesBusy.value&&(loading.value||snapshot()===initialSnapshot.value||window.confirm('场所资料尚未保存，放弃修改吗？'))}
 function changeOpen(value:boolean){if(value||mayClose())open.value=value}
 onBeforeRouteLeave(()=>!open.value||mayClose())
 watch(open, async value => {
@@ -55,7 +55,7 @@ function validate(value: PointState): FormError[] {
   return errors
 }
 async function save() {
-  if (loading.value || saving.value || photosBusy.value || usesBusy.value || usesFailed.value || photosFailed.value || validate(state).length) return
+  if (loading.value || saving.value || photosBusy.value || extraPhotosBusy.value || usesBusy.value || usesFailed.value || photosFailed.value || extraPhotosFailed.value || validate(state).length) return
   if (inlineUses.value.some(x => !x.name.trim() || !x.data.position.trim() || !x.data.purposeId)) { error.value = '请补全每个用途位置、用途和使用名称，或移除空白项'; return }
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
@@ -68,14 +68,14 @@ async function save() {
 onBeforeUnmount(() => { overlayForm.value = false })
 </script>
 <template>
-  <USlideover :open="open" @update:open="changeOpen" :title="point ? '编辑场所' : '新增场所'" :dismissible="!saving && !photosBusy && !usesBusy" :close="!saving && !photosBusy && !usesBusy" :ui="{ content: 'w-full max-w-[560px] max-md:max-w-none' }">
+  <USlideover :open="open" @update:open="changeOpen" :title="point ? '编辑场所' : '新增场所'" :dismissible="!saving && !photosBusy && !extraPhotosBusy && !usesBusy" :close="!saving && !photosBusy && !extraPhotosBusy && !usesBusy" :ui="{ content: 'w-full max-w-[560px] max-md:max-w-none' }">
     <template #body>
       <UAlert v-if="error" :description="error" color="error" variant="subtle" class="mb-3" />
       <UForm id="point-editor-form" :state="state" :disabled="loading || saving" :validate="validate" class="field-grid" @submit="save">
         <UFormField label="名称" name="name" required class="field-full"><UInput v-model="state.name" maxlength="200" class="w-full" data-testid="point-name" /></UFormField>
         <UFormField label="网格" name="communityId" required><GridTreeSelect v-model="state.communityId" :disabled="saving || loading" /><QuickGridCreate :disabled="saving || loading" @created="grid=>{state.communityId=grid.id}" /></UFormField>
         <UFormField label="场所形态" name="typeId" required><USelect v-model="state.typeId" :items="types" placeholder="请选择" class="w-full" /></UFormField>
-        <ExtraFieldValues v-model="state.extraValues" v-model:photo-ids="extraPhotoIds" :fields="extraFields" phase="point" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy=$event" @failed="photosFailed=$event" />
+        <ExtraFieldValues v-model="state.extraValues" v-model:photo-ids="extraPhotoIds" :fields="extraFields" phase="point" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="extraPhotosBusy=$event" @failed="extraPhotosFailed=$event" />
          <UFormField label="地图颜色" class="field-full"><MapColorPicker v-model="state.color" :disabled="saving || loading" /></UFormField>
         <UFormField label="详细地址" name="address" required class="field-full"><UInput v-model="state.address" maxlength="1000" class="w-full" /></UFormField>
         <UFormField label="地图位置" name="coordinates" class="field-full"><LocationPicker v-model="mapShape" :disabled="saving" @picked="shape => {state.coordinates=shape.coordinates[0]!.join(',')}" /></UFormField>
@@ -88,6 +88,6 @@ onBeforeUnmount(() => { overlayForm.value = false })
         <UFormField v-if="point" label="状态" name="disabled" class="field-full"><div class="check-row"><UCheckbox v-model="state.disabled" label="停用" /></div></UFormField>
       </UForm>
     </template>
-    <template #footer><span v-if="photosBusy || usesBusy" class="mr-auto text-xs text-muted">请等待照片处理完成</span><span v-else-if="photosFailed || usesFailed" class="mr-auto text-sm text-error">请重试或移除上传失败的照片</span><UButton label="取消" color="neutral" variant="outline" :disabled="saving || photosBusy || usesBusy" @click="changeOpen(false)" /><UButton type="submit" form="point-editor-form" label="保存场所" :loading="saving" :disabled="loading || photosBusy || usesBusy || photosFailed || usesFailed || !communities.length || !types.length" data-testid="point-save" /></template>
+    <template #footer><span v-if="photosBusy || extraPhotosBusy || usesBusy" class="mr-auto text-xs text-muted">请等待照片处理完成</span><span v-else-if="photosFailed || extraPhotosFailed || usesFailed" class="mr-auto text-sm text-error">请重试或移除上传失败的照片</span><UButton label="取消" color="neutral" variant="outline" :disabled="saving || photosBusy || extraPhotosBusy || usesBusy" @click="changeOpen(false)" /><UButton type="submit" form="point-editor-form" label="保存场所" :loading="saving" :disabled="loading || photosBusy || extraPhotosBusy || usesBusy || photosFailed || extraPhotosFailed || usesFailed || !communities.length || !types.length" data-testid="point-save" /></template>
   </USlideover>
 </template>
