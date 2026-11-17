@@ -151,7 +151,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             if (string.IsNullOrWhiteSpace(request.PointId) == (request.NewPoint is null))
-                throw new ApiException(400, "请选择常态点位或填写临时点位，不能同时提交。");
+                throw new ApiException(400, "请选择已有点位或填写新临时点位，不能同时提交。");
             var date = DateText(request.Date, "排查日期", true);
             if (string.CompareOrdinal(date, Today) > 0) throw new ApiException(400, "排查日期不能晚于今天。");
             var inspector = Text(string.IsNullOrWhiteSpace(request.Inspector) ? GetSettings().DefaultInspector : request.Inspector, "排查人", 100, true);
