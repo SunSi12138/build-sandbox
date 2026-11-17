@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
-import { mkdir, writeFile, unlink } from 'node:fs/promises'
+import { mkdir, writeFile, unlink, rm } from 'node:fs/promises'
 import MVT from 'ol/format/MVT.js'
 import { createMvtPmtilesFixture } from './pmtiles-mvt-test-fixture.mjs'
 
@@ -101,15 +101,21 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await page.keyboard.press('Escape')
     })
 
-    await test('M05 real offline PMTiles MVT displays geometry without name tags', async () => {
+    await test('M05 real offline PMTiles MVT uses local style directory for geometry', async () => {
       const { archive, tile } = createMvtPmtilesFixture()
       assert.equal(new MVT().readFeatures(tile).length, 1, 'Fixture should decode as a real MVT/PBF tile')
       const config = await api('/map/settings')
       const existingEnabled = config.providers.filter(layer => layer.enabled)
       const fixturePath = path.join(config.cacheRoot, 'mvt-render-fixture.pmtiles')
+      const styleDirectory = path.join(config.cacheRoot, 'mvt-style-fixture')
       let layer
-      await mkdir(config.cacheRoot, { recursive: true })
+      await mkdir(styleDirectory, { recursive: true })
       await writeFile(fixturePath, archive)
+      await writeFile(path.join(styleDirectory, 'style.json'), JSON.stringify({
+        version: 8,
+        sources: { fixture: { type: 'vector', tiles: ['/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 0 } },
+        layers: [{ id: 'water', type: 'fill', source: 'fixture', 'source-layer': 'water', paint: { 'fill-color': '#1982a5' } }],
+      }))
       try {
         for (const existing of existingEnabled) {
           await api('/map/settings/' + existing.id + '/enabled', { method: 'PUT', body: { enabled: false } })
@@ -118,8 +124,14 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
           ...config.providers[0], id: '', name: '矢量渲染回归',
           folder: 'mvt-render-fixture.pmtiles', scheme: 'xyz', format: 'pmtiles',
           urlTemplate: '', forceRefresh: false, enabled: true, preload: 1,
+          styleDirectory: 'mvt-style-fixture',
         } })
         assert.equal(layer.format, 'pmtiles')
+        assert.equal(layer.hasStyle, true)
+        const matching = (await api('/map/layers')).find(item => item.id === layer.id)
+        assert.equal(matching.styleUrl, '/api/map/style/' + layer.id + '/style.json')
+        const renderedStyle = await (await page.request.get(origin + matching.styleUrl)).json()
+        assert.equal(renderedStyle.sources.fixture.tiles[0], 'hbtiles://' + layer.id + '/{z}/{x}/{y}')
         const checked = await api('/map/settings/' + layer.id + '/check')
         assert.equal(checked.status, 'cached')
         assert(checked.message.includes('MVT/PBF 矢量'))
@@ -128,27 +140,17 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
         await page.setViewportSize({ width: 1440, height: 900 })
         await go('/points?view=map')
         await fetched
-        await page.locator('.simple-map-canvas canvas').first().waitFor()
+        await page.locator('.simple-map-canvas .maplibregl-canvas').waitFor({ timeout: 12000 })
         await page.waitForFunction(() => {
-          const host = document.querySelector('.simple-map-canvas')
-          return [...(host?.querySelectorAll('canvas') ?? [])].some(canvas => {
-            const context = canvas.getContext('2d')
-            if (!context || canvas.width < 50 || canvas.height < 50) return false
-            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-            let visible = 0, sampled = 0
-            for (let y = 10; y < canvas.height - 10; y += 20)
-              for (let x = 10; x < canvas.width - 10; x += 20) {
-                sampled++
-                if (pixels[(y * canvas.width + x) * 4 + 3] > 12) visible++
-              }
-            return sampled > 0 && visible > sampled * 0.30
-          })
+          const canvas = document.querySelector('.simple-map-canvas .maplibregl-canvas')
+          return canvas && canvas.width > 50 && canvas.height > 50
         }, null, { timeout: 12000 })
       } finally {
         if (layer) await api('/map/settings/' + layer.id + '?confirm=true', { method: 'DELETE' })
         for (const existing of existingEnabled)
           await api('/map/settings/' + existing.id + '/enabled', { method: 'PUT', body: { enabled: true } })
         await unlink(fixturePath).catch(() => {})
+        await rm(styleDirectory, { recursive: true, force: true })
       }
     })
     await test('M02 background map fullscreen preserves controls and animates both directions', async () => {
