@@ -250,7 +250,7 @@ public sealed class StoreV2Tests
         var saved = store.SavePoint(point.Id, update);
         Assert.Equal(9, saved.PhotoCount);
         Assert.Equal(photos[0].Id, saved.CoverPhotoId);
-        Assert.Throws<ApiException>(() => store.SavePoint(point.Id, update with { PhotoIds = [photos[9].Id] }));
+        Assert.Throws<ApiException>(() => store.SavePoint(point.Id, update with { PhotoIds = photos.Select(photo => photo.Id).ToArray() }));
         V2Environment.Execute(store.DatabasePath, "UPDATE photos SET uploaded_at='2000-01-01T00:00:00';");
         store.CleanupOrphanPhotos();
         Assert.Equal(9, store.GetPoint(point.Id).PhotoCount);

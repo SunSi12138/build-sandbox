@@ -18,8 +18,8 @@ public sealed class SourceCopyTests
     {
         var root = Repository();
         var inspection = File.ReadAllText(Path.Combine(root, "web", "app", "pages", "inspections", "[id].vue"));
-        Assert.Contains("最后一条排查", inspection, StringComparison.Ordinal);
-        Assert.Contains("点位照片也将删除", inspection, StringComparison.Ordinal);
+        Assert.Contains("临时点位及其点位照片会保留", inspection, StringComparison.Ordinal);
+        Assert.DoesNotContain("点位照片也将删除", inspection, StringComparison.Ordinal);
         var batch = File.ReadAllText(Path.Combine(root, "web", "app", "components", "InspectionBatch.vue"));
         Assert.Contains("未提交的", batch, StringComparison.Ordinal);
         Assert.Contains("继续编辑", batch, StringComparison.Ordinal);

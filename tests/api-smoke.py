@@ -698,6 +698,11 @@ class ApiSmoke:
             self.request("GET", "/photos/" + photo["id"], expected=404)
         self.json("DELETE", "/api/remediation-types/" + campaign_type["id"], expected=400)
         self.json("DELETE", "/api/remediation-types/" + campaign_type["id"] + "?confirm=true", expected=204)
+        retained_point = campaign["activity"]["pointId"]
+        retained = self.json("GET", "/api/points/" + retained_point)["point"]
+        require(retained["temporary"], "Temporary point should remain after activity deletion")
+        self.json("DELETE", "/api/communities/" + community["id"] + "?confirm=true", expected=409)
+        self.json("DELETE", "/api/points/" + retained_point + "?confirm=true", expected=204)
         self.json("DELETE", "/api/communities/" + community["id"] + "?confirm=true", expected=204)
         require(self.sql_rows("PRAGMA foreign_key_check") == [], "Version 2 mutations broke foreign keys")
 
