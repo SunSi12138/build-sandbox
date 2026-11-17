@@ -555,7 +555,7 @@ try {
     assert.equal(await page.getByTestId('inspection-result-normal').getAttribute('aria-pressed'), 'true')
     let response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/inspections' && response.request().method() === 'POST' && response.status() === 201)
     await page.getByTestId('inspection-save').click()
-    const result = await (await response).json(); await page.waitForURL('**/#/inspections/' + result.inspection.id + '*')
+    const result = await (await response).json(); await page.waitForURL(url => new URL(url).hash.startsWith('#/inspections/' + result.inspection.id))
     assert.equal(result.inspection.result, 'normal'); assert.equal(result.issues.length, 0)
     await page.getByRole('button', { name: '更多', exact: true }).click(); await page.getByRole('menuitem', { name: '编辑排查信息', exact: true }).click()
     const dialog = page.getByRole('dialog', { name: '编辑排查信息', exact: true })
