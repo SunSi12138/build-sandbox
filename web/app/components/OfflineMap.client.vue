@@ -13,7 +13,7 @@ import XYZ from 'ol/source/XYZ'
 import { Draw, Modify, Snap, DragRotate, defaults as defaultInteractions } from 'ol/interaction'
 import { fromLonLat, toLonLat } from 'ol/proj'
 import { Fill, Stroke, Style, Circle, Text } from 'ol/style'
-import { ScaleLine, defaults as defaultControls } from 'ol/control'
+import { defaults as defaultControls } from 'ol/control'
 import 'ol/ol.css'
 import type { GeoShape, MapFeature, MapLayer } from '~/types/community'
 
@@ -118,7 +118,7 @@ watch(element, target => {
   map = new OLMap({
     target,
     view: new View({ center: fromLonLat([88.893426,29.274331]), zoom: 16, minZoom: 3, maxZoom: 22 }),
-    controls: defaultControls({ attribution: false, rotate: false }).extend([new ScaleLine()]),
+    controls: defaultControls({ attribution: false, rotate: false }),
     interactions: defaultInteractions({ altShiftDragRotate: false }).extend([new DragRotate({
       condition: event => event.originalEvent instanceof PointerEvent &&
         event.originalEvent.pointerType === 'mouse' && event.originalEvent.button === 0 &&
@@ -168,6 +168,6 @@ onBeforeUnmount(() => { resizing?.disconnect(); map?.setTarget(undefined); map?.
 <style scoped>
 .offline-map-wrap{position:relative;background:#e6e9e5;border:1px solid var(--border);border-radius:10px;overflow:hidden}.map-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px;background:white}.offline-map{width:100%;min-height:300px;background:repeating-linear-gradient(45deg,#e5e8e4,#e5e8e4 10px,#e0e4df 10px,#e0e4df 20px)}:deep(.ol-zoom button){width:34px;height:34px;font-size:23px;background:white;color:#17211e}:deep(.ol-control){background:#ffffffaa}
  .map-north{position:absolute;right:14px;bottom:150px;z-index:5;width:36px;height:36px;border-radius:8px;background:white;color:#17211e;border:1px solid #dfe5e0;font-size:13px;font-weight:700;box-shadow:0 3px 15px #17211e24;cursor:pointer}
-.immersive{height:100%;border:0;border-radius:0}.immersive .offline-map{height:100%!important}.immersive .map-tools{position:absolute;z-index:4;top:14px;right:14px;max-width:min(670px,calc(100% - 400px));border-radius:12px;box-shadow:0 3px 18px #17211e24}.immersive :deep(.ol-zoom){left:auto;right:14px;top:auto;bottom:60px}.immersive :deep(.ol-scale-line){bottom:10px}@media(max-width:900px){.immersive .map-tools{top:68px;left:12px;right:auto;max-width:calc(100% - 24px);gap:5px;padding:7px}}
-.immersive.hd .offline-map{width:200%;height:200%!important;transform:scale(.5);transform-origin:0 0}.immersive.hd :deep(.ol-zoom){transform:scale(2);transform-origin:bottom right;right:28px;bottom:120px}.immersive.hd :deep(.ol-scale-line){transform:scale(2);transform-origin:bottom left;left:16px;bottom:60px}
+.immersive{height:100%;border:0;border-radius:0}.immersive .offline-map{height:100%!important}.immersive .map-tools{position:absolute;z-index:4;top:14px;right:14px;max-width:min(670px,calc(100% - 400px));border-radius:12px;box-shadow:0 3px 18px #17211e24}.immersive :deep(.ol-zoom){left:auto;right:14px;top:auto;bottom:60px}@media(max-width:900px){.immersive .map-tools{top:68px;left:12px;right:auto;max-width:calc(100% - 24px);gap:5px;padding:7px}}
+.immersive.hd .offline-map{width:200%;height:200%!important;transform:scale(.5);transform-origin:0 0}.immersive.hd :deep(.ol-zoom){transform:scale(2);transform-origin:bottom right;right:28px;bottom:120px}
 </style>
