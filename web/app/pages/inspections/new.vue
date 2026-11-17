@@ -33,7 +33,7 @@ interface InspectionDraft {
 
 definePageMeta({ formPage: true })
 useHead({ title: '新增排查 · 街道生态环保' })
-const DRAFT_KEY = 'street-eco.inspection-draft.v4'
+const draftRecovery = useDraftRecovery('street-eco.inspection-draft.v4', 4, 'draft')
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
@@ -134,13 +134,8 @@ function readPhotoList(value: unknown): PhotoUploadDto[] {
 
 function loadLocalDraft() {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY)
-    if (!raw) return
-    const envelope: unknown = JSON.parse(raw)
-    if (envelope && typeof envelope === 'object' && 'version' in envelope && envelope.version !== 4) { localStorage.removeItem(DRAFT_KEY); return }
-    if (!envelope || typeof envelope !== 'object' || !('version' in envelope) || envelope.version !== 4 || !('draft' in envelope)
-      || !envelope.draft || typeof envelope.draft !== 'object') throw new Error('草稿格式无法读取。')
-    const value = envelope.draft as Record<string, unknown>
+    const value = draftRecovery.read<Record<string, unknown>>()
+    if (!value) return
     const text = (key: string) => typeof value[key] === 'string' ? value[key] as string : ''
     const issues = Array.isArray(value.issues) ? value.issues : []
     Object.assign(draft, {
@@ -159,7 +154,7 @@ function loadLocalDraft() {
         responsibleUnit: typeof issue.responsibleUnit === 'string' ? issue.responsibleUnit : '', photos: readPhotoList(issue.photos),
       })),
     })
-    lastSavedAt.value = 'savedAt' in envelope && typeof envelope.savedAt === 'number' ? envelope.savedAt : null
+    lastSavedAt.value = draftRecovery.savedAt.value
     restored.value = true
   } catch {
     unreadableDraft.value = true
@@ -169,15 +164,11 @@ function loadLocalDraft() {
 
 function persistDraft() {
   if (!draftLoaded || saved || unreadableDraft.value) return
-  try {
-    if (!hasDraft.value) { localStorage.removeItem(DRAFT_KEY); lastSavedAt.value = null; return }
-    const savedAt = Date.now()
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({ version: 4, savedAt, draft }))
-    lastSavedAt.value = savedAt
+  if (!hasDraft.value) { draftRecovery.clear(); lastSavedAt.value = null; return }
+  if (draftRecovery.write(draft)) {
+    lastSavedAt.value = draftRecovery.savedAt.value
     storageError.value = ''
-  } catch {
-    storageError.value = '当前浏览器无法保存草稿'
-  }
+  } else storageError.value = draftRecovery.error.value
 }
 watch(draft, persistDraft, { deep: true, flush: 'sync' })
 
@@ -375,7 +366,7 @@ async function saveInspection() {
   try {
     const result = await $fetch<InspectionDetailDto>('/api/inspections', { method: 'POST', body, retry: 0 })
     saved = true
-    try { localStorage.removeItem(DRAFT_KEY) } catch { /* The server record is already durable. */ }
+    draftRecovery.clear()
     toast.add({ title: '已保存', color: 'success', duration: 2000 })
     await navigateTo(`/inspections/${result.inspection.id}`)
   } catch (error) { saveError.value = errorMessage(error) }
