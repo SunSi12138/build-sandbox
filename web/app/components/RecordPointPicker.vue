@@ -73,8 +73,8 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
   <section class="form-section">
     <h2>点位</h2>
     <div class="chip-row mb-2">
-      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'regular'" :disabled="disabled" @click="mode = 'regular'">常态点位</UButton>
-      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'temporary'" :disabled="disabled" :data-testid="`${prefix}-temporary-mode`" @click="mode = 'temporary'">临时点位</UButton>
+      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'regular'" :disabled="disabled" @click="mode = 'regular'">选择已有点位</UButton>
+      <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'temporary'" :disabled="disabled" :data-testid="`${prefix}-temporary-mode`" @click="mode = 'temporary'">新建临时点位</UButton>
     </div>
     <template v-if="mode === 'regular'">
       <UFormField label="已有点位" name="pointId" required>

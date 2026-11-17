@@ -419,7 +419,7 @@ onBeforeUnmount(() => {
       <UAlert v-if="storageError" :description="storageError" color="warning" variant="subtle" />
       <UForm id="inspection-form" :state="draft" :validate="validate" class="space-y-3" @submit="saveInspection" @error="validationFailed">
         <div class="form-sections">
-          <section class="form-section"><h2>点位</h2><div class="chip-row mb-2"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'regular'" :disabled="formDisabled" @click="draft.pointMode = 'regular'">常态点位</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'temporary'" :disabled="formDisabled" data-testid="temporary-point-mode" @click="draft.pointMode = 'temporary'">临时点位</UButton></div>
+          <section class="form-section"><h2>点位</h2><div class="chip-row mb-2"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'regular'" :disabled="formDisabled" @click="draft.pointMode = 'regular'">选择已有点位</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'temporary'" :disabled="formDisabled" data-testid="temporary-point-mode" @click="draft.pointMode = 'temporary'">新建临时点位</UButton></div>
             <div v-if="draft.pointMode === 'regular'">
               <UButton type="button" label="从地图选择点位" icon="i-lucide-map" variant="outline" class="mb-3" :disabled="formDisabled" @click="openPointMap" />
               <UFormField name="pointId" label="已有点位" required>
