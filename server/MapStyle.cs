@@ -29,6 +29,13 @@ public sealed partial class Store
             sources.ValueKind != JsonValueKind.Object)
             throw new ApiException(400, "样式目录中的 style.json 缺少 sources。");
 
+        // A configured style is local data, not permission to fetch map assets
+        // over the network. MapLibre supports imports and remote sources, but
+        // those capabilities are deliberately not exposed here.
+        if (document.RootElement.TryGetProperty("imports", out var imports) &&
+            imports.ValueKind == JsonValueKind.Array && imports.GetArrayLength() != 0)
+            throw new ApiException(400, "离线地图样式不支持在线 style imports，请合并到本地 style.json。");
+
         var prefix = "/api/map/style/" + Uri.EscapeDataString(id) + "/assets/";
         var tiles = provider.Format == "pmtiles"
             ? "hbtiles://" + id + "/{z}/{x}/{y}"
@@ -49,8 +56,16 @@ public sealed partial class Store
                         writer.WritePropertyName(entry.Name);
                         if (entry.Value.ValueKind != JsonValueKind.Object ||
                             !entry.Value.TryGetProperty("type", out var sourceType) ||
-                            sourceType.GetString() != "vector")
+                            sourceType.ValueKind != JsonValueKind.String)
+                            throw new ApiException(400, "离线样式源必须声明类型。");
+                        if (sourceType.GetString() != "vector")
                         {
+                            // Inline GeoJSON is local; remote raster, metadata
+                            // or externally referenced GeoJSON are not.
+                            if (sourceType.GetString() is not "geojson" ||
+                                !entry.Value.TryGetProperty("data", out var data) ||
+                                data.ValueKind is not JsonValueKind.Object)
+                                throw new ApiException(400, "离线样式只支持矢量源或内嵌 GeoJSON，不能引用在线图层。");
                             entry.Value.WriteTo(writer);
                             continue;
                         }
@@ -71,9 +86,15 @@ public sealed partial class Store
                 else if ((property.Name is "glyphs" or "sprite") && property.Value.ValueKind == JsonValueKind.String)
                 {
                     var value = property.Value.GetString() ?? "";
-                    writer.WriteString(property.Name,
-                        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
-                            ? value : prefix + value.TrimStart('/'));
+                    if (value.StartsWith("//", StringComparison.Ordinal) ||
+                        Uri.TryCreate(value, UriKind.Absolute, out _) ||
+                        value.Contains('\\') || value.Split('/').Any(part => part is "." or ".."))
+                        throw new ApiException(400, "离线样式的字体和精灵图必须使用样式目录内的本地路径。");
+                    var local = value.TrimStart('/');
+                    if (!(local.StartsWith("font/", StringComparison.Ordinal) ||
+                          local.StartsWith("sprite", StringComparison.Ordinal)))
+                        throw new ApiException(400, "离线字体和精灵图必须放在 font/ 或 sprite/ 目录下。");
+                    writer.WriteString(property.Name, prefix + local);
                 }
                 else property.WriteTo(writer);
             }
