@@ -2,6 +2,7 @@ import { addProtocol, setWorkerUrl } from 'maplibre-gl'
 import { MapLibreLayer } from '@geoblocks/ol-maplibre-layer'
 import { PMTiles } from 'pmtiles'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
+import 'maplibre-gl/dist/maplibre-gl.css'
 
 // MapLibre is only loaded when an MVT layer has a configured style directory.
 // OpenLayers continues to own navigation, drawing, editing and record overlays.
