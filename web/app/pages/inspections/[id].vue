@@ -39,6 +39,7 @@ const batchOpen = ref(false),
   batchMode = ref<'feedback' | 'review'>('feedback'),
   selectedIssue = ref(''),
   batchBusy = ref(false)
+const reassignOpen = ref(false)
 const editOpen = ref(false),
   editing = ref(false),
   editError = ref(''),
@@ -69,7 +70,7 @@ const issueState = reactive<IssueUpdateRequest>({
 })
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 watch(
-  () => editOpen.value || batchOpen.value || issueEditOpen.value,
+  () => editOpen.value || batchOpen.value || issueEditOpen.value || reassignOpen.value,
   (value) => {
     overlayForm.value = value
   },
@@ -125,6 +126,7 @@ async function exportRecord(kind: string) {
 }
 const moreItems = computed(() => [
   { label: '编辑排查信息', onSelect: openEdit },
+  { label: '更换关联点位', onSelect: () => { reassignOpen.value = true } },
   {
     label: '删除排查',
     color: 'error' as const,
@@ -170,6 +172,10 @@ function openBatch(mode: 'feedback' | 'review', issue = '') {
 function batchSaved(value: InspectionDetailDto) {
   assign(value)
   toast.add({ title: '已保存', color: 'success', duration: 2000 })
+}
+function reassignmentSaved() {
+  toast.add({ title: '关联点位已更换', color: 'success', duration: 2000 })
+  void load()
 }
 function openEdit() {
   if (!detail.value) return
@@ -580,6 +586,16 @@ watch(() => route.query.issue, revealIssue)
         </section>
       </template></PageState
     >
+    <PointReassignDialog
+      v-if="detail"
+      v-model:open="reassignOpen"
+      kind="inspection"
+      :record-id="id"
+      :current-point-id="detail.inspection.pointId"
+      :current-point-name="detail.inspection.pointName"
+      :linked-issue-count="detail.issues.length"
+      @saved="reassignmentSaved"
+    />
     <InspectionBatch
       v-if="detail"
       v-model:open="batchOpen"

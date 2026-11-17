@@ -7,10 +7,12 @@ const id = computed(() => String(route.params.id))
 const toast = useToast()
 const detail = ref<ActivityDetailDto | null>(null)
 const loading = ref(true), error = ref(''), deleting = ref(false), deleteOpen = ref(false), actionError = ref(''), downloading = ref(false)
+const reassignOpen = ref(false)
 const pendingLinkedIssues = computed(() => detail.value?.activity.template === 'remediation' ? detail.value.activity.relatedIssues.filter(issue => issue.status === 'pending') : [])
 const remediationWithoutIssue = computed(() => detail.value?.activity.template === 'remediation' && detail.value.activity.pointId && !detail.value.activity.relatedIssues.length)
 const back = computed(() => { const value = queryText(route.query.returnTo); return value === '/activities' || value.startsWith('/activities?') || /^\/(?:points|matters)\/[0-9a-f]{32}(?:\?.*)?$/.test(value) ? value : '/activities' })
 const menu = computed(() => [[{ label: '编辑', icon: 'i-lucide-pencil', to: `/activities/new?edit=${id.value}` },
+  ...(detail.value?.activity.pointId ? [{ label: '更换关联点位', onSelect: () => { reassignOpen.value = true } }] : []),
   { label: '删除活动', icon: 'i-lucide-trash-2', color: 'error' as const, onSelect: () => { actionError.value = ''; deleteOpen.value = true } }]])
 useHead({ title: () => `${detail.value?.activity.name ?? '活动详情'} · 街道生态环保` })
 const detailRequest = useLatestRequest()
@@ -23,6 +25,10 @@ async function load() {
     if (request.isCurrent()) { detail.value = result }
   } catch (cause) { if (request.isCurrent()) error.value = errorMessage(cause) }
   finally { if (request.isCurrent()) { loading.value = false } }
+}
+function reassignmentSaved() {
+  toast.add({ title: '关联点位已更换', color: 'success', duration: 2000 })
+  void load()
 }
 async function remove() {
   if (deleting.value) return
@@ -86,6 +92,16 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
         <section v-if="detail.activity.notes" class="panel"><div class="panel-head"><h2 class="section-title">备注</h2></div><p class="panel-body whitespace-pre-wrap">{{ detail.activity.notes }}</p></section>
       </template>
     </PageState>
+    <PointReassignDialog
+      v-if="detail?.activity.pointId"
+      v-model:open="reassignOpen"
+      kind="activity"
+      :record-id="id"
+      :current-point-id="detail.activity.pointId"
+      :current-point-name="detail.activity.pointName"
+      :linked-issue-count="detail.activity.relatedIssues.length"
+      @saved="reassignmentSaved"
+    />
     <UModal v-model:open="deleteOpen" :title="`删除活动「${detail?.activity.name ?? ''}」？`" description="记录及照片将被删除，无法恢复" :dismissible="!deleting" :close="!deleting" :ui="{ content: 'mobile-dialog max-w-[560px]' }">
       <template #body><UAlert v-if="actionError" :description="actionError" color="error" variant="subtle" /></template>
       <template #footer><UButton label="取消" color="neutral" variant="outline" :disabled="deleting" @click="deleteOpen = false" /><UButton label="删除" color="error" :loading="deleting" data-testid="activity-delete-confirm" @click="remove" /></template>

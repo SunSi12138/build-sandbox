@@ -123,6 +123,8 @@ public static class Api
         RequestDelegate inspection = context => Write(context, store.GetInspectionDetail(Id(context)), AppJsonContext.Default.InspectionDetailDto);
         RequestDelegate createInspection = async context => await Write(context, store.CreateInspection(await Read(context, AppJsonContext.Default.InspectionCreateRequest)), AppJsonContext.Default.InspectionDetailDto, 201);
         RequestDelegate updateInspection = async context => await Write(context, store.UpdateInspection(Id(context), await Read(context, AppJsonContext.Default.InspectionUpdateRequest)), AppJsonContext.Default.InspectionDetailDto);
+        RequestDelegate reassignInspectionPoint = async context => await Write(context,
+            store.ReassignInspectionPoint(Id(context), await Read(context, AppJsonContext.Default.PointReassignRequest)), AppJsonContext.Default.InspectionDetailDto);
         RequestDelegate deleteInspection = context => { RequireDeleteConfirmation(context); store.DeleteInspection(Id(context)); return Deleted(context); };
         RequestDelegate batchFeedback = async context => await Write(context, store.RecordInspectionFeedback(Id(context), await Read(context, AppJsonContext.Default.InspectionFeedbackRequest)), AppJsonContext.Default.InspectionDetailDto);
         RequestDelegate batchReview = async context => await Write(context, store.ReviewInspection(Id(context), await Read(context, AppJsonContext.Default.InspectionReviewRequest)), AppJsonContext.Default.InspectionDetailDto);
@@ -131,6 +133,7 @@ public static class Api
         app.MapGet("/api/inspections/{id}", inspection);
         app.MapPost("/api/inspections", createInspection);
         app.MapPut("/api/inspections/{id}", updateInspection);
+        app.MapPost("/api/inspections/{id}/point", reassignInspectionPoint);
         app.MapDelete("/api/inspections/{id}", deleteInspection);
         app.MapPost("/api/inspections/{id}/feedback", batchFeedback);
         app.MapPost("/api/inspections/{id}/review", batchReview);
@@ -155,11 +158,14 @@ public static class Api
         RequestDelegate activity = context => Write(context, store.GetActivityDetail(Id(context)), AppJsonContext.Default.ActivityDetailDto);
         RequestDelegate addActivity = async context => await Write(context, store.SaveActivity(null, await Read(context, AppJsonContext.Default.ActivityWriteRequest)), AppJsonContext.Default.ActivityDetailDto, 201);
         RequestDelegate changeActivity = async context => await Write(context, store.SaveActivity(Id(context), await Read(context, AppJsonContext.Default.ActivityWriteRequest)), AppJsonContext.Default.ActivityDetailDto);
+        RequestDelegate reassignActivityPoint = async context => await Write(context,
+            store.ReassignActivityPoint(Id(context), await Read(context, AppJsonContext.Default.PointReassignRequest)), AppJsonContext.Default.ActivityDetailDto);
         RequestDelegate deleteActivity = context => { RequireDeleteConfirmation(context); store.DeleteActivity(Id(context)); return Deleted(context); };
         app.MapGet("/api/activities", activities);
         app.MapPost("/api/activities", addActivity);
         app.MapGet("/api/activities/{id}", activity);
         app.MapPut("/api/activities/{id}", changeActivity);
+        app.MapPost("/api/activities/{id}/point", reassignActivityPoint);
         app.MapDelete("/api/activities/{id}", deleteActivity);
 
         RequestDelegate tags = context => Write(context, store.GetTags(), AppJsonContext.Default.TagDtoArray);

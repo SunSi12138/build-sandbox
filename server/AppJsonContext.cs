@@ -35,6 +35,7 @@ namespace StreetEcoTool;
 [JsonSerializable(typeof(DashboardDto))]
 [JsonSerializable(typeof(PointPhotosRequest))]
 [JsonSerializable(typeof(PointBulkDeleteRequest))]
+[JsonSerializable(typeof(PointReassignRequest))]
 [JsonSerializable(typeof(PointStatusRequest))]
 [JsonSerializable(typeof(PointPromoteRequest))]
 [JsonSerializable(typeof(InspectionUpdateRequest))]

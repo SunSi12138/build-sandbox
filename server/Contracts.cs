@@ -53,6 +53,7 @@ public sealed record IssueQuery(string? Status = null, string? CommunityId = nul
 
 public sealed record PointPhotosRequest(string[] PhotoIds);
 public sealed record PointBulkDeleteRequest(string[] Ids);
+public sealed record PointReassignRequest(string PointId);
 public sealed record PointStatusRequest(bool? Disabled);
 public sealed record PointPromoteRequest(string Frequency = "irregular");
 public sealed record InspectionUpdateRequest(string Date, string Inspector, string? NoticeNumber = null, string? Notes = null, string? Source = null);
