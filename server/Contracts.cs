@@ -21,11 +21,11 @@ public sealed record PointDto(string Id, string Name, string CommunityId, string
 public sealed record PointDetailDto(PointDto Point, InspectionDto[] Inspections, IssueDto[] OpenIssues, PhotoDto[]? Photos = null, CampaignDto[]? Campaigns = null, string? MergedInto = null);
 public sealed record CheckItem(string Name, string Result, string Notes = "");
 public sealed record InspectionCreateRequest(string? PointId, string Date, string Inspector, string Result, string? Notes = null, string? NoticeNumber = null, IssueCreateRequest[]? Issues = null, string[]? PhotoIds = null, PointWriteRequest? NewPoint = null,
-    string? InspectionTypeId = null, string? UseId = null, CheckItem[]? Checklist = null, string? IncompleteReason = null, string? SubmissionKey = null, GeoShape? Shape = null, string? DraftId = null, int? DraftRevision = null);
+    string? InspectionTypeId = null, string? UseId = null, CheckItem[]? Checklist = null, string? IncompleteReason = null, string? SubmissionKey = null, GeoShape? Shape = null, string? DraftId = null, int? DraftRevision = null, JsonElement? ExtraValues = null);
 public sealed record IssueCreateRequest(string Description, string Requirement, string Deadline, string? ResponsibleUnit = null, string[]? PhotoIds = null);
 public sealed record IssueUpdateRequest(string Description, string Requirement, string Deadline, string ResponsibleUnit, int? Revision = null);
 public sealed record InspectionDto(string Id, string PointId, string PointName, string CommunityId, string CommunityName, string CommunityTitle, string TypeId, string TypeName, string Address, string Contact, string Phone, string Date, string Inspector, string Result, string Notes, string NoticeNumber, int IssueCount, int OpenIssueCount, string RectifyStatus = "none", int ClosedCount = 0, int OverdueCount = 0, string? NearestDeadline = null, bool PointTemporary = false, double? Longitude = null, double? Latitude = null,
-    string InspectionTypeId = "", string InspectionTypeName = "", string UseId = "", string UseName = "", string CreatedAt = "", string IncompleteReason = "", CheckItem[]? Checklist = null, int Revision = 0, bool Voided = false, string VoidReason = "");
+    string InspectionTypeId = "", string InspectionTypeName = "", string UseId = "", string UseName = "", string CreatedAt = "", string IncompleteReason = "", CheckItem[]? Checklist = null, int Revision = 0, bool Voided = false, string VoidReason = "", JsonElement? ExtraValues = null);
 public sealed record InspectionDetailDto(InspectionDto Inspection, IssueDto[] Issues, PhotoDto[] Photos, IssueDetailDto[]? IssueDetails = null);
 public sealed record IssueDto(string Id, string InspectionId, string PointId, string PointName, string CommunityId, string CommunityName, string InspectionDate, string Description, string Requirement, string Deadline, string ResponsibleUnit, string Status, string? FeedbackDate, string FeedbackNotes, string? ReviewDate, string ReviewConclusion, string? ClosedDate, bool Overdue, int Revision = 0, string Follower = "", bool Voided = false, string VoidReason = "");
 public sealed record IssueDetailDto(IssueDto Issue, InspectionDto Inspection, PhotoDto[] Photos, IssueActionDto[] Actions);
@@ -47,7 +47,7 @@ public sealed record IssueQuery(string? Status = null, string? CommunityId = nul
 public sealed record PointPhotosRequest(string[] PhotoIds);
 public sealed record PointStatusRequest(bool? Disabled, int? Revision = null);
 public sealed record PointPromoteRequest(string Frequency = "irregular");
-public sealed record InspectionUpdateRequest(string Date, string Inspector, string? NoticeNumber = null, string? Notes = null, int? Revision = null);
+public sealed record InspectionUpdateRequest(string Date, string Inspector, string? NoticeNumber = null, string? Notes = null, int? Revision = null, JsonElement? ExtraValues = null, string[]? PhotoIds = null);
 public sealed record InspectionCountsDto(int All, int None, int Pending, int Feedback, int Closed, int IssueCount);
 public sealed record InspectionFeedbackItem(string IssueId, string Notes, string[]? PhotoIds = null, int? Revision = null);
 public sealed record InspectionFeedbackRequest(string Date, InspectionFeedbackItem[] Items);

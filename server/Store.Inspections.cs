@@ -22,7 +22,7 @@ public sealed partial class Store
         (SELECT COUNT(*) FROM community_history h WHERE h.record_id=n.id AND h.kind='inspection')
         + (SELECT COUNT(*) FROM community_history h JOIN issues x ON x.id=h.record_id WHERE x.inspection_id=n.id AND h.kind='issue')
         + (SELECT COUNT(*) FROM issue_actions a JOIN issues x ON x.id=a.issue_id WHERE x.inspection_id=n.id)
-         ,n.voided,n.void_reason
+         ,n.voided,n.void_reason,n.extra_values
         FROM active_inspections n JOIN points pt ON pt.id=n.point_id
         """;
     private const string InspectionWhere = """
@@ -44,7 +44,7 @@ public sealed partial class Store
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetString(11), row.GetString(12), row.GetString(13), row.GetString(14), row.GetString(15), row.GetInt32(16), row.GetInt32(17), row.GetString(18), row.GetInt32(19), row.GetInt32(20), NullableString(row, 21),
         row.GetInt32(22) != 0, row.IsDBNull(23) ? null : row.GetDouble(23), row.IsDBNull(24) ? null : row.GetDouble(24),
-        row.GetString(25),row.GetString(26),row.GetString(27),row.GetString(28),row.GetString(29),row.GetString(30),JsonSerializer.Deserialize(row.GetString(31), AppJsonContext.Default.CheckItemArray), row.GetInt32(32), row.GetInt32(33) != 0, row.GetString(34));
+        row.GetString(25),row.GetString(26),row.GetString(27),row.GetString(28),row.GetString(29),row.GetString(30),JsonSerializer.Deserialize(row.GetString(31), AppJsonContext.Default.CheckItemArray), row.GetInt32(32), row.GetInt32(33) != 0, row.GetString(34), JsonDocument.Parse(row.GetString(35)).RootElement.Clone());
 
     private InspectionDto[] ReadInspectionList(string suffix, (string Name, object? Value)[] parameters, string? today = null, bool includeVoided = false)
     {
@@ -156,6 +156,8 @@ public sealed partial class Store
             if (request.Result is not ("normal" or "issues" or "incomplete")) throw new ApiException(400, "请选择检查结果。");
             var incompleteReason = Text(request.IncompleteReason, "未完成原因", 2000, request.Result == "incomplete");
             var inspectionType = string.IsNullOrWhiteSpace(request.InspectionTypeId) ? null : ListCommunityRecords("inspection-type").FirstOrDefault(x => x.Id == request.InspectionTypeId) ?? throw new ApiException(400, "检查类型已停用或不存在。");
+            var fieldDefinitions = inspectionType is null ? [] : ReadPurposeFields(inspectionType.Data);
+            var extra = NormalizeFieldValues(fieldDefinitions, request.ExtraValues, request.PhotoIds).GetRawText();
             var checklist = request.Checklist ?? [];
             if (checklist.Length > 100 || checklist.Any(x => x is null || x.Result is not ("normal" or "issues" or "na" or "unchecked") || string.IsNullOrWhiteSpace(x.Name))) throw new ApiException(400, "检查项目填写不正确。");
             if (request.Result == "normal" && checklist.Any(x => x.Result == "issues")) throw new ApiException(400, "检查项目中有问题，请将结果改为发现问题并登记问题详情。");
@@ -198,9 +200,9 @@ public sealed partial class Store
                     ("$result", request.Result), ("$notes", notes), ("$number", noticeNumber), ("$name", point.Name),
                     ("$community", point.CommunityId), ("$communityName", point.CommunityName), ("$title", community.Title),
                     ("$type", point.TypeId), ("$typeName", point.TypeName), ("$address", point.Address), ("$contact", point.Contact), ("$phone", point.Phone))) insert.ExecuteNonQuery();
-                using (var meta = Command("UPDATE inspections SET inspection_type_id=$typeId,inspection_type_name=$typeName,use_id=$useId,use_name=$useName,created_at=$at,incomplete_reason=$reason,checklist=$checklist,submission_key=$key WHERE id=$id;", transaction,
+                using (var meta = Command("UPDATE inspections SET inspection_type_id=$typeId,inspection_type_name=$typeName,use_id=$useId,use_name=$useName,created_at=$at,incomplete_reason=$reason,checklist=$checklist,submission_key=$key,extra_values=$extra WHERE id=$id;", transaction,
                     ("$id", inspectionId), ("$typeId", inspectionType?.Id ?? ""), ("$typeName", inspectionType?.Name ?? ""), ("$useId", useId), ("$useName", useName),
-                    ("$at", DateTimeOffset.Now.ToString("O")), ("$reason", incompleteReason), ("$checklist", JsonSerializer.Serialize(checklist, AppJsonContext.Default.CheckItemArray)), ("$key", submissionKey.Length == 0 ? null : submissionKey))) meta.ExecuteNonQuery();
+                    ("$at", DateTimeOffset.Now.ToString("O")), ("$reason", incompleteReason), ("$checklist", JsonSerializer.Serialize(checklist, AppJsonContext.Default.CheckItemArray)), ("$key", submissionKey.Length == 0 ? null : submissionKey), ("$extra", extra))) meta.ExecuteNonQuery();
                 if (request.Shape is not null && point.Temporary)
                 {
                     using var shapeCommand = Command("INSERT INTO map_shapes(kind,record_id,shape,revision) VALUES('point',$point,$shape,1) ON CONFLICT(kind,record_id) DO NOTHING;", transaction,
@@ -234,11 +236,15 @@ public sealed partial class Store
             using (var earliest = Command("SELECT MIN(a.action_date) FROM issue_actions a JOIN issues x ON x.id=a.issue_id WHERE x.inspection_id=$id;", null, ("$id", id)))
                 if (earliest.ExecuteScalar() is string minimum && string.CompareOrdinal(date, minimum) > 0)
                     throw new ApiException(400, "排查日期不能晚于已有办理日期。");
+            var selectedType = ListCommunityRecords("inspection-type", includeArchived:true).FirstOrDefault(item => item.Id == before.InspectionTypeId);
+            var extra = NormalizeFieldValues(selectedType is null ? [] : ReadPurposeFields(selectedType.Data), request.ExtraValues,
+                request.PhotoIds).GetRawText();
             using var transaction = _db.BeginTransaction();
-            using var update = Command("UPDATE inspections SET inspection_date=$date,inspector=$inspector,notice_number=$number,notes=$notes WHERE id=$id;", transaction,
+            using var update = Command("UPDATE inspections SET inspection_date=$date,inspector=$inspector,notice_number=$number,notes=$notes,extra_values=$extra WHERE id=$id;", transaction,
                 ("$id", id), ("$date", date), ("$inspector", Text(request.Inspector, "排查人", 100, true)),
-                ("$number", Text(request.NoticeNumber, "通知单编号", 100)), ("$notes", Text(request.Notes, "备注", 8000)));
+                ("$number", Text(request.NoticeNumber, "通知单编号", 100)), ("$notes", Text(request.Notes, "备注", 8000)), ("$extra", extra));
             update.ExecuteNonQuery();
+            if (request.PhotoIds is { Length: > 0 }) AttachPhotos(request.PhotoIds, "site", id, null, transaction);
             AddCommunityHistory("inspection", id, JsonSerializer.Serialize(before, AppJsonContext.Default.InspectionDto), JsonSerializer.Serialize(request, AppJsonContext.Default.InspectionUpdateRequest), "修改检查", transaction);
             transaction.Commit();
             return GetInspectionDetail(id);

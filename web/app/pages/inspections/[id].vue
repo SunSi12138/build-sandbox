@@ -26,6 +26,11 @@ const detail = ref<InspectionDetailDto | null>(null),
   loading = ref(true),
   error = ref('')
 const id = computed(() => queryText(route.params.id))
+const inspectionTypes=ref<import('~/types/community').CommunityRecord<{fields?:import('~/types/community').PurposeField[]}>[]>([])
+const extraFields=computed(()=>inspectionTypes.value.find(x=>x.id===detail.value?.inspection.inspectionTypeId)?.data.fields??[])
+onMounted(async()=>{try{inspectionTypes.value=await $fetch('/api/records/inspection-type')}catch{}})
+const editPhotoIds=ref<string[]>([])
+const editPhotoBusy=ref(false),editPhotoFailed=ref(false)
 const back = computed(() => {
   const value = queryText(route.query.returnTo)
   return /^\/(?:map|plans|reminders)(?:\?|$)/.test(value) || value.startsWith('/points/') || /^\/inspections\/?(?:\?|$)/.test(value)
@@ -174,7 +179,9 @@ function openEdit() {
     inspector: detail.value.inspection.inspector,
     noticeNumber: detail.value.inspection.noticeNumber,
     notes: detail.value.inspection.notes,
+    extraValues: structuredClone(detail.value.inspection.extraValues??{}),
   })
+  editPhotoIds.value=detail.value.photos.filter(photo=>photo.phase==='site' && photo.inspectionId).map(photo=>photo.id)
   editError.value = ''
   editOpen.value = true
 }
@@ -193,7 +200,7 @@ async function saveEdit() {
     assign(
       await $fetch<InspectionDetailDto>(`/api/inspections/${id.value}`, {
         method: 'PUT',
-        body: editState,
+        body: { ...editState, photoIds: editPhotoIds.value },
         retry: 0,
       }),
     )
@@ -363,6 +370,7 @@ watch(() => route.query.issue, revealIssue)
           </div>
           <dl class="detail-grid panel-body">
             <div v-if="detail.inspection.inspectionTypeName"><dt>检查类型</dt><dd>{{ detail.inspection.inspectionTypeName }}</dd></div>
+            <ExtraFieldDetails :fields="extraFields" :values="detail.inspection.extraValues" />
             <div v-if="detail.inspection.useName"><dt>经营使用</dt><dd>{{ detail.inspection.useName }}</dd></div>
             <div v-if="detail.inspection.result === 'incomplete'" class="detail-wide"><dt>未完成原因</dt><dd>{{ detail.inspection.incompleteReason }}</dd></div>
             <div v-if="detail.inspection.createdAt"><dt>登记时间</dt><dd>{{ new Date(detail.inspection.createdAt).toLocaleString() }}</dd></div>
@@ -605,7 +613,7 @@ watch(() => route.query.issue, revealIssue)
               :maxlength="100"
               class="w-full"
               :disabled="editing" /></UFormField
-          ><UFormField name="notes" label="备注" class="field-full"
+          ><ExtraFieldValues v-model="editState.extraValues" v-model:photo-ids="editPhotoIds" :fields="extraFields" phase="site" :disabled="editing" @busy="editPhotoBusy=$event" @failed="editPhotoFailed=$event" /><UFormField name="notes" label="备注" class="field-full"
             ><UTextarea
               v-model="editState.notes"
               :rows="4"

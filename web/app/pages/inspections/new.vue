@@ -49,7 +49,7 @@ let leaveDecision: ((leave: boolean) => void) | undefined
 
 function emptyNewPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '' } }
 function emptyDraft(pointId = ''): InspectionDraft {
-  return { sharedId: '', sharedRevision: 0, tempShape: null, scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '' }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
+  return { sharedId: '', sharedRevision: 0, tempShape: null, scope: { inspectionTypeId: '', useId: '', checklist: [], incompleteReason: '', extraValues:{}, extraPhotoIds:[] }, submissionKey: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, pointMode: 'regular', newPoint: emptyNewPoint(), pointId, date: today.value, inspector: bootstrap.value?.settings.defaultInspector ?? '', result: 'normal', notes: '', noticeNumber: '', photos: [], issues: [] }
 }
 const draft = reactive<InspectionDraft>(emptyDraft())
 const initializing = ref(true)
@@ -74,7 +74,7 @@ const pointListError = ref('')
 const pointListLoading = ref(false)
 const pointPage = ref(1)
 const pointTotal = ref(0)
-const overallPhotosBusy = ref(false)
+const overallPhotosBusy = ref(false), scopePhotosBusy=ref(false), scopePhotosFailed=ref(false)
 const issuePhotosBusy = reactive<Record<number, boolean>>({})
 const destructiveOpen = ref(false)
 const destructiveAction = ref<'clear' | 'normal' | 'issue'>('clear')
@@ -85,8 +85,8 @@ const leaveOpen = ref(false)
 
 const overallPhotosFailed = ref(false)
 const issuePhotosFailed = reactive<Record<string, boolean>>({})
-const photosFailed = computed(() => overallPhotosFailed.value || draft.issues.some(issue => issuePhotosFailed[issue.key]))
-const uploadsBusy = computed(() => overallPhotosBusy.value || Object.values(issuePhotosBusy).some(Boolean))
+const photosFailed = computed(() => scopePhotosFailed.value || overallPhotosFailed.value || draft.issues.some(issue => issuePhotosFailed[issue.key]))
+const uploadsBusy = computed(() => scopePhotosBusy.value || overallPhotosBusy.value || Object.values(issuePhotosBusy).some(Boolean))
 const photoCount = computed(() => draft.photos.length + draft.issues.reduce((count, issue) => count + issue.photos.length, 0))
 const formDisabled = computed(() => saving.value || initializing.value)
 const hasDraft = computed(() => Boolean(draft.pointMode === 'temporary' || Object.values(draft.newPoint).some(Boolean) || draft.pointId || draft.notes || draft.noticeNumber || draft.photos.length || draft.issues.length
@@ -134,7 +134,7 @@ function loadLocalDraft() {
       pointMode: value.pointMode === 'temporary' ? 'temporary' : 'regular',
       newPoint: Object.fromEntries(Object.keys(emptyNewPoint()).map(key => [key, value.newPoint && typeof value.newPoint === 'object' && typeof (value.newPoint as Record<string, unknown>)[key] === 'string' ? (value.newPoint as Record<string, unknown>)[key] : ''])),
       pointId: text('pointId'), date: text('date') || today.value, inspector: text('inspector'),
-      scope: value.scope && typeof value.scope === 'object' ? value.scope : emptyDraft().scope, submissionKey: text('submissionKey') || emptyDraft().submissionKey,
+      scope: value.scope && typeof value.scope === 'object' ? {...emptyDraft().scope, ...value.scope} : emptyDraft().scope, submissionKey: text('submissionKey') || emptyDraft().submissionKey,
       result: value.result === 'issues' ? 'issues' : value.result === 'incomplete' ? 'incomplete' : 'normal', notes: text('notes'), noticeNumber: text('noticeNumber'),
       photos: readPhotoList(value.photos),
       issues: issues.filter(issue => issue && typeof issue === 'object').slice(0, 50).map((issue: Record<string, unknown>) => ({
@@ -378,7 +378,7 @@ async function saveInspection() {
     ...draft.scope, submissionKey: draft.submissionKey, draftId: draft.sharedId || undefined, draftRevision: draft.sharedRevision,
     pointId: draft.pointMode === 'regular' ? draft.pointId : null,
     newPoint: draft.pointMode === 'temporary' ? { shape: draft.tempShape, name: draft.newPoint.name.trim(), communityId: draft.newPoint.communityId, typeId: draft.newPoint.typeId, address: draft.newPoint.address.trim(), contact: draft.newPoint.contact, phone: draft.newPoint.phone, longitude: parseCoordinates(draft.newPoint.coordinates).longitude, latitude: parseCoordinates(draft.newPoint.coordinates).latitude, frequency: 'irregular', disabled: false, temporary: true } : null, date: draft.date, inspector: draft.inspector.trim(), result: draft.result,
-    notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: draft.photos.map(photo => photo.id),
+    notes: draft.notes, noticeNumber: draft.noticeNumber, photoIds: [...draft.photos.map(photo => photo.id), ...draft.scope.extraPhotoIds],
     issues: draft.result !== 'normal' ? draft.issues.map(issue => ({
       description: issue.description.trim(), requirement: issue.requirement, deadline: issue.deadline,
       responsibleUnit: issue.responsibleUnit, photoIds: issue.photos.map(photo => photo.id),
@@ -455,7 +455,7 @@ const moreActions = computed(() => [{label:'打开草稿箱',to:'/drafts'}, {lab
               <UFormField name="newPoint.address" label="详细地址" required class="field-full"><UInput v-model="draft.newPoint.address" :maxlength="1000" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.contact" label="联系人"><NameTagsInput v-model="draft.newPoint.contact" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.phone" label="电话"><UInput v-model="draft.newPoint.phone" type="tel" :maxlength="100" class="w-full"  :disabled="formDisabled" /></UFormField><UFormField name="newPoint.coordinates" label="位置" required class="field-full"><LocationPicker v-model="draft.tempShape" :disabled="formDisabled" @picked="shape => { draft.newPoint.coordinates = shape.coordinates[0]!.join(',') }" /><details class="mt-2"><summary class="cursor-pointer text-sm text-muted">填写或导入经纬度</summary><UInput v-model="draft.newPoint.coordinates" aria-label="经纬度" placeholder="经度,纬度" class="w-full mt-2" :disabled="formDisabled" @update:model-value="draft.tempShape = null" /><CoordinateConverter v-model="draft.newPoint.coordinates" :disabled="formDisabled" @converted="shape=>{draft.tempShape=shape}" /></details></UFormField>
             </div>
           </section>
-          <InspectionScope v-model="draft.scope" :point-id="draft.pointMode === 'regular' ? draft.pointId : ''" :disabled="formDisabled" />
+          <InspectionScope v-model="draft.scope" :point-id="draft.pointMode === 'regular' ? draft.pointId : ''" :disabled="formDisabled" @busy="scopePhotosBusy=$event" @failed="scopePhotosFailed=$event" />
           <section class="form-section"><h2>检查信息</h2><div class="field-grid"><UFormField name="date" label="检查日期" required><UInput v-model="draft.date" type="date" :max="today" class="w-full" :disabled="formDisabled" data-testid="inspection-date" /></UFormField><UFormField name="inspector" label="检查人" required><NameTagsInput v-model="draft.inspector" :maxlength="100" class="w-full" :disabled="formDisabled" data-testid="inspection-inspector" /></UFormField></div></section>
           <section class="form-section"><h2>检查结果</h2><UFormField name="result"><div class="chip-row"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'normal'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-normal" @click="chooseResult('normal')">未发现问题</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'issues'" :disabled="formDisabled || uploadsBusy" data-testid="inspection-result-issues" @click="chooseResult('issues')">发现问题</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.result === 'incomplete'" :disabled="formDisabled || uploadsBusy" @click="chooseResult('incomplete')">未完成检查</UButton></div></UFormField>
             <UFormField v-if="draft.result === 'incomplete'" label="未完成原因" required class="mt-3"><UInput v-model="draft.scope.incompleteReason" placeholder="例如：关门、无法进入" class="w-full" /></UFormField>

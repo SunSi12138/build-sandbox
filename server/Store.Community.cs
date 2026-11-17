@@ -105,6 +105,7 @@ public sealed partial class Store
                 if (frequency.Length > 0) ValidateFrequency(frequency);
                 var grid = JsonText(request.Data, "communityId"); if (grid.Length > 0) _ = RequireCommunity(grid);
                 var pointType = JsonText(request.Data, "pointTypeId"); if (pointType.Length > 0) _ = RequirePointType(pointType);
+                ValidatePurposeFields(request.Data);
                 if (request.Data.TryGetProperty("items", out var checks) && (checks.ValueKind != JsonValueKind.Array || checks.GetArrayLength() > 100 || checks.EnumerateArray().Any(x => x.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(x.GetString())))) throw new ApiException(400, "检查项目请每行填写一项，最多100项。");
             }
             if (kind == "plan")

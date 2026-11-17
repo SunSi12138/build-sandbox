@@ -90,7 +90,7 @@ public sealed partial class Store : IDisposable
                 inspection_type_id TEXT NOT NULL DEFAULT '', inspection_type_name TEXT NOT NULL DEFAULT '',
                 use_id TEXT NOT NULL DEFAULT '', use_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
                 incomplete_reason TEXT NOT NULL DEFAULT '', checklist TEXT NOT NULL DEFAULT '[]', submission_key TEXT UNIQUE,
-                voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1)), void_reason TEXT NOT NULL DEFAULT ''
+                voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1)), void_reason TEXT NOT NULL DEFAULT '', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values))
             );
             CREATE TABLE issues (
                 id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE RESTRICT,

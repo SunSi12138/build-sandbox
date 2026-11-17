@@ -7,4 +7,4 @@ export interface PurposeField { id: string; label: string; type: 'text' | 'numbe
 export interface PurposeData { icon: string; fields: PurposeField[] }
 export interface UseData { position: string; purposeId: string; contact: string; phone: string; startDate: string; endDate: string; state: string; notes: string; photoIds: string[]; values: Record<string,string|number>; fieldSnapshot?: PurposeField[] }
 export interface UnitData { parentUnitId?: string; floor: string; area: string; notes: string; photoIds?: string[] }
-export interface InspectionScopeValue { inspectionTypeId: string; useId: string; checklist: { name: string; result: string; notes: string }[]; incompleteReason: string }
+export interface InspectionScopeValue { inspectionTypeId: string; useId: string; checklist: { name: string; result: string; notes: string }[]; incompleteReason: string; extraValues: Record<string,string|number>; extraPhotoIds: string[] }
