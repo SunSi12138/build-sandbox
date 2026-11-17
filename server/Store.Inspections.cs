@@ -256,8 +256,10 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            _ = GetInspection(id);
+            var inspection = GetInspection(id);
+            var removeTemporary = IsLastTemporaryRecord(inspection.PointId, inspectionId: id);
             var photoIds = new List<string>();
+            if (removeTemporary) photoIds.AddRange(ReadPhotos(pointId: inspection.PointId).Select(photo => photo.Id));
             using (var query = Command("""
                 SELECT id FROM photos WHERE inspection_id=$id
                 OR issue_id IN (SELECT id FROM issues WHERE inspection_id=$id);
@@ -273,6 +275,13 @@ public sealed partial class Store
                 using (var actions = Command("DELETE FROM issue_actions WHERE issue_id IN (SELECT id FROM issues WHERE inspection_id=$id);", transaction, ("$id", id))) actions.ExecuteNonQuery();
                 using (var issues = Command("DELETE FROM issues WHERE inspection_id=$id;", transaction, ("$id", id))) issues.ExecuteNonQuery();
                 using (var record = Command("DELETE FROM inspections WHERE id=$id;", transaction, ("$id", id))) record.ExecuteNonQuery();
+                if (removeTemporary)
+                {
+                    using (var shape = Command("DELETE FROM map_shapes WHERE kind='point' AND record_id=$point;", transaction, ("$point", inspection.PointId))) shape.ExecuteNonQuery();
+                    using (var history = Command("DELETE FROM community_history WHERE kind='point' AND record_id=$point;", transaction, ("$point", inspection.PointId))) history.ExecuteNonQuery();
+                    using var deletePoint = Command("DELETE FROM points WHERE id=$point;", transaction, ("$point", inspection.PointId));
+                    deletePoint.ExecuteNonQuery();
+                }
             });
         }
     }
