@@ -1,3 +1,5 @@
+// All API and persisted geographic coordinates are GCJ-02 [longitude, latitude].
+// Convert only when interacting with WGS84-based map projections.
 export interface GeoShape { type: 'Point' | 'Polygon'; coordinates: number[][] }
 export type IssueStatus = 'pending' | 'feedback' | 'closed'
 export type Frequency = 'weekly' | 'monthly' | 'quarterly' | 'irregular'
