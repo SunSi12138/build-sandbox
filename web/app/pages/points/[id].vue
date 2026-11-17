@@ -18,8 +18,7 @@ const loading = ref(true),
   deleteOpen = ref(false),
   deleting = ref(false),
   deleteError = ref(''),
-  changing = ref(false),
-  promoteOpen = ref(false)
+  changing = ref(false)
 const id = computed(() => queryText(route.params.id))
 const back = computed(() => {
   const value = queryText(route.query.returnTo)
@@ -77,16 +76,6 @@ async function remove() {
 }
 const menu = computed(() => [
   { label: '登记事项', to: `/matters/new?pointId=${id.value}` },
-  ...(detail.value?.point.temporary
-    ? [
-        {
-          label: '转为常态点位',
-          onSelect: () => {
-            promoteOpen.value = true
-          },
-        },
-      ]
-    : []),
   {
     label: detail.value?.point.disabled ? '启用点位' : '停用点位',
     onSelect: () => {
@@ -141,12 +130,6 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
         <section class="panel">
           <div class="panel-head">
             <h2 class="section-title">基本信息</h2>
-            <UButton
-              v-if="detail.point.temporary"
-              label="转为常态点位"
-              variant="link"
-              @click="promoteOpen = true"
-            />
           </div>
           <dl class="detail-grid panel-body">
             <div>
@@ -248,11 +231,7 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
           <EmptyState v-if="!detail.activities?.length" title="暂无相关活动" />
         </section> </template
     ></PageState>
-    <PointEditor v-model:open="editorOpen" :point="detail?.point" @saved="saved" /><PointPromote
-      v-model:open="promoteOpen"
-      :point-id="id"
-      @saved="saved"
-    />
+    <PointEditor v-model:open="editorOpen" :point="detail?.point" @saved="saved" />
     <UModal
       v-model:open="deleteOpen"
       :title="`删除点位「${detail?.point.name || ''}」？`"
