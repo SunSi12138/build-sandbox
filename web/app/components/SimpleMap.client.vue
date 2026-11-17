@@ -12,6 +12,8 @@ import MVT from 'ol/format/MVT'
 import VectorTileSource from 'ol/source/VectorTile'
 import VectorTileLayer from 'ol/layer/VectorTile'
 import TileState from 'ol/TileState'
+import type VectorTile from 'ol/VectorTile'
+import type ImageTile from 'ol/ImageTile'
 import { PMTiles, TileType } from 'pmtiles'
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
@@ -197,13 +199,14 @@ onMounted(() => {
               maxZoom,
               tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
               tileLoadFunction: tile => {
-                tile.setLoader((extent, _resolution, projection) => {
-                  const coord = tile.getTileCoord()
-                  if (!coord) { tile.setFeatures([]); return }
-                  void archive.getZxy(coord[0], coord[1], coord[2]).then(result => {
-                    if (!result) { tile.setFeatures([]); return }
-                    tile.setFeatures(tile.getFormat().readFeatures(result.data, { extent, featureProjection: projection }))
-                  }).catch(() => tile.setState(TileState.ERROR))
+                const vectorTile = tile as VectorTile
+                vectorTile.setLoader((extent, _resolution, projection) => {
+                  const coord = vectorTile.getTileCoord()
+                  if (!coord) { vectorTile.setFeatures([]); return }
+                  void archive.getZxy(coord[0]!, coord[1]!, coord[2]!).then(result => {
+                    if (!result) { vectorTile.setFeatures([]); return }
+                    vectorTile.setFeatures(vectorTile.getFormat().readFeatures(result.data, { extent, featureProjection: projection }))
+                  }).catch(() => vectorTile.setState(TileState.ERROR))
                 })
               },
             })
@@ -217,17 +220,18 @@ onMounted(() => {
             maxZoom,
             tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
             tileLoadFunction: tile => {
-              const coordinate = tile.getTileCoord()
-              if (!coordinate) { tile.setState(TileState.EMPTY); return }
-              void archive.getZxy(coordinate[0], coordinate[1], coordinate[2]).then(result => {
-                if (!result) { tile.setState(TileState.EMPTY); return }
-                const image = tile.getImage() as HTMLImageElement
+              const imageTile = tile as ImageTile
+              const coordinate = imageTile.getTileCoord()
+              if (!coordinate) { imageTile.setState(TileState.EMPTY); return }
+              void archive.getZxy(coordinate[0]!, coordinate[1]!, coordinate[2]!).then(result => {
+                if (!result) { imageTile.setState(TileState.EMPTY); return }
+                const image = imageTile.getImage() as HTMLImageElement
                 const imageUrl = URL.createObjectURL(new Blob([result.data], { type: contentType }))
                 const cleanup = () => URL.revokeObjectURL(imageUrl)
                 image.addEventListener('load', cleanup, { once: true })
                 image.addEventListener('error', cleanup, { once: true })
                 image.src = imageUrl
-              }).catch(() => tile.setState(TileState.ERROR))
+              }).catch(() => imageTile.setState(TileState.ERROR))
             },
           })
           return new TileLayer({ source })
