@@ -83,8 +83,10 @@ public sealed partial class Store
                     }
                     writer.WriteEndObject();
                 }
-                else if ((property.Name is "glyphs" or "sprite") && property.Value.ValueKind == JsonValueKind.String)
+                else if (property.Name is "glyphs" or "sprite")
                 {
+                    if (property.Value.ValueKind != JsonValueKind.String)
+                        throw new ApiException(400, "离线样式的字体与精灵图必须引用本地路径。");
                     var value = property.Value.GetString() ?? "";
                     if (value.StartsWith("//", StringComparison.Ordinal) ||
                         Uri.TryCreate(value, UriKind.Absolute, out _) ||
