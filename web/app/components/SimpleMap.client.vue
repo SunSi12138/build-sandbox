@@ -8,6 +8,7 @@ import VectorSource from 'ol/source/Vector'
 import VectorLayer from 'ol/layer/Vector'
 import TileLayer from 'ol/layer/Tile'
 import XYZ from 'ol/source/XYZ'
+import { createXYZ } from 'ol/tilegrid'
 import type ImageTile from 'ol/ImageTile'
 import TileState from 'ol/TileState'
 import { PMTiles, TileType } from 'pmtiles'
@@ -24,6 +25,7 @@ import type { Geometry } from 'ol/geom'
 import type { GeoShape } from '~/types/api'
 import { mapColors, type MapRecord } from '~/utils/map'
 import { gcj02ToWgs84, wgs84ToGcj02 } from '~/utils/gcj02'
+import { DEFAULT_TILE_PRELOAD, MAX_TILE_ZOOM, installDeepRasterTiles, makeDeepTilePrefetch } from '~/utils/deepTiles'
 import 'ol/ol.css'
 
 const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[] }>(), { records: () => [], shape: null, mode: 'view', selected: () => [] })
@@ -35,6 +37,14 @@ const sketchVertices = ref(0)
 const rotation = ref(0)
 const isRotated = computed(() => Math.abs(Math.sin(rotation.value / 2)) > 0.01)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
+const depthPrefetchers: Array<{ schedule: () => void; dispose: () => void }> = []
+function currentMapExtent() {
+  const size = map?.getSize()
+  return map && size ? map.getView().calculateExtent(size) : undefined
+}
+function scheduleDepthPrefetch() {
+  depthPrefetchers.forEach(item => item.schedule())
+}
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
 let reporting = false
 function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(gcj02ToWgs84(shape.coordinates[0]!))) : new Polygon([shape.coordinates.map(c => fromLonLat(gcj02ToWgs84(c)))]) }
@@ -148,11 +158,21 @@ onMounted(() => {
     if (!coordinate) return
     const [longitude, latitude] = wgs84ToGcj02(toLonLat(coordinate))
     try { localStorage.setItem(mapViewKey, JSON.stringify({ longitude, latitude, zoom: map!.getView().getZoom() ?? 16 })) } catch { /* Optional map preference. */ }
+    scheduleDepthPrefetch()
   })
+  const registerPrefetch = (options: Parameters<typeof makeDeepTilePrefetch>[0]) => {
+    const prefetch = makeDeepTilePrefetch(options)
+    depthPrefetchers.push(prefetch)
+    prefetch.schedule()
+  }
+  const zoom = () => map?.getView().getZoom() ?? 0
+  const pixelRatio = () => map?.getPixelRatio() ?? 1
   void $fetch<{ id: string; kind?: 'raster' | 'mvt' | 'pmtiles'; preload?: number; styleUrl?: string | null }[]>('/api/map/layers', { signal: layerRequest.signal }).then(async layers => {
     const created = await Promise.all(layers.map(async layer => {
       const url = `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`
-      const preload = Number.isInteger(layer.preload) ? Math.max(0, Math.min(3, layer.preload!)) : 0
+      // Legacy API property "preload" now means higher-zoom depth. OpenLayers'
+      // lower-zoom preload is intentionally fixed at 1 for every raster layer.
+      const depth = Number.isInteger(layer.preload) ? Math.max(0, Math.min(3, layer.preload!)) : 0
       if (layer.kind === 'pmtiles') {
         try {
           const archive = new PMTiles(`/api/map/archive/${encodeURIComponent(layer.id)}`)
@@ -160,7 +180,18 @@ onMounted(() => {
           const maxZoom = Math.min(header.maxZoom, 18)
           if (header.tileType === TileType.Mvt) {
             if (!layer.styleUrl) return null
-            const { externalVectorStyle } = await import('~/utils/mapStyle.client')
+            const { externalVectorStyle, prefetchArchiveVectorTile } = await import('~/utils/mapStyle.client')
+            if (depth) {
+              const grid = createXYZ({ maxZoom })
+              registerPrefetch({
+                depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio,
+                getExtent: currentMapExtent,
+                tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
+                // MapLibre draws vector geometry at the current view zoom.
+                // Higher-detail vector tiles are warmed for subsequent zooms.
+                fetchTile: (z, x, y, signal) => prefetchArchiveVectorTile(layer.id, z, x, y, signal),
+              })
+            }
             return externalVectorStyle(layer.styleUrl)
           }
           const contentType = header.tileType === TileType.Png ? 'image/png'
@@ -185,15 +216,56 @@ onMounted(() => {
               }).catch(() => imageTile.setState(TileState.ERROR))
             },
           })
-          return new TileLayer({ source, preload })
+          installDeepRasterTiles(source, { depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio })
+          if (depth) {
+            const grid = source.getTileGrid()
+            if (grid) registerPrefetch({
+              depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
+              tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
+              fetchTile: async (z, x, y, signal) => {
+                if (signal.aborted || !map) return
+                const tile = source.getTile(z, x, y, pixelRatio(), map.getView().getProjection())
+                if (tile.getState() === TileState.IDLE) tile.load()
+              },
+            })
+          }
+          return new TileLayer({ source, preload: DEFAULT_TILE_PRELOAD })
         } catch { return null }
       }
       if (layer.kind === 'mvt') {
         if (!layer.styleUrl) return null
         const { externalVectorStyle } = await import('~/utils/mapStyle.client')
+        if (depth) {
+          const grid = createXYZ({ maxZoom: MAX_TILE_ZOOM })
+          registerPrefetch({
+            depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
+            tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
+            fetchTile: async (z, x, y, signal) => {
+              const tileUrl = `/api/map/tiles/${encodeURIComponent(layer.id)}/${z}/${x}/${y}?cache=server`
+              const response = await fetch(tileUrl, { cache: 'force-cache', signal })
+              if (!response.ok) throw new Error('PBF prefetch failed')
+              await response.arrayBuffer()
+            },
+          })
+        }
         return externalVectorStyle(layer.styleUrl)
       }
-      return new TileLayer({ source: new XYZ({ url, maxZoom: 18 }), preload })
+      const source = new XYZ({ url, maxZoom: MAX_TILE_ZOOM })
+      installDeepRasterTiles(source, { depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio })
+      if (depth) {
+        const grid = source.getTileGrid()
+        if (grid) registerPrefetch({
+          depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
+          tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
+          fetchTile: async (z, x, y, signal) => {
+            const tileUrl = `/api/map/tiles/${encodeURIComponent(layer.id)}/${z}/${x}/${y}?cache=server`
+            const response = await fetch(tileUrl, { cache: 'force-cache', signal })
+            if (!response.ok) throw new Error('Raster prefetch failed')
+            await response.blob()
+          },
+        })
+      }
+      return new TileLayer({ source, preload: DEFAULT_TILE_PRELOAD })
     }))
     if (layerRequest.signal.aborted || !map) return
     created.forEach((layer, index) => { if (layer) map!.getLayers().insertAt(index, layer) })
@@ -212,7 +284,7 @@ onMounted(() => {
   if (props.shape) fitAll()
   observer = new ResizeObserver(() => map?.updateSize()); if (host.value) observer.observe(host.value)
 })
-onBeforeUnmount(() => { layerRequest.abort(); observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
+onBeforeUnmount(() => { layerRequest.abort(); depthPrefetchers.forEach(item => item.dispose()); observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
 </script>
 <template>
   <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图，按住 Ctrl 并拖动鼠标可以旋转" title="按住 Ctrl 并拖动鼠标可以旋转地图" /><div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button v-if="isRotated" type="button" class="map-north" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
