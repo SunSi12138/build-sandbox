@@ -15,7 +15,7 @@ public sealed class PointReassignmentTests
         var site = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "site");
         var issuePhoto = store.UploadPhoto(WordExporterTests.Jpeg(140, 90), "site");
         var inspection = store.CreateInspection(new(source.Id, Store.Today, "工作人员", "issues",
-            Issues: [new("发现垃圾", "要求清理", Store.Today, PhotoIds: [issuePhoto.Id])],
+            Issues: [new("发现垃圾", "要求清理", Store.Today, PhotoIds: [issuePhoto.Id], IssueTypeId: store.GetIssueTypes()[0].Id)],
             PhotoIds: [site.Id]));
         var issueId = Assert.Single(inspection.Issues).Id;
 
@@ -51,7 +51,7 @@ public sealed class PointReassignmentTests
         var community = store.SaveCommunity(null, new("另一社区", "另一社区居民委员会"));
         var target = store.SavePoint(null, new("最终保留点位", community.Id, source.TypeId, "正确地点"));
         var inspection = store.CreateInspection(new(source.Id, Store.Today, "检查员", "issues",
-            Issues: [new("污染", "整改", Store.Today)]));
+            Issues: [new("污染", "整改", Store.Today, IssueTypeId: store.GetIssueTypes()[0].Id)]));
         var issue = Assert.Single(inspection.Issues);
         var before = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "before");
         var type = store.GetActivityTypes().Single(value => value.Template == "remediation");
