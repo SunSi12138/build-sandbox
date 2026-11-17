@@ -229,9 +229,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var inspection = GetInspection(id);
-            var removeTemporary = IsLastTemporaryRecord(inspection.PointId, inspectionId: id);
             var photos = ReadPhotos(inspectionId: id, includeIssuePhotos: true).Select(photo => photo.Id).ToList();
-            if (removeTemporary) photos.AddRange(ReadPhotos(pointId: inspection.PointId).Select(photo => photo.Id));
             ExecuteWithPhotoDeletion(photos.ToArray(), transaction =>
             {
                 using var delete = Command("""
@@ -240,11 +238,6 @@ public sealed partial class Store
                     DELETE FROM inspections WHERE id=$id;
                     """, transaction, ("$id", id));
                 delete.ExecuteNonQuery();
-                if (removeTemporary)
-                {
-                    using var point = Command("DELETE FROM points WHERE id=$id;", transaction, ("$id", inspection.PointId));
-                    point.ExecuteNonQuery();
-                }
             });
         }
     }
