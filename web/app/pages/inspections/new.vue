@@ -58,7 +58,7 @@ const allPoints = ref<PointDto[]>([])
 const pointMapRecords = computed<MapRecord[]>(() => allPoints.value.map(point => ({ id: point.id, title: point.name, subtitle: `${point.communityName} · ${point.typeName}\n${point.address}`, shape: recordShape(point) })))
 async function openPointMap() {
   pointMapOpen.value = true; pointMapLoading.value = true; pointMapError.value = ''
-  try { allPoints.value = (await $fetch<PageDto<PointDto>>('/api/points', { query: { map: true } })).items }
+  try { allPoints.value = (await $fetch<PageDto<PointDto>>('/api/points', { query: { map: true, temporary: includeTemporaryPoints.value ? 'all' : 'false' } })).items }
   catch (error) { pointMapError.value = errorMessage(error) }
   finally { pointMapLoading.value = false }
 }
@@ -80,6 +80,7 @@ const issueTypes = computed(() => (bootstrap.value?.issueTypes ?? []).map(item =
 const selectedCommunity = computed(() => draft.pointMode === 'temporary' ? bootstrap.value?.communities.find(item => item.id === draft.newPoint.communityId)?.name ?? '' : selectedPoint.value?.communityName ?? '')
 watch(selectedCommunity, (value, previous) => { for (const issue of draft.issues) if (!issue.responsibleUnit || issue.responsibleUnit === previous) issue.responsibleUnit = value })
 const pointSearch = ref('')
+const includeTemporaryPoints = ref(false)
 const pointOptions = ref<PointDto[]>([])
 const pointListError = ref('')
 const pointListLoading = ref(false)
@@ -190,7 +191,7 @@ async function fetchPointOptions(reset = true) {
   pointListError.value = ''
   try {
     const result = await $fetch<PageDto<PointDto>>('/api/points', {
-      query: { temporary: 'false', q: pointSearch.value.trim() || undefined, recent: !pointSearch.value.trim(), page: requestedPage, pageSize: 8 },
+      query: { temporary: includeTemporaryPoints.value ? 'all' : 'false', q: pointSearch.value.trim() || undefined, recent: !pointSearch.value.trim(), page: requestedPage, pageSize: 8 },
       signal: controller.signal,
     })
     if (sequence !== searchSequence) return
@@ -202,7 +203,7 @@ async function fetchPointOptions(reset = true) {
   } finally { if (sequence === searchSequence) pointListLoading.value = false }
 }
 
-watch(pointSearch, () => {
+watch([pointSearch, includeTemporaryPoints], () => {
   if (!draftLoaded) return
   clearTimeout(searchTimer)
   searchTimer = setTimeout(() => { void fetchPointOptions() }, 250)
@@ -430,9 +431,9 @@ onBeforeUnmount(() => {
           <section class="form-section"><h2>点位</h2><div class="chip-row mb-2"><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'regular'" :disabled="formDisabled" @click="draft.pointMode = 'regular'">常态点位</UButton><UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="draft.pointMode === 'temporary'" :disabled="formDisabled" data-testid="temporary-point-mode" @click="draft.pointMode = 'temporary'">临时点位</UButton></div>
             <div v-if="draft.pointMode === 'regular'">
               <UButton type="button" label="从地图选择点位" icon="i-lucide-map" variant="outline" class="mb-3" :disabled="formDisabled" @click="openPointMap" />
-              <UFormField name="pointId" label="常态点位" required>
+              <UFormField name="pointId" label="已有点位" required>
                 <div v-if="selectedPoint && !pointPickerOpen" class="flex items-center gap-2"><p class="min-w-0 flex-1 truncate text-sm">{{ selectedPoint.name }} · {{ selectedPoint.communityName }} · {{ selectedPoint.typeName }}</p><UButton type="button" label="更换" color="neutral" variant="link" :disabled="formDisabled" @click="pointPickerOpen = true" /></div>
-                <div v-else><UInput v-model="pointSearch" type="search" icon="i-lucide-search" placeholder="搜索点位" aria-label="搜索常态点位" data-testid="inspection-point-search" class="mb-2 w-full" :disabled="formDisabled" /><p v-if="pointListError" class="text-sm text-error">{{ pointListError }}<UButton type="button" label="重试" color="error" variant="link" @click="fetchPointOptions()" /></p><div v-if="pointListLoading && !pointOptions.length"><USkeleton v-for="row in 3" :key="row" class="my-2 h-12 w-full rounded" /></div><button v-for="point in pointOptions" :key="point.id" type="button" class="flex h-14 w-full items-center border-b border-[var(--divider)] py-2 text-left" :disabled="formDisabled" :aria-pressed="draft.pointId === point.id" data-testid="inspection-point-option" @click="selectPoint(point)"><span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}</span></span><UIcon v-if="draft.pointId === point.id" name="i-lucide-check" class="size-4 text-primary" /></button><p v-if="!pointListLoading && !pointOptions.length" class="py-3 text-sm text-muted">暂无常态点位</p><UButton v-if="pointOptions.length < pointTotal" type="button" label="加载更多" color="neutral" variant="link" :loading="pointListLoading" @click="fetchPointOptions(false)" /></div>
+                <div v-else><UInput v-model="pointSearch" type="search" icon="i-lucide-search" placeholder="搜索点位" aria-label="搜索已有点位" data-testid="inspection-point-search" class="mb-2 w-full" :disabled="formDisabled" /><UCheckbox v-model="includeTemporaryPoints" label="搜索时包含临时点位" :disabled="formDisabled" class="mb-2" /><p v-if="pointListError" class="text-sm text-error">{{ pointListError }}<UButton type="button" label="重试" color="error" variant="link" @click="fetchPointOptions()" /></p><div v-if="pointListLoading && !pointOptions.length"><USkeleton v-for="row in 3" :key="row" class="my-2 h-12 w-full rounded" /></div><button v-for="point in pointOptions" :key="point.id" type="button" class="flex h-14 w-full items-center border-b border-[var(--divider)] py-2 text-left" :disabled="formDisabled" :aria-pressed="draft.pointId === point.id" data-testid="inspection-point-option" @click="selectPoint(point)"><span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}{{ point.temporary ? " · 临时" : "" }}</span></span><UIcon v-if="draft.pointId === point.id" name="i-lucide-check" class="size-4 text-primary" /></button><p v-if="!pointListLoading && !pointOptions.length" class="py-3 text-sm text-muted">暂无匹配点位</p><UButton v-if="pointOptions.length < pointTotal" type="button" label="加载更多" color="neutral" variant="link" :loading="pointListLoading" @click="fetchPointOptions(false)" /></div>
               </UFormField><UFormField v-if="selectedPoint" label="本次排查位置" class="mt-3"><MapLocationField :model-value="draft.shape ?? recordShape(selectedPoint)" :clearable="!!draft.shape" clear-label="沿用点位位置" :disabled="formDisabled" @update:model-value="draft.shape = $event" /><p class="mt-1 text-xs text-muted">位置修改仅用于本次排查。</p></UFormField><p v-if="pointError" class="text-sm text-error">{{ pointError }}</p>
             </div>
             <div v-else class="field-grid">
