@@ -112,7 +112,7 @@ async function exportRecord(kind: string) {
     toast.add({ title: errorMessage(value), color: 'error', duration: 0 })
   }
 }
-const moreItems = computed(() => detail.value?.inspection.voided ? [] : [
+const moreItems = computed(() => [
   { label: '编辑检查信息', onSelect: openEdit },
   ...(detail.value?.inspection.pointTemporary
     ? [
@@ -124,6 +124,7 @@ const moreItems = computed(() => detail.value?.inspection.voided ? [] : [
         },
       ]
     : []),
+  { label: '删除检查记录', color: 'error' as const, onSelect: () => { deleteError.value = ''; deleteOpen.value = true } },
 ])
 useHead({
   title: computed(() => `${detail.value?.inspection.pointName || '检查详情'} · 社区管理`),
@@ -267,6 +268,17 @@ async function returnIssue() {
     returning.value = false
   }
 }
+async function deleteRecord() {
+  if (deleting.value) return
+  deleting.value = true
+  deleteError.value = ''
+  try {
+    await $fetch(`/api/inspections/${id.value}`, { method: 'DELETE', query: { confirm: 'true' }, retry: 0 })
+    deleteOpen.value = false
+    await navigateTo('/inspections')
+  } catch (cause) { deleteError.value = errorMessage(cause) }
+  finally { deleting.value = false }
+}
 function beforeUnload(event: BeforeUnloadEvent) {
   if (batchBusy.value || editing.value || issueEditing.value || returning.value || deleting.value) {
     event.preventDefault()
@@ -286,7 +298,6 @@ watch(() => route.query.issue, revealIssue)
 </script>
 <template>
   <div class="page-stack">
-    <div v-if="detail" class="flex gap-2 items-center flex-wrap"><ArchiveAction kind="inspection" :record-id="id" :revision="detail.inspection.revision" :voided="detail.inspection.voided" @saved="load" /><UAlert v-if="detail.inspection.voided" title="此检查已作废" :description="detail.inspection.voidReason" color="warning" /></div>
     <PageHeader :title="detail?.inspection.pointName || '检查详情'" :back="back"
       ><template #badge
         ><StatusBadge v-if="detail?.inspection.pointTemporary" tone="outline"
@@ -678,6 +689,10 @@ watch(() => route.query.issue, revealIssue)
           label="保存"
           :loading="issueEditing" /></template
     ></UModal>
+    <UModal v-model:open="deleteOpen" title="删除检查记录" :dismissible="!deleting" :close="!deleting">
+      <template #body><p>确定删除此检查记录及其问题、照片和办理记录？</p><UAlert v-if="deleteError" :description="deleteError" color="error" class="mt-3" /></template>
+      <template #footer><UButton label="取消" color="neutral" variant="outline" :disabled="deleting" @click="deleteOpen=false" /><UButton label="删除" color="error" :loading="deleting" @click="deleteRecord" /></template>
+    </UModal>
     <UModal
       v-model:open="returnOpen"
       :content="focus.content"

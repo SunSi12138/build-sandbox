@@ -19,12 +19,7 @@ public sealed partial class Store
             PrepareWrite();
             var reason = Text(request.Reason, request.Voided ? "作废原因" : "恢复原因", 2000, true);
             string table; string before; int revision; bool voided;
-            if (kind == "inspection")
-            {
-                var record = GetInspection(id); table = "inspections"; revision = record.Revision; voided = record.Voided;
-                before = JsonSerializer.Serialize(record, AppJsonContext.Default.InspectionDto);
-            }
-            else if (kind == "issue")
+            if (kind == "issue")
             {
                 var record = GetIssue(id);
                 if (GetInspection(record.InspectionId).Voided) throw new ApiException(409, "请先恢复所属检查记录。");
@@ -52,7 +47,6 @@ public sealed partial class Store
         lock (_gate)
         {
             var result = new List<ArchivedRecord>();
-            result.AddRange(ReadInspectionList("WHERE n.voided=1 ORDER BY n.inspection_date DESC;", [], includeVoided: true).Select(x => new ArchivedRecord(x.Id, "inspection", x.PointName, x.Date, x.VoidReason, x.Revision)));
             result.AddRange(ReadIssueList("WHERE x.voided=1 AND n.voided=0 ORDER BY n.inspection_date DESC;", Today, [], true).Select(x => new ArchivedRecord(x.Id, "issue", x.PointName + "：" + x.Description, x.InspectionDate, x.VoidReason, x.Revision, x.InspectionId)));
             return result.OrderByDescending(x => x.Date).ToArray();
         }

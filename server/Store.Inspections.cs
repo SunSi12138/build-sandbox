@@ -245,5 +245,29 @@ public sealed partial class Store
         }
     }
 
-    public void DeleteInspection(string id) => throw new ApiException(409, "检查记录请使用作废功能，照片和历史记录将保留。");
+    public void DeleteInspection(string id)
+    {
+        lock (_gate)
+        {
+            PrepareWrite();
+            _ = GetInspection(id);
+            var photoIds = new List<string>();
+            using (var query = Command("""
+                SELECT id FROM photos WHERE inspection_id=$id
+                OR issue_id IN (SELECT id FROM issues WHERE inspection_id=$id);
+                """, null, ("$id", id)))
+            using (var rows = query.ExecuteReader())
+                while (rows.Read()) photoIds.Add(rows.GetString(0));
+            ExecuteWithPhotoDeletion([.. photoIds], transaction =>
+            {
+                using (var history = Command("""
+                    DELETE FROM community_history WHERE (kind='inspection' AND record_id=$id)
+                    OR (kind='issue' AND record_id IN (SELECT id FROM issues WHERE inspection_id=$id));
+                    """, transaction, ("$id", id))) history.ExecuteNonQuery();
+                using (var actions = Command("DELETE FROM issue_actions WHERE issue_id IN (SELECT id FROM issues WHERE inspection_id=$id);", transaction, ("$id", id))) actions.ExecuteNonQuery();
+                using (var issues = Command("DELETE FROM issues WHERE inspection_id=$id;", transaction, ("$id", id))) issues.ExecuteNonQuery();
+                using (var record = Command("DELETE FROM inspections WHERE id=$id;", transaction, ("$id", id))) record.ExecuteNonQuery();
+            });
+        }
+    }
 }
