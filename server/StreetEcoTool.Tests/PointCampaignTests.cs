@@ -28,9 +28,9 @@ public sealed class PointCampaignTests
         Assert.Equal(detail.Campaign.Id, Assert.Single(store.GetPointDetail(point.Id).Campaigns!).Id);
         Assert.Equal(detail.Campaign.Id, Assert.Single(store.ListCampaigns(new(PointId: point.Id)).Items).Id);
         Assert.Null(store.GetPoint(point.Id).LastInspectionDate);
-        store.SavePoint(point.Id, new("改名", point.CommunityId, point.TypeId, "新地址", Contact: "王五"));
+        store.SavePoint(point.Id, new("改名", point.CommunityId, point.TypeId, "新地址", Contact: "王五", Revision: point.Revision));
         store.SaveCommunity(point.CommunityId, new("新社区", "新社区居民委员会"));
-        var updated = store.SaveCampaign(detail.Campaign.Id, request with { Content = "修改活动内容" });
+        var updated = store.SaveCampaign(detail.Campaign.Id, request with { Content = "修改活动内容", Revision = detail.Campaign.Revision });
         Assert.Equal(point.Name, updated.Campaign.PointName);
         Assert.Equal(point.Address, updated.Campaign.Location);
         Assert.Equal(point.CommunityName, updated.Campaign.CommunityName);
@@ -54,9 +54,9 @@ public sealed class PointCampaignTests
         Assert.Equal(400, Assert.Throws<ApiException>(() => store.SaveCampaign(saved.Campaign.Id, Campaign(store, other.Id))).StatusCode);
         Assert.Equal(400, Assert.Throws<ApiException>(() => store.SaveCampaign(saved.Campaign.Id, Campaign(store, null, Temporary(point)))).StatusCode);
         Assert.Equal(point.Id, store.GetCampaign(saved.Campaign.Id).PointId);
-        store.SetPointDisabled(point.Id, new(true));
+        store.SetPointDisabled(point.Id, new(true, Revision: store.GetPoint(point.Id).Revision));
         Assert.Equal(409, Assert.Throws<ApiException>(() => store.SaveCampaign(null, Campaign(store, point.Id))).StatusCode);
-        Assert.Equal("补充", store.SaveCampaign(saved.Campaign.Id, Campaign(store, point.Id) with { Notes = "补充" }).Campaign.Notes);
+        Assert.Equal("补充", store.SaveCampaign(saved.Campaign.Id, Campaign(store, point.Id) with { Notes = "补充", Revision = saved.Campaign.Revision }).Campaign.Notes);
     }
 
     [Fact]

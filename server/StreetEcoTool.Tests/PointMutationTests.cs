@@ -12,12 +12,14 @@ public sealed class PointMutationTests
         var point = environment.CreatePoint(store);
         var newer = store.SavePoint(point.Id, new("新名称", point.CommunityId, point.TypeId, "新地址",
             Contact: "新联系人", Phone: "新电话", Frequency: "monthly", Notes: "新备注", Disabled: true,
-            Longitude: 88.893426, Latitude: 29.274331));
+            Longitude: 88.893426, Latitude: 29.274331, Revision: point.Revision));
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
         var associated = store.AttachPointPhotos(point.Id, new([photo.Id]));
         Assert.Equal(newer with { PhotoCount = 1, CoverPhotoId = photo.Id }, associated);
-        Assert.Equal(associated with { Disabled = false }, store.SetPointDisabled(point.Id, new(false)));
-        Assert.Equal(associated with { Disabled = false }, store.AttachPointPhotos(point.Id, new([photo.Id])));
+        var reactivated = store.SetPointDisabled(point.Id, new(false, Revision: associated.Revision));
+        Assert.False(reactivated.Disabled);
+        Assert.Equal(associated.Revision + 1, reactivated.Revision);
+        Assert.Equal(reactivated, store.AttachPointPhotos(point.Id, new([photo.Id])));
         Assert.Throws<ApiException>(() => store.SetPointDisabled(point.Id, new(null)));
         V2Environment.AssertForeignKeys(store.DatabasePath);
     }
