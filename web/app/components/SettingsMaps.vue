@@ -66,7 +66,6 @@ onMounted(load)
 <template>
   <section class="space-y-3">
     <div class="section-heading"><h2 class="section-title">图层管理</h2><UButton label="新增图层" icon="i-lucide-plus" variant="outline" color="neutral" :disabled="busy" data-testid="map-layer-new" @click="edit()" /></div>
-    <p class="text-sm text-muted">仅使用本地图块目录、PMTiles 文件及外部样式目录。上方图层覆盖下方图层；“检查”只读取本地文件，不会联网。旧版在线配置仍保留在数据库，但不会发起请求。</p>
     <UAlert v-if="error && !deleteOpen" role="alert" :description="error" color="error" />
     <PageState :loading="loading" @retry="load">
       <ul v-if="providers.length" class="group-list">
