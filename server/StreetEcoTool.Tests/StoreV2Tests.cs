@@ -86,7 +86,7 @@ public sealed class StoreV2Tests
     }
 
     [Fact]
-    public void RemovingTheFinalTemporaryInspectionAlsoRemovesItsPointAndEveryPhoto()
+    public void RemovingTheFinalTemporaryInspectionPreservesItsPointAndPointPhotos()
     {
         using var environment = new V2Environment();
         using var store = environment.Open();
@@ -102,10 +102,13 @@ public sealed class StoreV2Tests
         var after = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "after");
         store.RecordInspectionFeedback(inspection.Inspection.Id, new(Store.Today, [new(inspection.Issues[0].Id, "已整改", [after.Id])]));
         store.DeleteInspection(inspection.Inspection.Id);
-        Assert.Equal(0L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM points;"));
+        Assert.True(store.GetPoint(inspection.Inspection.PointId).Temporary);
+        Assert.Equal(1, store.GetPoint(inspection.Inspection.PointId).PhotoCount);
+        using (var photo = store.OpenPhoto(pointPhoto.Id)) Assert.True(photo.CanRead);
         Assert.Equal(0L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM issue_actions;"));
-        Assert.Equal(0L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM photos;"));
-        Assert.Empty(Directory.EnumerateFiles(store.PhotosDir, "*", SearchOption.AllDirectories));
+        Assert.Equal(1L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM photos;"));
+        Assert.Throws<ApiException>(() => store.OpenPhoto(site.Id));
+        Assert.Throws<ApiException>(() => store.OpenPhoto(after.Id));
         V2Environment.AssertForeignKeys(store.DatabasePath);
     }
 
