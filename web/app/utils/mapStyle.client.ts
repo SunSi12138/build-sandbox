@@ -18,8 +18,7 @@ addProtocol('hbtiles', async ({ url }) => {
   }
   const result = await archive.getZxy(Number(z), Number(x), Number(y))
   if (!result) return { data: new ArrayBuffer(0) }
-  const bytes = result.data
-  return { data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer }
+  return { data: result.data }
 })
 
 export function externalVectorStyle(styleUrl: string): MapLibreLayer {
