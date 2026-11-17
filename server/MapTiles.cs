@@ -9,8 +9,8 @@ using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
 
-public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0);
-public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0);
+public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0, bool HasStyle = false);
+public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0, string? StyleUrl = null);
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
 public sealed record MapSettingsDto(TileProvider[] Providers, TileProvider[] Defaults, string CacheRoot);
@@ -68,7 +68,7 @@ public sealed partial class Store
         new("tdt-cva", "tdt-cva", "xyz", "https://t{s}.tianditu.gov.cn/cva_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=cva&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk={key}", Name: "天地图地名标注")
     ];
     private const string MapProviderColumns = "id,folder,scheme,url_template,api_key,map_key,subdomains,name,force_refresh,enabled,sort_order";
-    private static TileProvider ReadMapProvider(SqliteDataReader row)
+    private TileProvider ReadMapProvider(SqliteDataReader row)
     {
         var (storedUrl, preload) = UnwrapStoredMapUrl(row.GetString(3));
         var mvt = storedUrl.StartsWith(MvtUrlPrefix, StringComparison.Ordinal);
@@ -76,7 +76,7 @@ public sealed partial class Store
         return new(row.GetString(0), row.GetString(1), row.GetString(2),
             archive ? storedUrl[PmtilesUrlPrefix.Length..] : mvt ? storedUrl[MvtUrlPrefix.Length..] : storedUrl,
             row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7),
-            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), archive ? "pmtiles" : mvt ? "mvt" : "raster", preload);
+            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), archive ? "pmtiles" : mvt ? "mvt" : "raster", preload, File.Exists(Path.Combine(MapStyleDirectory(row.GetString(0)), "style.json")));
     }
     private TileProvider GetMapProvider(string id)
     {
@@ -213,7 +213,9 @@ public sealed partial class Store
                 var (url, preload) = UnwrapStoredMapUrl(rows.GetString(1));
                 layers.Add(new(rows.GetString(0),
                     url.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal) ? "pmtiles" :
-                    url.StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster", preload));
+                    url.StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster", preload,
+                    File.Exists(Path.Combine(MapStyleDirectory(rows.GetString(0)), "style.json"))
+                        ? $"/api/map/style/{Uri.EscapeDataString(rows.GetString(0))}/style.json" : null));
             }
             return layers.ToArray();
         }
@@ -487,6 +489,19 @@ public sealed partial class Store
         RequestDelegate layers = context => Api.Write(context, GetMapLayers(), MapConfigJsonContext.Default.MapLayerDtoArray);
         app.MapGet("/api/map/layers", layers);
         app.MapGet("/api/map/archive/{id}", ServePmtilesArchiveAsync);
+        app.MapPut("/api/map/style/{id}", async context =>
+        {
+            var provider = await ImportMapStyleAsync(Api.Id(context), context.Request.Body, context.RequestAborted);
+            await Api.Write(context, provider, MapConfigJsonContext.Default.TileProvider);
+        });
+        app.MapDelete("/api/map/style/{id}", context =>
+        {
+            Api.RequireDeleteConfirmation(context);
+            DeleteMapStyle(Api.Id(context));
+            context.Response.StatusCode = 204;
+            return Task.CompletedTask;
+        });
+        app.MapGet("/api/map/style/{id}/{**asset}", ServeMapStyleAssetAsync);
         app.MapPost("/api/map/settings", create);
         app.MapPut("/api/map/settings/order", order);
         app.MapPut("/api/map/settings/{id}/enabled", enabled);
