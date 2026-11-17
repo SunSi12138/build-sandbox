@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 
-app_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || exit 1
-cd -- "$app_dir" || exit 1
+# 获取脚本所在目录
+app_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 
-trap ':' INT
+# 切换到程序目录
+cd "$app_dir" || exit 1
+
+# 启动主程序
 ./StreetEcoTool-linux-arm64 "$@"
-status=$?
-trap - INT
-
-printf '\n程序已退出（状态码 %s）。按回车关闭终端。\n' "$status"
-if [[ -t 0 ]]; then IFS= read -r _; fi
-exit "$status"
