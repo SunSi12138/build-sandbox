@@ -950,7 +950,8 @@
         rotation: rot,
         projection: view.getProjection(),
         minZoom: 9,
-        maxZoom: 18,
+        // 输出倍率会继续放大 z18 瓦片；View 不能把分辨率钳制在 z18。
+        maxZoom: 30,
         constrainResolution: false
       });
       offMap = new ol.Map({
