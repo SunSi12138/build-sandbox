@@ -101,6 +101,18 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await page.keyboard.press('Escape')
     })
 
+    await test('M06 depth 2 renders higher zoom tiles instead of only lower zoom preload', async () => {
+      const settings = await api('/map/settings')
+      const raster = settings.providers.find(layer => layer.enabled && layer.format === 'raster' && layer.preload === 2)
+      assert(raster, 'M01 should have configured an enabled raster layer at depth 2')
+      await page.evaluate(() => localStorage.setItem('street-eco.last-map-view.v1',
+        JSON.stringify({ longitude: 88.893426, latitude: 29.274331, zoom: 16 })))
+      const finer = page.waitForRequest(request =>
+        new URL(request.url()).pathname.includes('/api/map/tiles/' + raster.id + '/18/'),
+      { timeout: 15000 })
+      await go('/points?view=map&q=' + encodeURIComponent('depth-regression-no-matching-points'))
+      await finer
+    })
     await test('M05 real offline PMTiles MVT uses local style directory for geometry', async () => {
       const { archive, tile } = createMvtPmtilesFixture()
       assert.equal(new MVT().readFeatures(tile).length, 1, 'Fixture should decode as a real MVT/PBF tile')
