@@ -23,4 +23,12 @@ release/
 work/
 运行版/
 
+# IDE and tool intermediate output
+**/.vs/
+*.user
+*.suo
+**/coverage/
+**/.nitro/
+*.tsbuildinfo
+
 map-providers.local.json
