@@ -299,6 +299,7 @@ public sealed partial class Store
     {
         var local = MapCacheDirectory(provider.Folder);
         var hasLocal = false;
+        var archiveDescription = "";
         try
         {
             if (File.Exists(local))
@@ -307,11 +308,20 @@ public sealed partial class Store
                 var header = new byte[127];
                 hasLocal = await input.ReadAsync(header, token) == 127 && ValidPmtilesHeader(header);
                 if (!hasLocal) return new("unavailable", "本地文件不是有效的 PMTiles v3 归档。", false, provider.UrlTemplate.Length > 0);
+                var type = header[99] switch
+                {
+                    1 => "MVT/PBF 矢量",
+                    2 => "PNG 图片",
+                    3 => "JPG 图片",
+                    4 => "WebP 图片",
+                    _ => "未知图块类型"
+                };
+                archiveDescription = $"图块类型：{type}，缩放级别：{header[100]}–{header[101]}。";
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { return new("error", "无法读取 PMTiles 文件，请检查路径与权限。", false, provider.UrlTemplate.Length > 0); }
-        if (hasLocal) return new("cached", "本地 PMTiles v3 归档可读取；未逐一检查其中的图块。", true, provider.UrlTemplate.Length > 0);
+        if (hasLocal) return new("cached", $"本地 PMTiles v3 归档可读取。{archiveDescription}未逐一检查其中的图块和地名字段。", true, provider.UrlTemplate.Length > 0);
         if (provider.UrlTemplate.Length == 0) return new("empty", "尚未找到本地 PMTiles 文件。可将归档复制到设置的路径。", false, false);
         try
         {

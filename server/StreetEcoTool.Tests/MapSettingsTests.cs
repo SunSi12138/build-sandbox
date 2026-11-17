@@ -138,7 +138,7 @@ public sealed class MapSettingsTests
         var archive = store.CreateMapProvider(original with
         {
             Id = "", Name = "单文件地名", Folder = "preload/labels.pmtiles",
-            UrlTemplate = "", Format = "pmtiles", ForceRefresh = false, Preload = 3
+            Scheme = "xyz", UrlTemplate = "", Format = "pmtiles", ForceRefresh = false, Preload = 3
         });
         var config = store.GetMapSettings();
         Assert.Equal(1, config.Providers.Single(item => item.Id == raster.Id).Preload);
