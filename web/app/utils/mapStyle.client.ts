@@ -23,6 +23,6 @@ addProtocol('hbtiles', async ({ url }) => {
 
 export function externalVectorStyle(styleUrl: string): MapLibreLayer {
   return new MapLibreLayer({
-    mapLibreOptions: { style: styleUrl },
+    mapLibreOptions: { style: styleUrl, localIdeographFontFamily: false },
   })
 }
