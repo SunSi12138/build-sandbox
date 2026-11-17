@@ -163,7 +163,19 @@ internal sealed class ListeningService
         var temp = Path.Combine(baseDirectory, "temp");
         Directory.CreateDirectory(temp);
         var temporary = Path.Combine(temp, $"appsettings-{Guid.NewGuid():N}.json");
-        using var existing = File.Exists(path) ? JsonDocument.Parse(File.ReadAllBytes(path)) : null;
+        // ReadAllText consumes a UTF-8 BOM (common when appsettings.json is
+        // edited in Notepad). JsonDocument.Parse on raw bytes rejects the BOM,
+        // which used to surface as the misleading "submitted data is invalid".
+        JsonDocument? existing;
+        try
+        {
+            existing = File.Exists(path) ? JsonDocument.Parse(File.ReadAllText(path)) : null;
+        }
+        catch (JsonException)
+        {
+            throw new ApiException(400, "appsettings.json 格式不正确，请检查程序目录中的配置文件。");
+        }
+        using (existing)
         try
         {
             using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
