@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { MapSettingsDto, TileProvider, MapLayerCheckDto } from '~/types/api'
 import { errorMessage } from '~/utils/format'
-const providers = ref<TileProvider[]>([]), defaults = ref<TileProvider[]>([]), cacheRoot = ref('')
+const providers = ref<TileProvider[]>([]), cacheRoot = ref('')
 const loading = ref(true), error = ref(''), busy = ref(false), editorOpen = ref(false), editorBusy = ref(false), deleteOpen = ref(false)
 const editing = ref<TileProvider>(), deleting = ref<TileProvider>()
 const checking = ref<string | null>(null)
@@ -16,7 +16,7 @@ async function checkLayer(provider: TileProvider) {
     const result = await $fetch<MapLayerCheckDto>(`/api/map/settings/${provider.id}/check`, { retry: 0 })
     checkResults.value = { ...checkResults.value, [provider.id]: result }
   } catch (cause) {
-    checkResults.value = { ...checkResults.value, [provider.id]: { status: 'error', message: errorMessage(cause), hasCache: false, hasUrl: Boolean(provider.urlTemplate) } }
+    checkResults.value = { ...checkResults.value, [provider.id]: { status: 'error', message: errorMessage(cause), hasCache: false, hasUrl: false } }
   } finally { checking.value = null }
 }
 const requestOwner = useLatestRequest()
@@ -24,7 +24,7 @@ async function load() {
   const request = requestOwner.start(); loading.value = true; error.value = ''
   try {
     const result = await $fetch<MapSettingsDto>('/api/map/settings', { signal: request.signal })
-    if (request.isCurrent()) { providers.value = result.providers; defaults.value = result.defaults; cacheRoot.value = result.cacheRoot; checkResults.value = {} }
+    if (request.isCurrent()) { providers.value = result.providers; cacheRoot.value = result.cacheRoot; checkResults.value = {} }
   } catch (cause) { if (request.isCurrent()) error.value = errorMessage(cause) }
   finally { if (request.isCurrent()) loading.value = false }
 }
@@ -66,7 +66,7 @@ onMounted(load)
 <template>
   <section class="space-y-3">
     <div class="section-heading"><h2 class="section-title">图层管理</h2><UButton label="新增图层" icon="i-lucide-plus" variant="outline" color="neutral" :disabled="busy" data-testid="map-layer-new" @click="edit()" /></div>
-    <p class="text-sm text-muted">上方图层覆盖下方图层。点击“检查”可检测本地图块或 PMTiles 文件；有在线链接时会测试图块或归档的分段读取。检查结果仅在此页显示。</p>
+    <p class="text-sm text-muted">仅使用本地图块目录、PMTiles 文件及外部样式目录。上方图层覆盖下方图层；“检查”只读取本地文件，不会联网。旧版在线配置仍保留在数据库，但不会发起请求。</p>
     <UAlert v-if="error && !deleteOpen" role="alert" :description="error" color="error" />
     <PageState :loading="loading" @retry="load">
       <ul v-if="providers.length" class="group-list">
@@ -79,6 +79,6 @@ onMounted(load)
       <EmptyState v-else title="暂无图层"><UButton label="新增图层" @click="edit()" /></EmptyState>
     </PageState>
   </section>
-  <UModal v-model:open="editorOpen" :title="editing?.id ? '编辑图层' : '新增图层'" :dismissible="!editorBusy" :close="!editorBusy" :ui="{ content: 'max-w-[600px]' }"><template #body><SettingsMapProvider v-if="editing" :key="editing.id || 'new'" :initial="editing" :defaults="defaults" :cache-root="cacheRoot" @busy="editorBusy = $event" @saved="saved" /></template></UModal>
+  <UModal v-model:open="editorOpen" :title="editing?.id ? '编辑图层' : '新增图层'" :dismissible="!editorBusy" :close="!editorBusy" :ui="{ content: 'max-w-[600px]' }"><template #body><SettingsMapProvider v-if="editing" :key="editing.id || 'new'" :initial="editing" :cache-root="cacheRoot" @busy="editorBusy = $event" @saved="saved" /></template></UModal>
   <UModal v-model:open="deleteOpen" :title="`删除图层「${deleting?.name ?? ''}」？`" description="只删除图层配置，保留缓存文件" :dismissible="!busy" :close="!busy"><template #body><UAlert v-if="error" role="alert" :description="error" color="error" /></template><template #footer><UButton label="取消" variant="outline" color="neutral" :disabled="busy" @click="deleteOpen = false" /><UButton label="删除" color="error" :loading="busy" @click="remove" /></template></UModal>
 </template>
