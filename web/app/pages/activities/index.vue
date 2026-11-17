@@ -19,6 +19,7 @@ const loading = ref(true)
 const error = ref('')
 const datesOpen = ref(false)
 const exportOpen = ref(false)
+const hasActiveFilters = computed(() => Object.keys(route.query).some(key => key !== 'page'))
 const communities = computed(() => [{ label: '全部社区', value: 'all' }, ...(bootstrap.value?.communities ?? []).map(v => ({ label: v.name, value: v.id }))])
 const isRemediationFilter = computed(() => bootstrap.value?.activityTypes.find(item => item.id === typeId.value)?.template === 'remediation' || queryText(route.query.template) === 'remediation' || remediationTypeId.value !== 'all')
 const remediationTypes = computed(() => [{ label: '全部整治类别', value: 'all' }, ...(bootstrap.value?.remediationTypes ?? []).map(item => ({ label: item.name, value: item.id }))])
@@ -82,7 +83,7 @@ async function openExport() { await flush(); exportOpen.value = true }
           </li>
         </ul>
       </section>
-      <EmptyState v-else-if="!loading" title="暂无活动记录"><UButton to="/activities/new">新增活动</UButton></EmptyState>
+      <EmptyState v-else-if="!loading" :title="hasActiveFilters ? '没有符合筛选条件的活动记录' : '暂无活动记录'"><UButton v-if="hasActiveFilters" to="/activities" label="清空筛选" color="neutral" variant="outline" /><UButton v-else to="/activities/new">新增活动</UButton></EmptyState>
       <div v-if="result.total > 30" class="flex items-center justify-between gap-2"><UButton label="上一页" color="neutral" variant="outline" :disabled="page <= 1 || loading" @click="setPage(page - 1)" /><span class="text-xs text-muted">{{ page }} / {{ Math.ceil(result.total / 30) }}</span><UButton label="下一页" color="neutral" variant="outline" :disabled="page >= Math.ceil(result.total / 30) || loading" @click="setPage(page + 1)" /></div>
     </template>
     <ActivityLedgerExport :current-query="filters" v-model:open="exportOpen" :community-id="communityId === 'all' ? undefined : communityId" :type-id="typeId === 'all' ? undefined : typeId" />
