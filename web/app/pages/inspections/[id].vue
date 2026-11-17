@@ -746,7 +746,7 @@ watch(() => route.query.issue, revealIssue)
       title="删除排查？"
       :description="
         detail?.inspection.pointTemporary
-          ? '删除后，问题、办理记录和照片无法恢复；若这是该临时点位最后一条排查或整治，该临时点位及其没有其他活动、事项或附件时，点位照片也将删除。'
+          ? '删除后，该条排查的问题、办理记录和相关照片无法恢复；临时点位及其点位照片会保留。'
           : '删除后，问题、办理记录和照片无法恢复'
       "
       :dismissible="!deleting"
