@@ -1,6 +1,6 @@
 import type XYZ from 'ol/source/XYZ'
 import type { Extent } from 'ol/extent'
-import type { TileRange } from 'ol/TileRange'
+import type TileRange from 'ol/TileRange'
 
 // The persisted API property is still named "preload" for database compatibility,
 // but now denotes requested higher-zoom depth (0..3), NOT OpenLayers' preload.
