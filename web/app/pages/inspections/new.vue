@@ -35,6 +35,14 @@ definePageMeta({ formPage: true })
 useHead({ title: '新增排查 · 街道生态环保' })
 const draftRecovery = useDraftRecovery('street-eco.inspection-draft.v4', 4, 'draft')
 const route = useRoute()
+const sourceReturn = computed(() => {
+  const explicit = queryText(route.query.returnTo)
+  if (/^\/(?:points|matters|inspections|activities)\/[0-9a-f]{32}(?:\?.*)?$/.test(explicit)) return explicit
+  const point = queryText(route.query.pointId), matter = queryText(route.query.matterId)
+  if (/^[0-9a-f]{32}$/.test(point)) return `/points/${point}`
+  if (/^[0-9a-f]{32}$/.test(matter)) return `/matters/${matter}`
+  return ''
+})
 const router = useRouter()
 const toast = useToast()
 const { bootstrap, load } = useAppData()
@@ -368,7 +376,7 @@ async function saveInspection() {
     saved = true
     draftRecovery.clear()
     toast.add({ title: '已保存', color: 'success', duration: 2000 })
-    await navigateTo(`/inspections/${result.inspection.id}`)
+    await navigateTo({ path: `/inspections/${result.inspection.id}`, query: sourceReturn.value ? { returnTo: sourceReturn.value } : {} })
   } catch (error) { saveError.value = errorMessage(error) }
   finally { saving.value = false }
 }
@@ -414,7 +422,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page-stack">
-    <PageHeader title="新增排查" back="/inspections"><template #actions><UButton type="button" color="neutral" variant="link" :disabled="saving || uploadsBusy || (!hasDraft && !unreadableDraft)" @click="destructiveAction = 'clear'; destructiveOpen = true">清空</UButton></template></PageHeader>
+    <PageHeader title="新增排查" :back="sourceReturn || '/inspections'"><template #actions><UButton type="button" color="neutral" variant="link" :disabled="saving || uploadsBusy || (!hasDraft && !unreadableDraft)" @click="destructiveAction = 'clear'; destructiveOpen = true">清空</UButton></template></PageHeader>
     <PageState :loading="initializing" :error="loadError" @retry="initialize">
       <UAlert v-if="storageError" :description="storageError" color="warning" variant="subtle" />
       <UForm id="inspection-form" :state="draft" :validate="validate" class="space-y-3" @submit="saveInspection" @error="validationFailed">

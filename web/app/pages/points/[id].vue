@@ -227,7 +227,7 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
         <section v-if="detail.matters.length" class="panel"><div class="panel-head"><h2 class="section-title">相关事项</h2></div><div class="panel-body"><MatterLinks :matters="detail.matters" /></div></section>
         <section class="panel" data-testid="activity-history">
           <div class="panel-head"><h2 class="section-title">相关活动</h2><UButton :to="`/activities?pointId=${id}`" label="查看全部" color="neutral" variant="link" /></div>
-          <NuxtLink v-for="record in detail.activities ?? []" :key="record.id" :to="`/activities/${record.id}`" class="list-row"><div class="row-body"><p class="row-title"><span>{{ record.name }}</span></p><p class="row-secondary">{{ record.date }} · {{ record.typeName }}</p></div></NuxtLink>
+          <NuxtLink v-for="record in detail.activities ?? []" :key="record.id" :to="{ path: `/activities/${record.id}`, query: { returnTo: `/points/${id}` } }" class="list-row"><div class="row-body"><p class="row-title"><span>{{ record.name }}</span></p><p class="row-secondary">{{ record.date }} · {{ record.typeName }}</p></div></NuxtLink>
           <EmptyState v-if="!detail.activities?.length" title="暂无相关活动" />
         </section> </template
     ></PageState>

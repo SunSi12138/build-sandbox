@@ -9,7 +9,7 @@ const detail = ref<ActivityDetailDto | null>(null)
 const loading = ref(true), error = ref(''), deleting = ref(false), deleteOpen = ref(false), actionError = ref(''), downloading = ref(false)
 const pendingLinkedIssues = computed(() => detail.value?.activity.template === 'remediation' ? detail.value.activity.relatedIssues.filter(issue => issue.status === 'pending') : [])
 const remediationWithoutIssue = computed(() => detail.value?.activity.template === 'remediation' && detail.value.activity.pointId && !detail.value.activity.relatedIssues.length)
-const back = computed(() => { const value = queryText(route.query.returnTo); return value === '/activities' || value.startsWith('/activities?') ? value : '/activities' })
+const back = computed(() => { const value = queryText(route.query.returnTo); return value === '/activities' || value.startsWith('/activities?') || /^\/(?:points|matters)\/[0-9a-f]{32}(?:\?.*)?$/.test(value) ? value : '/activities' })
 const menu = computed(() => [[{ label: '编辑', icon: 'i-lucide-pencil', to: `/activities/new?edit=${id.value}` },
   { label: '删除活动', icon: 'i-lucide-trash-2', color: 'error' as const, onSelect: () => { actionError.value = ''; deleteOpen.value = true } }]])
 useHead({ title: () => `${detail.value?.activity.name ?? '活动详情'} · 街道生态环保` })

@@ -29,7 +29,7 @@ const detail = ref<InspectionDetailDto | null>(null),
 const id = computed(() => queryText(route.params.id))
 const back = computed(() => {
   const value = queryText(route.query.returnTo)
-  return value.startsWith('/points/') || /^\/inspections\/?(?:\?|$)/.test(value)
+  return /^\/(?:points|matters)\/[0-9a-f]{32}(?:\?.*)?$/.test(value) || /^\/inspections\/?(?:\?|$)/.test(value)
     ? value
     : '/inspections'
 })

@@ -4,6 +4,14 @@ import { errorMessage, queryText } from '~/utils/format'
 definePageMeta({ formPage: true })
 const route = useRoute()
 const id = computed(() => queryText(route.query.edit))
+const sourceReturn = computed(() => {
+  const explicit = queryText(route.query.returnTo)
+  if (/^\/(?:points|matters|inspections|activities)\/[0-9a-f]{32}(?:\?.*)?$/.test(explicit)) return explicit
+  const point = queryText(route.query.pointId), matter = queryText(route.query.matterId)
+  if (/^[0-9a-f]{32}$/.test(point)) return `/points/${point}`
+  if (/^[0-9a-f]{32}$/.test(matter)) return `/matters/${matter}`
+  return ''
+})
 const detail = ref<ActivityDetailDto | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -21,11 +29,11 @@ async function refresh() {
   finally { if (request.isCurrent()) loading.value = false }
 }
 watch(id, refresh, { immediate: true })
-async function saved(value: ActivityDetailDto) { await navigateTo(`/activities/${value.activity.id}`) }
+async function saved(value: ActivityDetailDto) { await navigateTo({ path: `/activities/${value.activity.id}`, query: sourceReturn.value ? { returnTo: sourceReturn.value } : {} }) }
 </script>
 <template>
   <div class="page-stack">
-    <PageHeader :title="title" :back="id ? `/activities/${id}` : '/activities'" />
+    <PageHeader :title="title" :back="id ? `/activities/${id}` : sourceReturn || '/activities'" />
     <PageState :loading="loading" :error="error" @retry="refresh">
       <ActivityEditor :key="id || 'new'" :initial="detail" @saved="saved" />
     </PageState>
