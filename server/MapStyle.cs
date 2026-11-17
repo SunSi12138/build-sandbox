@@ -1,140 +1,114 @@
-using System.IO.Compression;
 using System.Text.Json;
 
 namespace StreetEcoTool;
 
 public sealed partial class Store
 {
-    // Map templates belong to writable user data, never to published web assets.
-    private const long MaximumStyleZipBytes = 32L * 1024 * 1024;
-    private const long MaximumExpandedStyleBytes = 96L * 1024 * 1024;
-    private string MapStyleDirectory(string id) => Path.Combine(RootDir, "map-styles", id);
-
-    public async Task<TileProvider> ImportMapStyleAsync(string id, Stream upload, CancellationToken token)
+    // The style directory is a user-configured filesystem path, relative to the map cache root.
+    // Neither the files nor their contents are included in the web bundle or copied on save.
+    private (TileProvider Provider, string Directory) ConfiguredMapStyle(string id)
     {
         TileProvider provider;
         lock (_gate) provider = GetMapProvider(id);
-        if (provider.Format is not ("mvt" or "pmtiles"))
-            throw new ApiException(400, "只有 PBF/MVT 和 PMTiles 图层可以使用矢量样式。");
-
-        var root = Path.Combine(RootDir, "map-styles");
-        Directory.CreateDirectory(root);
-        var tempId = NewId();
-        var zipPath = Path.Combine(root, "." + tempId + ".zip");
-        var staging = Path.Combine(root, "." + tempId);
-        var destination = MapStyleDirectory(id);
-        var previous = Path.Combine(root, "." + tempId + ".old");
-        try
-        {
-            await using (var zipOutput = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous))
-            {
-                var buffer = new byte[81920];
-                long bytes = 0;
-                int count;
-                while ((count = await upload.ReadAsync(buffer, token)) > 0)
-                {
-                    bytes += count;
-                    if (bytes > MaximumStyleZipBytes) throw new ApiException(413, "样式压缩包不能超过 32 MB。");
-                    await zipOutput.WriteAsync(buffer.AsMemory(0, count), token);
-                }
-            }
-
-            Directory.CreateDirectory(staging);
-            using (var archive = ZipFile.OpenRead(zipPath))
-            {
-                if (archive.Entries.Count > 1500) throw new ApiException(400, "样式文件数量过多。");
-                long expanded = 0;
-                foreach (var entry in archive.Entries)
-                {
-                    token.ThrowIfCancellationRequested();
-                    var name = entry.FullName.Replace('\\', '/');
-                    if (name.EndsWith("/", StringComparison.Ordinal)) continue;
-                    if (name.StartsWith("/", StringComparison.Ordinal) ||
-                        name.Split('/').Any(part => part is "" or "." or ".." || part.Contains(':')) ||
-                        !IsAllowedMapStyleAsset(name) ||
-                        (entry.ExternalAttributes >> 16 & 0xF000) == 0xA000)
-                        throw new ApiException(400, "样式压缩包含有非法路径或文件类型。");
-                    expanded += entry.Length;
-                    if (expanded > MaximumExpandedStyleBytes) throw new ApiException(413, "样式解压后不能超过 96 MB。");
-                    var output = Path.Combine(staging, name.Replace('/', Path.DirectorySeparatorChar));
-                    Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-                    await using var stream = new FileStream(output, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
-                    await using var input = entry.Open();
-                    await input.CopyToAsync(stream, token);
-                }
-            }
-            var styleFile = Path.Combine(staging, "style.json");
-            if (!File.Exists(styleFile)) throw new ApiException(400, "压缩包根目录必须包含 style.json。");
-            using (var json = JsonDocument.Parse(await File.ReadAllTextAsync(styleFile, token)))
-            {
-                var style = json.RootElement;
-                if (style.ValueKind != JsonValueKind.Object ||
-                    !style.TryGetProperty("version", out var version) || version.GetInt32() != 8 ||
-                    !style.TryGetProperty("sources", out var sources) || sources.ValueKind != JsonValueKind.Object ||
-                    !style.TryGetProperty("layers", out var layers) || layers.ValueKind != JsonValueKind.Array)
-                    throw new ApiException(400, "style.json 必须是包含 sources 和 layers 的 Mapbox Style v8。");
-            }
-
-            // Swap the entire template only after validating all entries.
-            if (Directory.Exists(destination)) Directory.Move(destination, previous);
-            try { Directory.Move(staging, destination); }
-            catch
-            {
-                if (Directory.Exists(previous)) Directory.Move(previous, destination);
-                throw;
-            }
-            if (Directory.Exists(previous)) Directory.Delete(previous, true);
-            lock (_gate) { _mapGeneration++; return GetMapProvider(id); }
-        }
-        catch (InvalidDataException) { throw new ApiException(400, "样式 ZIP 文件损坏或格式不正确。"); }
-        catch (JsonException) { throw new ApiException(400, "style.json 格式不正确。"); }
-        finally
-        {
-            TryDeleteFile(zipPath);
-            TryDeleteDirectory(staging);
-        }
+        if (provider.Format is not ("mvt" or "pmtiles") || provider.StyleDirectory.Length == 0)
+            throw new ApiException(404, "该图层未配置矢量样式目录。");
+        return (provider, MapCacheDirectory(provider.StyleDirectory));
     }
 
-    private static bool IsAllowedMapStyleAsset(string name)
+    private async Task ServeMapStyleJsonAsync(HttpContext context)
     {
-        if (name == "style.json") return true;
-        var extension = Path.GetExtension(name).ToLowerInvariant();
-        return name.Contains('/', StringComparison.Ordinal) &&
-            extension is ".pbf" or ".png" or ".json" or ".webp";
-    }
+        var id = Api.Id(context);
+        var (provider, directory) = ConfiguredMapStyle(id);
+        var path = Path.Combine(directory, "style.json");
+        if (!File.Exists(path)) { context.Response.StatusCode = 404; return; }
 
-    public void DeleteMapStyle(string id)
-    {
-        lock (_gate)
+        using var input = File.OpenRead(path);
+        using var document = await JsonDocument.ParseAsync(input, cancellationToken: context.RequestAborted);
+        if (document.RootElement.ValueKind != JsonValueKind.Object ||
+            !document.RootElement.TryGetProperty("sources", out var sources) ||
+            sources.ValueKind != JsonValueKind.Object)
+            throw new ApiException(400, "样式目录中的 style.json 缺少 sources。");
+
+        var prefix = "/api/map/style/" + Uri.EscapeDataString(id) + "/assets/";
+        var tiles = provider.Format == "pmtiles"
+            ? "hbtiles://" + id + "/{z}/{x}/{y}"
+            : "/api/map/tiles/" + Uri.EscapeDataString(id) + "/{z}/{x}/{y}?cache=server";
+
+        using var output = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(output))
         {
-            _ = GetMapProvider(id);
-            var directory = MapStyleDirectory(id);
-            if (Directory.Exists(directory)) Directory.Delete(directory, true);
-            _mapGeneration++;
+            writer.WriteStartObject();
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (property.Name == "sources")
+                {
+                    writer.WritePropertyName("sources");
+                    writer.WriteStartObject();
+                    foreach (var entry in sources.EnumerateObject())
+                    {
+                        writer.WritePropertyName(entry.Name);
+                        if (entry.Value.ValueKind != JsonValueKind.Object ||
+                            !entry.Value.TryGetProperty("type", out var sourceType) ||
+                            sourceType.GetString() != "vector")
+                        {
+                            entry.Value.WriteTo(writer);
+                            continue;
+                        }
+                        writer.WriteStartObject();
+                        foreach (var attribute in entry.Value.EnumerateObject())
+                        {
+                            if (attribute.Name is "url" or "tiles") continue;
+                            attribute.WriteTo(writer);
+                        }
+                        writer.WritePropertyName("tiles");
+                        writer.WriteStartArray();
+                        writer.WriteStringValue(tiles);
+                        writer.WriteEndArray();
+                        writer.WriteEndObject();
+                    }
+                    writer.WriteEndObject();
+                }
+                else if ((property.Name is "glyphs" or "sprite") && property.Value.ValueKind == JsonValueKind.String)
+                {
+                    var value = property.Value.GetString() ?? "";
+                    writer.WriteString(property.Name,
+                        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https"
+                            ? value : prefix + value.TrimStart('/'));
+                }
+                else property.WriteTo(writer);
+            }
+            writer.WriteEndObject();
+            writer.Flush();
         }
+        context.Response.ContentType = "application/json; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-store";
+        await context.Response.Body.WriteAsync(output.ToArray(), context.RequestAborted);
     }
 
     private async Task ServeMapStyleAssetAsync(HttpContext context)
     {
-        string id = Api.Id(context);
+        var id = Api.Id(context);
         var relative = (string?)context.Request.RouteValues["asset"] ?? "";
-        lock (_gate) _ = GetMapProvider(id);
+        var (_, directory) = ConfiguredMapStyle(id);
+        var parts = relative.Split('/');
+        var extension = Path.GetExtension(relative).ToLowerInvariant();
         if (relative.StartsWith("/", StringComparison.Ordinal) ||
             relative.Contains('\\', StringComparison.Ordinal) ||
-            relative.Split('/').Any(part => part is "" or "." or ".." || part.Contains(':')) ||
-            !IsAllowedMapStyleAsset(relative))
+            parts.Any(part => part is "" or "." or ".." || part.Contains(':')) ||
+            parts[0] is not ("font" or "sprite") ||
+            extension is not (".pbf" or ".png" or ".webp" or ".json"))
         {
             context.Response.StatusCode = 404;
             return;
         }
-        var directory = MapStyleDirectory(id);
-        var path = Path.GetFullPath(Path.Combine(directory, relative.Replace('/', Path.DirectorySeparatorChar)));
-        if (!path.StartsWith(Path.GetFullPath(directory) + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !File.Exists(path))
+        var root = Path.GetFullPath(directory);
+        var path = Path.GetFullPath(Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar)));
+        if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !File.Exists(path))
         {
             context.Response.StatusCode = 404;
             return;
         }
-        context.Response.ContentType = Path.GetExtension(path).ToLowerInvariant() switch
+        context.Response.ContentType = extension switch
         {
             ".json" => "application/json; charset=utf-8",
             ".png" => "image/png",
