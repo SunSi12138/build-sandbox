@@ -356,7 +356,12 @@ internal static class Startup
             if (OperatingSystem.IsWindows()) Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
             else if (OperatingSystem.IsLinux() && (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")) || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"))))
             {
-                var start = new ProcessStartInfo("xdg-open") { UseShellExecute = false };
+                // Keep the browser launcher's output out of the application's console.
+                // Pass the URL as a positional argument instead of interpolating it into shell code.
+                var start = new ProcessStartInfo("/bin/sh") { UseShellExecute = false };
+                start.ArgumentList.Add("-c");
+                start.ArgumentList.Add("exec xdg-open \"$1\" >/dev/null 2>&1");
+                start.ArgumentList.Add("sh");
                 start.ArgumentList.Add(address);
                 Process.Start(start);
             }
