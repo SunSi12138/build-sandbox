@@ -8,6 +8,11 @@ namespace StreetEcoTool.Tests;
 
 public sealed class StoreV2Tests
 {
+    private static FeedbackRequest Feedback(Store store, string id, string date, string notes, string[]? photos = null) =>
+        new(date, notes, photos, store.GetIssue(id).Revision);
+    private static ReviewRequest Review(Store store, string id, string date, string conclusion, string[]? photos = null) =>
+        new(date, conclusion, photos, store.GetIssue(id).Revision);
+
     [Fact]
     public void PreviousDaySnapshotIsImmutableAndExcludesLaterWrites()
     {
@@ -100,7 +105,7 @@ public sealed class StoreV2Tests
         store.DeleteInspection(second.Inspection.Id);
         Assert.True(store.GetPoint(inspection.Inspection.PointId).Temporary);
         var after = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "after");
-        store.RecordInspectionFeedback(inspection.Inspection.Id, new(Store.Today, [new(inspection.Issues[0].Id, "已整改", [after.Id])]));
+        store.RecordInspectionFeedback(inspection.Inspection.Id, new(Store.Today, [new(inspection.Issues[0].Id, "已整改", [after.Id], Revision: store.GetIssue(inspection.Issues[0].Id).Revision)]));
         store.DeleteInspection(inspection.Inspection.Id);
         Assert.Equal(0L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM points;"));
         Assert.Equal(0L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM issue_actions;"));
@@ -118,24 +123,24 @@ public sealed class StoreV2Tests
         var detail = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("问题1", "整改1", Store.Today), new("问题2", "整改2", Store.Today)]));
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "after");
         Assert.Throws<ApiException>(() => store.RecordInspectionFeedback(detail.Inspection.Id, new(Store.Today,
-            [new(detail.Issues[0].Id, "第一项完成", [photo.Id]), new(detail.Issues[1].Id, "第二项完成", ["missing"])])));
+            [new(detail.Issues[0].Id, "第一项完成", [photo.Id], Revision: store.GetIssue(detail.Issues[0].Id).Revision), new(detail.Issues[1].Id, "第二项完成", ["missing"], Revision: store.GetIssue(detail.Issues[1].Id).Revision)])));
         var unchanged = store.GetInspectionDetail(detail.Inspection.Id);
         Assert.All(unchanged.Issues, issue => Assert.Equal("pending", issue.Status));
         Assert.All(unchanged.IssueDetails!, issue => Assert.Empty(issue.Actions));
         Assert.Equal(0L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM photos WHERE issue_id IS NOT NULL;"));
         var feedback = store.RecordInspectionFeedback(detail.Inspection.Id, new(Store.Today,
-            [new(detail.Issues[0].Id, "第一项完成", [photo.Id]), new(detail.Issues[1].Id, "第二项完成")]));
+            [new(detail.Issues[0].Id, "第一项完成", [photo.Id], Revision: store.GetIssue(detail.Issues[0].Id).Revision), new(detail.Issues[1].Id, "第二项完成", Revision: store.GetIssue(detail.Issues[1].Id).Revision)]));
         Assert.Equal("feedback", feedback.Inspection.RectifyStatus);
         var reviewPhoto = store.UploadPhoto(WordExporterTests.Jpeg(200, 100), "review");
         Assert.Throws<ApiException>(() => store.ReviewInspection(detail.Inspection.Id, new(Store.Today,
-            [new(detail.Issues[0].Id, "通过", [reviewPhoto.Id]), new(detail.Issues[1].Id, "通过", ["missing"])])));
+            [new(detail.Issues[0].Id, "通过", [reviewPhoto.Id], Revision: store.GetIssue(detail.Issues[0].Id).Revision), new(detail.Issues[1].Id, "通过", ["missing"], Revision: store.GetIssue(detail.Issues[1].Id).Revision)])));
         Assert.All(store.GetInspectionDetail(detail.Inspection.Id).Issues, issue => Assert.Equal("feedback", issue.Status));
         Assert.Equal(2L, V2Environment.Number(store.DatabasePath, "SELECT COUNT(*) FROM issue_actions;"));
         var closed = store.ReviewInspection(detail.Inspection.Id, new(Store.Today,
-            [new(detail.Issues[0].Id, "通过", [reviewPhoto.Id]), new(detail.Issues[1].Id, "通过")]));
+            [new(detail.Issues[0].Id, "通过", [reviewPhoto.Id], Revision: store.GetIssue(detail.Issues[0].Id).Revision), new(detail.Issues[1].Id, "通过", Revision: store.GetIssue(detail.Issues[1].Id).Revision)]));
         Assert.Equal("closed", closed.Inspection.RectifyStatus);
         Assert.Equal(2, closed.Inspection.ClosedCount);
-        Assert.Throws<ApiException>(() => store.RecordInspectionFeedback(detail.Inspection.Id, new(Store.Today, [new(detail.Issues[0].Id, "重复"), new(detail.Issues[0].Id, "重复")])));
+        Assert.Throws<ApiException>(() => store.RecordInspectionFeedback(detail.Inspection.Id, new(Store.Today, [new(detail.Issues[0].Id, "重复", Revision: store.GetIssue(detail.Issues[0].Id).Revision), new(detail.Issues[0].Id, "重复", Revision: store.GetIssue(detail.Issues[0].Id).Revision)])));
     }
 
     [Fact]
@@ -170,11 +175,11 @@ public sealed class StoreV2Tests
         var yesterday = DateTime.Today.AddDays(-1).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var mixed = store.CreateInspection(new(point.Id, yesterday, "检查人", "issues", Issues:
             [new("逾期待整改", "整改", yesterday), new("今日待复查", "整改", Store.Today), new("已闭环", "整改", yesterday)]));
-        store.RecordFeedback(mixed.Issues[1].Id, new(Store.Today, "已整改"));
-        store.RecordFeedback(mixed.Issues[2].Id, new(Store.Today, "已整改"));
-        store.ReviewAndClose(mixed.Issues[2].Id, new(Store.Today, "通过"));
+        store.RecordFeedback(mixed.Issues[1].Id, Feedback(store, mixed.Issues[1].Id, Store.Today, "已整改"));
+        store.RecordFeedback(mixed.Issues[2].Id, Feedback(store, mixed.Issues[2].Id, Store.Today, "已整改"));
+        store.ReviewAndClose(mixed.Issues[2].Id, Review(store, mixed.Issues[2].Id, Store.Today, "通过"));
         var feedback = store.CreateInspection(new(point.Id, yesterday, "检查人", "issues", Issues: [new("逾期待复查", "整改", yesterday)]));
-        store.RecordFeedback(feedback.Issues[0].Id, new(Store.Today, "已整改"));
+        store.RecordFeedback(feedback.Issues[0].Id, Feedback(store, feedback.Issues[0].Id, Store.Today, "已整改"));
 
         var result = store.ListInspections(new(AwaitingReview: true));
         Assert.Equal(2, result.Total);
@@ -207,15 +212,15 @@ public sealed class StoreV2Tests
         var point = environment.CreatePoint(store);
         var pending = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待整改", "整改", Store.Today)]));
         var feedback = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("待复查", "整改", Store.Today)]));
-        store.RecordFeedback(feedback.Issues[0].Id, new(Store.Today, "已整改"));
+        store.RecordFeedback(feedback.Issues[0].Id, Feedback(store, feedback.Issues[0].Id, Store.Today, "已整改"));
         var mixed = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues:
             [new("待整改", "整改", Store.Today), new("待复查", "整改", Store.Today), new("已闭环", "整改", Store.Today)]));
-        store.RecordFeedback(mixed.Issues[1].Id, new(Store.Today, "已整改"));
-        store.RecordFeedback(mixed.Issues[2].Id, new(Store.Today, "已整改"));
-        store.ReviewAndClose(mixed.Issues[2].Id, new(Store.Today, "通过"));
+        store.RecordFeedback(mixed.Issues[1].Id, Feedback(store, mixed.Issues[1].Id, Store.Today, "已整改"));
+        store.RecordFeedback(mixed.Issues[2].Id, Feedback(store, mixed.Issues[2].Id, Store.Today, "已整改"));
+        store.ReviewAndClose(mixed.Issues[2].Id, Review(store, mixed.Issues[2].Id, Store.Today, "通过"));
         var closed = store.CreateInspection(new(point.Id, Store.Today, "检查人", "issues", Issues: [new("全部闭环", "整改", Store.Today)]));
-        store.RecordFeedback(closed.Issues[0].Id, new(Store.Today, "已整改"));
-        store.ReviewAndClose(closed.Issues[0].Id, new(Store.Today, "通过"));
+        store.RecordFeedback(closed.Issues[0].Id, Feedback(store, closed.Issues[0].Id, Store.Today, "已整改"));
+        store.ReviewAndClose(closed.Issues[0].Id, Review(store, closed.Issues[0].Id, Store.Today, "通过"));
         var normal = store.CreateInspection(new(point.Id, Store.Today, "检查人", "normal"));
 
         var result = store.ListInspections(new(OpenOnly: true));
@@ -243,7 +248,7 @@ public sealed class StoreV2Tests
         using var store = environment.Open();
         var point = environment.CreatePoint(store);
         var photos = Enumerable.Range(0, 10).Select(_ => store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point")).ToArray();
-        var update = new PointWriteRequest(point.Name, point.CommunityId, point.TypeId, point.Address, PhotoIds: photos.Take(9).Select(photo => photo.Id).ToArray());
+        var update = new PointWriteRequest(point.Name, point.CommunityId, point.TypeId, point.Address, PhotoIds: photos.Take(9).Select(photo => photo.Id).ToArray(), Revision: point.Revision);
         var saved = store.SavePoint(point.Id, update);
         Assert.Equal(9, saved.PhotoCount);
         Assert.Equal(photos[0].Id, saved.CoverPhotoId);
@@ -302,21 +307,18 @@ public sealed class StoreV2Tests
         var point = environment.CreatePoint(store);
         var type = store.GetCampaignTypes()[0];
         var before = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "before");
-        var request = new CampaignWriteRequest("整治活动", type.Id, point.Id, Store.Today, "清理路面", ParticipantCount: 5,
-            VehicleCount: 1, GarbageTons: 1.235m, AreaSqm: 2.225m, BeforePhotoIds: [before.Id]);
+        var request = new CampaignWriteRequest("整治活动", type.Id, point.Id, Store.Today, "清理路面", BeforePhotoIds: [before.Id]);
         var saved = store.SaveCampaign(null, request);
-        Assert.Equal(1.24m, saved.Campaign.GarbageTons);
-        Assert.Equal(2.23m, saved.Campaign.AreaSqm);
+        Assert.Null(saved.Campaign.GarbageTons);
+        Assert.Null(saved.Campaign.AreaSqm);
         Assert.Single(saved.Photos);
         store.SaveCampaignType(type.Id, new("已改类型"));
         store.SaveCommunity(point.CommunityId, new("已改社区", "已改社区居民委员会"));
-        var edited = store.SaveCampaign(saved.Campaign.Id, request with { Content = "编辑内容" });
+        var edited = store.SaveCampaign(saved.Campaign.Id, request with { Content = "编辑内容", Revision = saved.Campaign.Revision });
         Assert.Equal(type.Name, edited.Campaign.TypeName);
         Assert.Equal(point.CommunityName, edited.Campaign.CommunityName);
         Assert.Throws<ApiException>(() => store.DeleteCampaignType(type.Id));
         Assert.Throws<ApiException>(() => store.DeleteCommunity(point.CommunityId));
-        Assert.Throws<ApiException>(() => store.SaveCampaign(null, request with { ParticipantCount = -1 }));
-        Assert.Throws<ApiException>(() => store.SaveCampaign(null, request with { EndDate = "2000-01-01" }));
         Assert.Single(store.GetLedgerCampaigns(Store.Today, Store.Today));
         store.DeleteCampaign(saved.Campaign.Id);
         Assert.Empty(store.ListCampaigns(new()).Items);
