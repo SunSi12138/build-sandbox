@@ -18,7 +18,7 @@ public sealed class PointCampaignTests
         using var environment = new V2Environment();
         using var store = environment.Open();
         var point = environment.CreatePoint(store);
-        var request = Campaign(store, point.Id) with { Participants = "张三 李四", ParticipantCount = 0 };
+        var request = Campaign(store, point.Id);
         var detail = store.SaveCampaign(null, request);
         Assert.Equal(point.Id, detail.Campaign.PointId);
         Assert.Equal(point.Name, detail.Campaign.PointName);
@@ -34,7 +34,7 @@ public sealed class PointCampaignTests
         Assert.Equal(point.Name, updated.Campaign.PointName);
         Assert.Equal(point.Address, updated.Campaign.Location);
         Assert.Equal(point.CommunityName, updated.Campaign.CommunityName);
-        Assert.Equal("张三 李四", updated.Campaign.Participants);
+        Assert.Empty(updated.Campaign.Participants);
         Assert.Contains(point.Name, DocumentText(store.ExportCampaignWord(detail.Campaign.Id).FilePath));
         Assert.Equal(409, Assert.Throws<ApiException>(() => store.DeletePoint(point.Id)).StatusCode);
         V2Environment.AssertForeignKeys(store.DatabasePath);
@@ -139,7 +139,7 @@ public sealed class PointCampaignTests
         }
         Assert.Contains("共 4 次排查", DocumentText(inspection.FilePath));
         Assert.Contains("共 2 条", DocumentText(issues.FilePath));
-        Assert.Contains("共 2 次整治，累计参加 4 人", DocumentText(campaigns.FilePath));
+        Assert.Contains("共 2 次整治", DocumentText(campaigns.FilePath));
         using (var zip = ZipFile.OpenRead(campaigns.FilePath)) Assert.Equal(2, zip.Entries.Count(e => e.FullName.StartsWith("word/media/", StringComparison.Ordinal)));
         Assert.Throws<ApiException>(() => store.ExportLedgerWord(Store.Today, Store.Today, pointIds: ["missing"]));
         Assert.Throws<ApiException>(() => store.ExportInspectionLedgerWord(Store.Today, Store.Today, pointIds: [""]));

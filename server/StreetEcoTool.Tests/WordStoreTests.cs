@@ -77,7 +77,7 @@ public sealed class WordStoreTests
         foreach (var notice in new[] { false, true })
         {
             var file = fixture.Store.ExportInspectionWord(detail.Inspection.Id, notice);
-            Assert.Equal(new[] { "1000x800", "1200x800", "1600x800" }, MediaDimensions(file.FilePath));
+            Assert.Equal(new[] { "1000x800", "1200x800", "1600x800", "500x700", "800x1200" }, MediaDimensions(file.FilePath));
             var text = DocumentText(file.FilePath);
             Assert.Contains(fixture.Point.Name, text);
             Assert.Contains(fixture.Community.Name, text);
@@ -102,8 +102,8 @@ public sealed class WordStoreTests
         const string feedback = "第一次反馈：已完成垃圾清理并设置围挡。";
         const string conclusion = "第一次复查：现场清理符合整改要求。";
         const string reason = "再次发现新增堆放，退回继续整改并加强日常巡查。";
-        fixture.Store.RecordFeedback(issue.Id, new(Day(-2), feedback));
-        fixture.Store.ReviewAndClose(issue.Id, new(Day(-1), conclusion));
+        fixture.Store.RecordFeedback(issue.Id, Feedback(fixture.Store, issue.Id, Day(-2), feedback));
+        fixture.Store.ReviewAndClose(issue.Id, Review(fixture.Store, issue.Id, Day(-1), conclusion));
         var returned = fixture.Store.ReturnIssue(issue.Id, Return(fixture.Store, issue.Id, reason));
         Assert.Equal("pending", returned.Issue.Status);
         Assert.Null(returned.Issue.FeedbackDate);
@@ -197,7 +197,7 @@ public sealed class WordStoreTests
         fixture.Store.SavePoint(fixture.Point.Id, new("新点位名", fixture.Community.Id, fixture.Point.TypeId, "新地址", Revision: fixture.Store.GetPoint(fixture.Point.Id).Revision));
         var document = fixture.Store.ExportInspectionLedgerWord(Store.Today, Store.Today, fixture.Community.Id);
         var text = DocumentText(document.FilePath);
-        Assert.Contains("共 2 次排查，正常 1，发现问题 1；问题共 1 项，已闭环 0", text);
+        Assert.Contains("共 2 次排查，正常 1，发现问题 1，未完成检查 0；问题共 1 项，已闭环 0", text);
         Assert.Contains("待复查", text);
         Assert.Contains(fixture.Point.Name, text);
         Assert.DoesNotContain("新点位名", text, StringComparison.Ordinal);
@@ -205,7 +205,7 @@ public sealed class WordStoreTests
     }
 
     [Fact]
-    public void CampaignExportsUseSnapshotNamesOriginalPhotosAndQuantities()
+    public void CampaignExportsUseSnapshotNamesAndOriginalPhotos()
     {
         using var fixture = new StoreFixture();
         var type = fixture.Store.GetCampaignTypes()[0];
