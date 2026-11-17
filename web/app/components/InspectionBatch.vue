@@ -10,6 +10,9 @@ const focus = useDialogFocus('[data-testid="batch-feedback"]:not(:disabled), [da
 interface Entry { issueId: string; number: number; description: string; selected: boolean; text: string; photos: PhotoUploadDto[]; busy: boolean; failed: boolean }
 const state = reactive<{ date: string; items: Entry[] }>({ date: todayLocal(), items: [] })
 const saving = ref(false), error = ref(''), discardOpen = ref(false)
+const commonText = ref('')
+const selectedCount = computed(() => state.items.filter(item => item.selected).length)
+function applyCommonText() { const value = commonText.value.trim(); if (!value) return; for (const item of state.items) if (item.selected && !item.text.trim()) item.text = value }
 let initialState = ''
 let leaveResolve: ((value: boolean) => void) | undefined
 function fingerprint() { return JSON.stringify({ date: state.date, items: state.items.map(item => ({ id: item.issueId, selected: item.selected, text: item.text, photos: item.photos.map(photo => photo.id) })) }) }
@@ -32,7 +35,7 @@ const title = computed(() => props.mode === 'feedback' ? '记录反馈' : '复�
 const textLabel = computed(() => props.mode === 'feedback' ? '整改情况' : '复查结论')
 watch(open, value => {
   if (!value) return
-  error.value = ''; state.date = bootstrap.value?.today ?? todayLocal()
+  error.value = ''; commonText.value = ''; state.date = bootstrap.value?.today ?? todayLocal()
   state.items = props.detail.issues.map((issue, index) => ({ issue, index })).filter(({ issue }) => issue.status === (props.mode === 'feedback' ? 'pending' : 'feedback')).map(({ issue, index }) => ({ issueId: issue.id, number: index + 1, description: issue.description, selected: !props.selectedIssue || props.selectedIssue === issue.id, text: '', photos: [], busy: false, failed: false }))
   initialState = fingerprint()
 })
@@ -55,7 +58,10 @@ onBeforeUnmount(() => { emit('busy', false); leaveResolve?.(false) })
 </script>
 <template>
   <UModal v-model:open="modalOpen" :content="focus.content" @after:leave="focus.restoreFocus" :title="title" :dismissible="!busy" :close="!busy" :ui="{ content: 'mobile-full-dialog max-w-[560px]' }">
-    <template #body><UForm id="batch-form" :state="state" :validate="validate" class="space-y-3" @submit="save"><UFormField name="date" :label="mode === 'feedback' ? '反馈日期' : '复查日期'" required><UInput v-model="state.date" data-testid="batch-date" type="date" :max="todayLocal()" :disabled="saving" class="w-full" /></UFormField><UFormField name="items"><div v-for="(item, index) in state.items" :key="item.issueId" class="border-b border-[var(--divider)] py-2"><div class="check-row"><UCheckbox v-model="item.selected" :label="`问题 ${item.number} · ${item.description}`" :disabled="busy" :data-testid="`batch-issue-${item.number}`" /></div><div v-if="item.selected" class="mt-2 space-y-3"><UFormField :name="`items.${index}.text`" :label="textLabel" required><UTextarea v-model="item.text" :rows="3" :maxlength="8000" class="w-full" :disabled="saving" :data-testid="`batch-notes-${item.number}`" /></UFormField><UFormField :label="mode === 'feedback' ? '整改后照片' : '复查照片'"><PhotoUploader v-model="item.photos" :phase="mode === 'feedback' ? 'after' : 'review'" :quality="bootstrap?.settings.jpegQuality" :disabled="saving" @busy="item.busy = $event" @failed="item.failed = $event" /></UFormField></div></div></UFormField><UAlert v-if="error" :description="error" color="error" variant="subtle" /></UForm></template>
+    <template #body><UForm id="batch-form" :state="state" :validate="validate" class="space-y-3" @submit="save"><UFormField name="date" :label="mode === 'feedback' ? '反馈日期' : '复查日期'" required><UInput v-model="state.date" data-testid="batch-date" type="date" :max="todayLocal()" :disabled="saving" class="w-full" /></UFormField><div class="rounded-lg border border-[var(--divider)] p-3 space-y-2">
+      <UFormField :label="mode === 'feedback' ? '统一整改情况（选填）' : '统一复查结论（选填）'"><UTextarea v-model="commonText" :rows="2" :maxlength="8000" placeholder="同一现场有多项结论一致时，可一次填写" class="w-full" /></UFormField>
+      <div class="flex flex-wrap items-center justify-between gap-2"><span class="text-xs text-muted">已选择 {{ selectedCount }} 项，仅填充空白结论，不覆盖已填写内容</span><UButton type="button" color="neutral" variant="outline" label="应用到选中问题" :disabled="!commonText.trim() || !selectedCount || busy" @click="applyCommonText" /></div>
+    </div><UFormField name="items"><div v-for="(item, index) in state.items" :key="item.issueId" class="border-b border-[var(--divider)] py-2"><div class="check-row"><UCheckbox v-model="item.selected" :label="`问题 ${item.number} · ${item.description}`" :disabled="busy" :data-testid="`batch-issue-${item.number}`" /></div><div v-if="item.selected" class="mt-2 space-y-3"><UFormField :name="`items.${index}.text`" :label="textLabel" required><UTextarea v-model="item.text" :rows="3" :maxlength="8000" class="w-full" :disabled="saving" :data-testid="`batch-notes-${item.number}`" /></UFormField><UFormField :label="mode === 'feedback' ? '整改后照片' : '复查照片'"><PhotoUploader v-model="item.photos" :phase="mode === 'feedback' ? 'after' : 'review'" :quality="bootstrap?.settings.jpegQuality" :disabled="saving" @busy="item.busy = $event" @failed="item.failed = $event" /></UFormField></div></div></UFormField><UAlert v-if="error" :description="error" color="error" variant="subtle" /></UForm></template>
     <template #footer><span v-if="uploading" class="mr-auto text-xs text-muted">{{ photosFailed ? '有照片未完成，请重试或移除' : '照片处理中' }}</span><UButton label="取消" color="neutral" variant="outline" :disabled="busy" @click="requestClose" /><UButton type="submit" form="batch-form" label="保存" :loading="saving" :disabled="uploading || !state.items.some(item => item.selected)" data-testid="batch-save" /></template>
   </UModal>
   <UModal v-model:open="discardOpen" title="放弃未提交内容？" :description="`未提交的${mode === 'feedback' ? '反馈' : '复查'}内容将丢失`" :dismissible="false" :close="false">
