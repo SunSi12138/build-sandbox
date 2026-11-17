@@ -88,12 +88,16 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            string actualId;
-            using (var transaction = _db.BeginTransaction())
+            // A missing PhotoIds property means a legacy metadata-only update.
+            // When supplied, reconcile removals and additions in one transaction.
+            var removed = id is null || request.PhotoIds is null ? [] :
+                ReadPhotos(pointId: id).Where(photo => !request.PhotoIds.Contains(photo.Id, StringComparer.Ordinal))
+                    .Select(photo => photo.Id).ToArray();
+            string actualId = "";
+            ExecuteWithPhotoDeletion(removed, transaction =>
             {
                 actualId = SavePointCore(id, request, transaction);
-                transaction.Commit();
-            }
+            });
             return GetPoint(actualId);
         }
     }
