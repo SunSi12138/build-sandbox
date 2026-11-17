@@ -28,7 +28,10 @@ public sealed partial class Store
     private static PointDto ReadPoint(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetInt32(11) != 0, NullableString(row, 12), row.GetInt32(13), row.IsDBNull(14) ? null : row.GetDouble(14),
-        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), row.GetInt32(19), row.GetString(20), JsonDocument.Parse(row.GetString(21)).RootElement.Clone());
+        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), row.GetInt32(19), row.GetString(20), ReadPointExtra(row.GetString(21)));
+
+    private static JsonElement? ReadPointExtra(string value) =>
+        value == "{}" ? null : JsonDocument.Parse(value).RootElement.Clone();
 
     public PointDto GetPoint(string id)
     {
