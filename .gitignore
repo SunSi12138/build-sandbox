@@ -24,3 +24,8 @@ release/
 运行版/
 tiles/
 map-providers.local.json
+mappreview/imagery/
+mappreview/labels/
+mappreview/certs/
+mappreview/*.zip
+mappreview/screenshots/

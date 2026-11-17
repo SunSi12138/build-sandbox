@@ -1,0 +1,1363 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>桑珠孜区 · 2025 全国高质量一张图</title>
+<link rel="stylesheet" href="./viewer/ol.css">
+<style>
+  :root {
+    --panel: rgba(18, 22, 28, 0.9);
+    --line: rgba(255, 255, 255, 0.12);
+    --text: #e8edf3;
+    --muted: #9aa7b5;
+    --accent: #35d0ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0c1015; }
+  body { font: 13px/1.5 "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; color: var(--text); }
+  #map { position: absolute; inset: 0; background: #0c1015; }
+
+  .panel {
+    position: absolute; top: 14px; left: 14px; z-index: 10;
+    width: 292px; max-width: calc(100vw - 28px);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+  }
+  .panel-head {
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .panel-head h1 {
+    margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: .2px;
+  }
+  .panel-head p { margin: 0; color: var(--muted); font-size: 12px; }
+  .panel-body { padding: 10px 14px 12px; }
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 6px 0;
+  }
+  .row label { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  .swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .swatch.img { background: #d7b377; }
+  .swatch.lbl { background: #ffffff; border: 1px solid #888; }
+  .swatch.border { background: transparent; border: 1.5px solid var(--accent); }
+  .swatch.hd { background: linear-gradient(135deg, #35d0ff 0 48%, #0c1015 48% 52%, #35d0ff 52% 100%); }
+  .hint { color: var(--muted); font-size: 11px; }
+  #depthBadge { max-width: 190px; text-align: right; line-height: 1.3; }
+  .slider-row { padding-top: 2px; }
+  .slider-row input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .divider { height: 1px; background: var(--line); margin: 8px 0; }
+  .hd-warn {
+    display: none; margin-top: 3px; padding: 6px 8px; border-radius: 6px;
+    background: rgba(255, 184, 77, 0.1); border: 1px solid rgba(255, 184, 77, 0.35);
+    color: #ffcf87; font-size: 11px; line-height: 1.45;
+  }
+  .hd-warn b { color: #ffe1a8; font-weight: 600; }
+  .btns { display: flex; gap: 8px; padding-top: 4px; }
+  button {
+    flex: 1; padding: 7px 8px; border-radius: 6px; cursor: pointer;
+    border: 1px solid rgba(53, 208, 255, 0.35);
+    background: rgba(53, 208, 255, 0.1);
+    color: #dff7ff; font: inherit; font-size: 12px;
+  }
+  button:hover { background: rgba(53, 208, 255, 0.2); }
+  .statusbar {
+    margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; gap: 10px;
+    color: var(--muted); font-size: 11px;
+  }
+  .statusbar b { color: var(--text); font-weight: 500; }
+
+  .ol-zoom { top: auto; bottom: 34px; left: auto; right: 14px; }
+  .ol-scale-line { left: auto; right: 14px; bottom: 10px; background: rgba(0,0,0,.45); }
+  .ol-attribution { background: rgba(0,0,0,.55); color: #ddd; font-size: 10px; }
+  .ol-attribution a { color: #9fdcff; }
+
+  #toast {
+    position: absolute; left: 50%; top: 16px; transform: translateX(-50%);
+    z-index: 20; max-width: 80vw; padding: 9px 14px; border-radius: 8px;
+    background: rgba(180, 40, 40, 0.95); color: #fff; display: none;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+  }
+  #loading {
+    position: absolute; right: 14px; top: 14px; z-index: 10;
+    padding: 6px 10px; border-radius: 999px; font-size: 12px;
+    background: rgba(18,22,28,.82); border: 1px solid var(--line);
+    color: var(--muted); display: none;
+  }
+  .export-mask {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(0, 0, 0, 0.62);
+  }
+  .export-dialog {
+    width: 360px; max-width: calc(100vw - 28px);
+    background: #151b22; border: 1px solid var(--line);
+    border-radius: 10px; box-shadow: 0 18px 50px rgba(0,0,0,.45);
+    overflow: hidden;
+  }
+  .export-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--line);
+  }
+  .export-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .export-x {
+    flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+    border: 0; background: transparent; color: var(--muted); font-size: 20px;
+  }
+  .export-x:hover { color: #fff; background: transparent; }
+  .export-body { padding: 12px 14px; }
+  .export-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 6px 0; color: var(--text); font-size: 12px;
+  }
+  .export-row label { color: var(--muted); }
+  .export-check { display: flex; align-items: center; gap: 8px; color: var(--text) !important; }
+  .export-check input { accent-color: var(--accent); }
+  .export-row select {
+    background: #0f141a; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 8px; font: inherit; min-width: 150px;
+  }
+  .export-info {
+    margin-top: 8px; padding: 9px 10px; border-radius: 6px;
+    background: rgba(53,208,255,.07); border: 1px solid rgba(53,208,255,.2);
+    color: #b9dbe8; font-size: 11px; line-height: 1.55; white-space: pre-line;
+  }
+  .export-actions { display: flex; gap: 8px; padding: 0 14px 14px; }
+  .export-actions button { flex: 1; }
+  .export-actions #exportStart { border-color: rgba(53,208,255,.6); background: rgba(53,208,255,.2); }
+  .export-actions button:disabled { opacity: .5; cursor: wait; }
+
+  @media (max-width: 640px) {
+    .panel { width: calc(100vw - 28px); }
+    .panel-body { padding: 8px 12px 10px; }
+    .export-dialog { width: calc(100vw - 28px); }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="toast"></div>
+<div id="loading">加载瓦片…</div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h1>桑珠孜区 · 2025 全国高质量一张图</h1>
+    <p>吉林一号 0.5 m · 影像与标注分层预览 · <span id="protocol">--</span></p>
+  </div>
+  <div class="panel-body">
+    <div class="row">
+      <label><input type="checkbox" id="cbImagery" checked><span class="swatch img"></span>卫星影像</label>
+      <span class="hint" id="imageryState">z10–z17 + z18 核心</span>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="cbLabels" checked><span class="swatch lbl"></span>地名标注</label>
+      <span class="hint">天地图 cva_w</span>
+    </div>
+    <div class="row slider-row">
+      <span class="hint">标注透明度</span>
+      <input type="range" id="labelOpacity" min="0" max="100" value="90" style="width:150px">
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="cbBorder" checked><span class="swatch border"></span>区界</label>
+      <span class="hint">WGS84</span>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="row">
+      <span class="hint">加载深度</span>
+      <span class="hint" id="depthBadge">原层</span>
+    </div>
+    <div class="row slider-row">
+      <input type="range" id="tileDepth" min="0" max="5" step="1" value="0">
+    </div>
+    <div class="hd-warn" id="hdWarn"></div>
+    <div class="btns" style="padding-top:8px">
+      <button id="btnExport">离屏导出高清图</button>
+    </div>
+    <div class="divider"></div>
+    <div class="btns">
+      <button id="btnAll">全区</button>
+      <button id="btnCore">核心区</button>
+      <button id="btnNorth">指北</button>
+    </div>
+    <div class="hint" style="padding-top:6px">Ctrl + 拖拽旋转地图</div>
+    <div class="statusbar">
+      <span>缩放 <b id="zoom">--</b> · 旋转 <b id="rotation">0°</b></span>
+      <span id="coord">经度, 纬度</span>
+    </div>
+  </div>
+</div>
+
+<div class="export-mask" id="exportMask">
+  <div class="export-dialog">
+    <div class="export-head">
+      <h2>离屏高清导出</h2>
+      <button class="export-x" id="exportClose" title="关闭">×</button>
+    </div>
+    <div class="export-body">
+      <div class="export-row">
+        <label for="exportScale">输出倍率</label>
+        <span class="hint" id="exportScaleBadge">2.0×</span>
+      </div>
+      <div class="export-row" style="padding-top:0">
+        <input type="range" id="exportScale" min="1" max="16" step="0.5" value="2" style="width:100%">
+      </div>
+      <div class="export-row">
+        <label for="exportDepth">加载深度</label>
+        <select id="exportDepth">
+          <option value="0">0 级（原层）</option>
+          <option value="1" selected>+1 级</option>
+          <option value="2">+2 级</option>
+          <option value="3">+3 级</option>
+          <option value="4">+4 级</option>
+          <option value="5">+5 级</option>
+        </select>
+      </div>
+      <div class="export-row">
+        <label class="export-check"><input type="checkbox" id="exportLabels" checked> 包含地名标注</label>
+      </div>
+      <div class="export-row">
+        <label class="export-check"><input type="checkbox" id="exportBoundary"> 包含区界</label>
+      </div>
+      <div class="export-row">
+        <label class="export-check"><input type="checkbox" id="exportRotation"> 保持当前旋转</label>
+      </div>
+      <div class="export-row">
+        <label for="exportBackground">背景</label>
+        <select id="exportBackground">
+          <option value="transparent">透明</option>
+          <option value="black" selected>黑色</option>
+          <option value="white">白色</option>
+        </select>
+      </div>
+      <div class="export-row">
+        <label for="exportFormat">图片格式</label>
+        <select id="exportFormat">
+          <option value="image/png">PNG（可透明）</option>
+          <option value="image/jpeg">JPEG（白底）</option>
+        </select>
+      </div>
+      <div class="export-row">
+        <label for="chunkHeight">分块高度</label>
+        <select id="chunkHeight">
+          <option value="128">128 px（低配）</option>
+          <option value="256">256 px</option>
+          <option value="512" selected>512 px（推荐）</option>
+          <option value="1024">1024 px（高配）</option>
+          <option value="2048">2048 px（很吃内存）</option>
+        </select>
+      </div>
+      <div class="export-row">
+        <label class="export-check"><input type="checkbox" id="chunkForce"> 强制分块渲染</label>
+      </div>
+      <div class="export-info" id="exportInfo"></div>
+    </div>
+    <div class="export-actions">
+      <button id="exportCancel">取消</button>
+      <button id="exportStart">开始渲染</button>
+    </div>
+  </div>
+</div>
+
+<script src="./viewer/ol.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const toast = document.getElementById('toast');
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.style.display = 'block';
+  }
+
+  if (!window.ol) {
+    showToast('OpenLayers 未加载：请确认 viewer/ol.js 存在。');
+    return;
+  }
+
+  const DISTRICT_CENTER = [89.05, 29.28];
+
+  // 本地瓦片：影像目录和标注目录都由下载脚本生成。
+  const imagerySource = new ol.source.XYZ({
+    url: './imagery/{z}/{x}/{y}.webp',
+    minZoom: 10,
+    maxZoom: 18,
+    crossOrigin: 'anonymous',
+    attributions: '影像 © 长光卫星 · 吉林一号'
+  });
+  const labelSource = new ol.source.XYZ({
+    url: './labels/{z}/{x}/{y}.png',
+    minZoom: 10,
+    maxZoom: 18,
+    crossOrigin: 'anonymous',
+    attributions: '注记 © 天地图'
+  });
+
+  const imageryLayer = new ol.layer.Tile({
+    source: imagerySource,
+    zIndex: 1,
+    preload: 1
+  });
+  const labelLayer = new ol.layer.Tile({
+    source: labelSource,
+    zIndex: 2,
+    opacity: 0.9,
+    preload: 1
+  });
+
+  const aoiSource = new ol.source.Vector();
+  const detailSource = new ol.source.Vector();
+  const aoiLayer = new ol.layer.Vector({
+    source: aoiSource,
+    zIndex: 5,
+    style: new ol.style.Style({
+      stroke: new ol.style.Stroke({ color: '#35d0ff', width: 2.2 }),
+      fill: new ol.style.Fill({ color: 'rgba(53,208,255,0.05)' })
+    })
+  });
+  const detailLayer = new ol.layer.Vector({
+    source: detailSource,
+    zIndex: 6,
+    style: new ol.style.Style({
+      stroke: new ol.style.Stroke({ color: '#ffd24a', width: 2, lineDash: [7, 5] }),
+      fill: new ol.style.Fill({ color: 'rgba(255,210,74,0.04)' })
+    })
+  });
+
+  const view = new ol.View({
+    center: ol.proj.fromLonLat(DISTRICT_CENTER),
+    zoom: 11,
+    minZoom: 9,
+    maxZoom: 18,
+    constrainResolution: false
+  });
+
+  const map = new ol.Map({
+    target: 'map',
+    layers: [imageryLayer, labelLayer, aoiLayer, detailLayer],
+    view: view,
+    controls: ol.control.defaults.defaults({
+      attribution: true,
+      zoom: true,
+      rotate: false
+    }).extend([
+      new ol.control.ScaleLine({ units: 'metric', bar: false, steps: 2, text: true })
+    ])
+  });
+
+  // 便于在控制台调试：previewMap.getView().setZoom(18)
+  window.previewMap = map;
+
+  // 显示浏览器实际使用的协议（h2 / http/1.1）
+  try {
+    const nav = performance.getEntriesByType('navigation')[0];
+    document.getElementById('protocol').textContent =
+      (nav && nav.nextHopProtocol) || (location.protocol === 'https:' ? 'h2?' : 'http/1.1');
+  } catch (e) { /* 忽略 */ }
+
+  // Ctrl + 拖拽旋转。OpenLayers 默认只提供 Alt+Shift 拖拽旋转，
+  // 这里单独加一个只响应 Ctrl（macOS 同时支持 Command）的 DragRotate。
+  const ctrlRotate = new ol.interaction.DragRotate({
+    condition: function (evt) {
+      const oe = evt.originalEvent;
+      return !!(oe && (oe.ctrlKey || oe.metaKey));
+    }
+  });
+  map.addInteraction(ctrlRotate);
+
+  // 旋转角度显示 + 指北
+  const rotationEl = document.getElementById('rotation');
+  function updateRotation() {
+    const deg = view.getRotation() * 180 / Math.PI;
+    rotationEl.textContent = (Math.abs(deg) < 0.5 ? 0 : deg).toFixed(0) + '°';
+  }
+  view.on('change:rotation', updateRotation);
+  updateRotation();
+  document.getElementById('btnNorth').addEventListener('click', function () {
+    view.animate({ rotation: 0, duration: 350 });
+  });
+
+  let allExtent = null;
+  let coreExtent = null;
+
+  // -------------------------------------------------------------------------
+  // 加载深度：0–5 级。
+  // OpenLayers 默认只把 256px 瓦片放大到高像素画布，不会自动请求更深层。
+  // 这里只对本页两个 Tile 源做运行时补丁：
+  //   1) 选瓦片时把分辨率除以 2^renderDepth；
+  //   2) tilePixelRatio = pixelRatio / 2^renderDepth，保证地理范围对齐。
+  //
+  // 渲染深度受两个条件限制：
+  //   * tilePixelRatio 不能低于 0.125（低于这个值 OpenLayers 只画出中心一块）
+  //   * z18 是数据上限
+  // 超出的 4–5 级只做浏览器缓存预取，不再进入当前画面。
+  // -------------------------------------------------------------------------
+  const MAX_TILE_ZOOM = 18;
+  const MIN_TILE_PIXEL_RATIO = 0.25;
+  let tileDepth = 0;
+  let deepTileSources = [];
+  let depthTimer = null;
+  let prefetchTimer = null;
+  let prefetchSerial = 0;
+  const prefetched = new Set();
+
+  const tileDepthEl = document.getElementById('tileDepth');
+  const depthBadge = document.getElementById('depthBadge');
+  const hdWarn = document.getElementById('hdWarn');
+
+  function maxRenderDepth() {
+    const pr = map.getPixelRatio() || 1;
+    return Math.max(0, Math.floor(Math.log2(pr / MIN_TILE_PIXEL_RATIO)));
+  }
+
+  function availableDepthFor(z) {
+    return Math.min(tileDepth, Math.max(0, MAX_TILE_ZOOM - z));
+  }
+
+  function renderDepthFor(z) {
+    return Math.min(availableDepthFor(z), maxRenderDepth());
+  }
+
+  function initDeepTileSupport() {
+    deepTileSources = map.getLayers().getArray()
+      .filter(function (l) { return l instanceof ol.layer.Tile; })
+      .map(function (l) { return l.getSource(); });
+
+    deepTileSources.forEach(function (src) {
+      const grid = src.getTileGrid();
+      if (grid && !grid.__hdPatched) {
+        const original = grid.getZForResolution.bind(grid);
+        grid.__hdPatched = true;
+        grid.getZForResolution = function (resolution, direction) {
+          const d = renderDepthFor(map.getView().getZoom());
+          if (d > 0 && arguments.length >= 2) {
+            return original(resolution / Math.pow(2, d), direction);
+          }
+          return original(resolution, direction);
+        };
+      }
+      if (!src.__hdOriginalPixelRatio) {
+        src.__hdOriginalPixelRatio = src.getTilePixelRatio.bind(src);
+        src.getTilePixelRatio = function (pixelRatio) {
+          const z = map.getView().getZoom();
+          const d = renderDepthFor(z);
+          if (!d) return this.__hdOriginalPixelRatio(pixelRatio);
+          return Math.max(MIN_TILE_PIXEL_RATIO, pixelRatio / Math.pow(2, d));
+        };
+      }
+    });
+  }
+
+  function refreshDeepSources() {
+    deepTileSources.forEach(function (src) {
+      if (src.refresh) src.refresh();
+    });
+    schedulePrefetch();
+  }
+
+  function inCoreArea() {
+    if (!coreExtent) return false;
+    const center = map.getView().getCenter();
+    return !!(center && ol.extent.containsCoordinate(coreExtent, center));
+  }
+
+  function updateDepthBadge() {
+    const z = map.getView().getZoom();
+    const rd = renderDepthFor(z);
+    const avail = availableDepthFor(z);
+    const extra = avail - rd;
+    if (tileDepth === 0) {
+      depthBadge.textContent = '原层 · z' + z.toFixed(1);
+      return;
+    }
+    let text = '+' + tileDepth + ' 级';
+    if (extra > 0.01) {
+      text += ' · 渲染 +' + rd.toFixed(1) + ' · 预取 +' + extra.toFixed(1);
+    } else if (avail > 0.01) {
+      text += ' → z' + Math.min(MAX_TILE_ZOOM, z + avail).toFixed(1);
+    } else {
+      text += ' · z18 已封顶';
+    }
+    depthBadge.textContent = text;
+  }
+
+  function checkHdCoverage() {
+    const z = map.getView().getZoom();
+    const rd = renderDepthFor(z);
+    const avail = availableDepthFor(z);
+    const extra = avail - rd;
+    const beyond = tileDepth - avail;
+    const msgs = [];
+    if (beyond > 0.01) {
+      msgs.push(
+        '<b>z18 已封顶：</b>有 +' + beyond.toFixed(1) +
+        ' 级没有可用瓦片，缩小视角后才能生效。'
+      );
+    }
+    if (extra > 0.01) {
+      msgs.push(
+        '<b>屏幕/画布限制：</b>当前最多渲染 +' + rd.toFixed(1) +
+        ' 级，多出的 +' + extra.toFixed(1) + ' 级只预取缓存，不会显示更多细节。'
+      );
+    }
+    if ((z + rd) > 17.2 && !inCoreArea()) {
+      msgs.push(
+        '<b>核心区外没有 z18 瓦片：</b>当前渲染会请求 z18，外围可能空白。' +
+        '建议降低加载深度、缩到 z16 或移到核心区。'
+      );
+    }
+    if (msgs.length) {
+      hdWarn.innerHTML = msgs.join('<br>');
+      hdWarn.style.display = 'block';
+    } else {
+      hdWarn.style.display = 'none';
+    }
+  }
+
+  function schedulePrefetch() {
+    if (prefetchTimer) clearTimeout(prefetchTimer);
+    // 视图稳定后再预取，避免拖动时疯狂发请求。
+    prefetchTimer = setTimeout(function () {
+      prefetchTimer = null;
+      prefetchExtraTiles();
+    }, 800);
+  }
+
+  function prefetchExtraTiles() {
+    const z = map.getView().getZoom();
+    const rd = renderDepthFor(z);
+    if (tileDepth <= rd + 0.01) return;
+    if (!coreExtent && !allExtent) return;
+
+    const z0 = Math.floor(z) + Math.ceil(rd) + 1;
+    const core = inCoreArea();
+    // 核心区外不预取 z18，避免必然 404。
+    const z1 = Math.min(MAX_TILE_ZOOM, Math.floor(z) + tileDepth, core ? 18 : 17);
+    if (z0 > z1) return;
+
+    const extent = view.calculateExtent(map.getSize());
+    const grid = imagerySource.getTileGrid();
+    const seq = ++prefetchSerial;
+    const MAX_PREFETCH = 300;
+    const levels = z1 - z0 + 1;
+    const perLevel = Math.max(1, Math.floor(MAX_PREFETCH / levels));
+    let count = 0;
+
+    for (let zz = z0; zz <= z1; zz++) {
+      let range;
+      try {
+        range = grid.getTileRangeForExtentAndZ(extent, zz);
+      } catch (e) {
+        continue;
+      }
+      const cx = (range.minX + range.maxX) / 2;
+      const cy = (range.minY + range.maxY) / 2;
+      const coords = [];
+      for (let x = range.minX; x <= range.maxX; x++) {
+        for (let y = range.minY; y <= range.maxY; y++) {
+          coords.push([x, y, Math.abs(x - cx) + Math.abs(y - cy)]);
+        }
+      }
+      // 每层从视口中心往外取，保证 +5 时最深层也能覆盖到中心。
+      coords.sort(function (a, b) { return a[2] - b[2]; });
+
+      let taken = 0;
+      for (let i = 0; i < coords.length && taken < perLevel; i++) {
+        if (seq !== prefetchSerial) return;
+        const x = coords[i][0], y = coords[i][1];
+        const key = zz + '/' + x + '/' + y;
+        if (prefetched.has(key)) continue;
+        prefetched.add(key);
+        if (prefetched.size > 20000) prefetched.clear();
+
+        // 只预取影像；标注文件小，等真正缩放时再按需加载。
+        fetch('./imagery/' + zz + '/' + x + '/' + y + '.webp', { cache: 'force-cache' })
+          .catch(function () {});
+        taken++;
+        count++;
+        if (count >= MAX_PREFETCH) return;
+      }
+    }
+  }
+
+  function applyTileDepth(depth) {
+    if (depthTimer) {
+      clearTimeout(depthTimer);
+      depthTimer = null;
+    }
+    tileDepth = Math.max(0, Math.min(5, parseInt(depth, 10) || 0));
+    tileDepthEl.value = String(tileDepth);
+    refreshDeepSources();
+    updateDepthBadge();
+    checkHdCoverage();
+  }
+
+  tileDepthEl.addEventListener('input', function (e) {
+    const depth = parseInt(e.target.value, 10) || 0;
+    if (depthTimer) clearTimeout(depthTimer);
+    depthTimer = setTimeout(function () {
+      depthTimer = null;
+      applyTileDepth(depth);
+    }, 100);
+  });
+
+  map.on('moveend', function () {
+    updateDepthBadge();
+    checkHdCoverage();
+    schedulePrefetch();
+  });
+  view.on('change:resolution', function () {
+    updateDepthBadge();
+    checkHdCoverage();
+  });
+
+  initDeepTileSupport();
+  applyTileDepth(0);
+
+  // -------------------------------------------------------------------------
+  // 离屏高清导出：新建一个不显示控件、不包含面板的 Map，按导出倍率
+  // 和加载深度渲染到独立 canvas，再下载。屏幕只负责显示，不限制导出像素。
+  // -------------------------------------------------------------------------
+  const exportMask = document.getElementById('exportMask');
+  const exportScaleEl = document.getElementById('exportScale');
+  const exportDepthEl = document.getElementById('exportDepth');
+  const exportLabelsEl = document.getElementById('exportLabels');
+  const exportBoundaryEl = document.getElementById('exportBoundary');
+  const exportRotationEl = document.getElementById('exportRotation');
+  const exportBackgroundEl = document.getElementById('exportBackground');
+  const exportFormatEl = document.getElementById('exportFormat');
+  const chunkHeightEl = document.getElementById('chunkHeight');
+  const chunkForceEl = document.getElementById('chunkForce');
+  const exportInfoEl = document.getElementById('exportInfo');
+  const exportStartBtn = document.getElementById('exportStart');
+  const exportCancelBtn = document.getElementById('exportCancel');
+  let exporting = false;
+
+  function exportPlan() {
+    const size = map.getSize() || [1200, 700];
+    const baseW = Math.max(1, size[0]);
+    const baseH = Math.max(1, size[1]);
+    const requestedScale = Number(exportScaleEl.value) || 2;
+    const requestedDepth = parseInt(exportDepthEl.value, 10) || 0;
+    const z = map.getView().getZoom();
+
+    // 单图模式保留 80MP 上限；超过后自动切到分块流式 PNG，
+    // 分块模式允许更大，但仍限制单边 32000px、总量 800MP。
+    let outScale = requestedScale;
+    let chunked = false;
+    let outW = Math.max(1, Math.round(baseW * outScale));
+    let outH = Math.max(1, Math.round(baseH * outScale));
+
+    if (chunkForceEl.checked || outW * outH > 80e6 || outW > 14000 || outH > 14000) {
+      chunked = true;
+      const maxByPixels = Math.sqrt(800e6 / (baseW * baseH));
+      outScale = Math.min(outScale, 32000 / baseW, 32000 / baseH, maxByPixels);
+      outScale = Math.max(1, outScale);
+      outW = Math.max(1, Math.round(baseW * outScale));
+      outH = Math.max(1, Math.round(baseH * outScale));
+    }
+
+    // 分块模式目前只可靠支持北向上；旋转导出自动退回单图模式，
+    // 单图模式受 80MP / 14000px 限制，会适当降低倍率。
+    if (chunked && exportRotationEl.checked) {
+      chunked = false;
+      const maxScale = Math.min(
+        requestedScale,
+        Math.sqrt(80e6 / (baseW * baseH)),
+        14000 / baseW,
+        14000 / baseH
+      );
+      outScale = Math.max(1, Math.min(outScale, maxScale));
+      outW = Math.max(1, Math.round(baseW * outScale));
+      outH = Math.max(1, Math.round(baseH * outScale));
+    }
+
+    // 单图模式的离屏渲染深度
+    let d = 0;
+    if (!chunked) {
+      while (d < requestedDepth) {
+        const nw = baseW * Math.pow(2, d + 1);
+        const nh = baseH * Math.pow(2, d + 1);
+        if (nw * nh > 64e6) break;
+        if (z + d + 1 > MAX_TILE_ZOOM) break;
+        d++;
+      }
+    }
+    const renderW = chunked ? outW : Math.max(1, Math.round(baseW * Math.pow(2, d)));
+    const renderH = chunked ? outH : Math.max(1, Math.round(baseH * Math.pow(2, d)));
+
+    const bandHeight = Math.max(64, parseInt(chunkHeightEl.value, 10) || 512);
+    return {
+      baseW, baseH, z, requestedScale, outScale, outW, outH,
+      requestedDepth, depth: d, renderW, renderH,
+      chunked, bandHeight,
+      chunks: chunked ? Math.ceil(outH / bandHeight) : 0,
+      // 分块模式按输出倍率决定实际瓦片层级；深度再作为上限。
+      sourceMaxZoom: chunked
+        ? Math.min(MAX_TILE_ZOOM, Math.floor(z + requestedDepth))
+        : MAX_TILE_ZOOM
+    };
+  }
+
+  function refreshExportInfo() {
+    const p = exportPlan();
+    document.getElementById('exportScaleBadge').textContent = p.outScale.toFixed(1) + '×';
+    if (p.chunked) {
+      exportFormatEl.value = 'image/png';
+    }
+    const lines = [
+      '最终图片：' + p.outW + ' × ' + p.outH + ' px' +
+        '（' + (p.outW * p.outH / 1e6).toFixed(1) + 'MP）',
+      p.chunked
+        ? '模式：分块流式 PNG · 每段 ' + p.bandHeight + ' px · 共 ' + p.chunks + ' 段'
+        : '模式：单图 · 离屏画布 ' + p.renderW + ' × ' + p.renderH + ' px',
+      p.chunked
+        ? '瓦片上限：z' + p.sourceMaxZoom + '（按加载深度 +' + p.requestedDepth + ' 封顶）'
+        : '渲染深度：+' + p.depth + ' 级 → z' + Math.min(MAX_TILE_ZOOM, p.z + p.depth).toFixed(1)
+    ];
+    if (p.outScale !== p.requestedScale) {
+      lines.push('注意：请求 ' + p.requestedScale.toFixed(1) + '×，受单边 32000px / 800MP 限制，实际 ' + p.outScale.toFixed(1) + '×。');
+    }
+    if (!p.chunked && p.depth < p.requestedDepth) {
+      lines.push('注意：请求 +' + p.requestedDepth + ' 级，但受 64MP / z18 限制，实际只渲染 +' + p.depth + ' 级。');
+    }
+    if (p.outW > p.renderW) {
+      lines.push('注意：输出像素高于离屏渲染像素，会放大显示。');
+    }
+    if (p.z + p.depth > 17.01 || p.sourceMaxZoom >= 18) {
+      lines.push('z18 核心区外用 z17 底图兜底，避免出现透明/黑块；核心区仍是 z18。');
+    }
+    const rotDeg = map.getView().getRotation() * 180 / Math.PI;
+    if (Math.abs(rotDeg) > 0.5) {
+      lines.push(
+        '当前地图旋转 ' + rotDeg.toFixed(0) + '°；' +
+        (exportRotationEl.checked ? '导出保持该旋转。' : '导出将自动转为北向上。')
+      );
+    }
+    if (p.chunked) {
+      lines.push('分块模式按北向上导出。');
+    } else if (exportRotationEl.checked) {
+      lines.push('旋转导出使用单图模式（分块只支持北向上）；倍率受 80MP 限制。');
+    }
+    lines.push('导出图只包含地图图层，不包含面板、缩放按钮等控件。');
+    exportInfoEl.textContent = lines.join('\n');
+  }
+
+  function closeExport() {
+    if (!exporting) exportMask.style.display = 'none';
+  }
+
+  function waitForOffscreen(offMap, timeoutMs) {
+    return new Promise(function (resolve) {
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        setTimeout(resolve, 250);
+      }
+      offMap.once('rendercomplete', finish);
+      offMap.renderSync();
+      setTimeout(finish, timeoutMs);
+    });
+  }
+
+  function downloadBlob(blob, filename) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1500);
+  }
+
+  // ---- 分块流式 PNG 导出 -------------------------------------------------
+  const CRC_TABLE = (function () {
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+    return table;
+  })();
+
+  function crc32Update(crc, bytes) {
+    let c = crc >>> 0;
+    for (let i = 0; i < bytes.length; i++) {
+      c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    }
+    return c >>> 0;
+  }
+
+  function pngChunkParts(type, data) {
+    const typeBytes = new TextEncoder().encode(type);
+    const len = new Uint8Array(4);
+    new DataView(len.buffer).setUint32(0, data.length);
+    let c = 0xffffffff;
+    c = crc32Update(c, typeBytes);
+    c = crc32Update(c, data);
+    c = (c ^ 0xffffffff) >>> 0;
+    const crc = new Uint8Array(4);
+    new DataView(crc.buffer).setUint32(0, c);
+    return [len, typeBytes, data, crc];
+  }
+
+  function waitForTiles(offMap, sources, timeoutMs) {
+    return new Promise(function (resolve) {
+      let pending = 0;
+      let lastEvent = Date.now();
+      let done = false;
+      const listeners = [];
+
+      function cleanup() {
+        listeners.forEach(function (item) {
+          item.source.un('tileloadstart', item.start);
+          item.source.un('tileloadend', item.end);
+          item.source.un('tileloaderror', item.end);
+        });
+      }
+      function finish() {
+        if (done) return;
+        done = true;
+        cleanup();
+        setTimeout(resolve, 120);
+      }
+      sources.forEach(function (source) {
+        const start = function () { pending++; lastEvent = Date.now(); };
+        const end = function () { pending = Math.max(0, pending - 1); lastEvent = Date.now(); };
+        source.on('tileloadstart', start);
+        source.on('tileloadend', end);
+        source.on('tileloaderror', end);
+        listeners.push({ source: source, start: start, end: end });
+      });
+
+      const startedAt = Date.now();
+      function check() {
+        if (done) return;
+        if (pending === 0 && Date.now() - lastEvent > 300) finish();
+        else if (Date.now() - startedAt > timeoutMs) finish();
+        else setTimeout(check, 100);
+      }
+      setTimeout(check, 120);
+    });
+  }
+
+  async function runChunkedExport(p) {
+    if (typeof CompressionStream === 'undefined') {
+      exportInfoEl.textContent = '当前浏览器不支持 CompressionStream，无法分块流式导出。请用较新的 Edge/Chrome。';
+      return;
+    }
+
+    const bandH = Math.max(64, p.bandHeight);
+    const totalBands = Math.ceil(p.outH / bandH);
+    const div = document.createElement('div');
+    div.style.cssText =
+      'position:fixed;left:-100000px;top:0;pointer-events:none;' +
+      'width:' + p.outW + 'px;height:' + bandH + 'px;';
+    document.body.appendChild(div);
+
+    exporting = true;
+    exportStartBtn.disabled = true;
+    exportCancelBtn.disabled = true;
+    exportStartBtn.textContent = '分块渲染中…';
+    exportFormatEl.value = 'image/png';
+
+    let offMap = null;
+    let writer = null;
+    let pumpPromise = null;
+    try {
+      const offLayers = [];
+      const cap = Math.min(MAX_TILE_ZOOM, p.sourceMaxZoom);
+      const needFallback = cap >= 18;
+
+      if (needFallback) {
+        offLayers.push(new ol.layer.Tile({
+          source: new ol.source.XYZ({
+            url: './imagery/{z}/{x}/{y}.webp',
+            minZoom: 10, maxZoom: 17, crossOrigin: 'anonymous'
+          })
+        }));
+      }
+      offLayers.push(new ol.layer.Tile({
+        source: new ol.source.XYZ({
+          url: './imagery/{z}/{x}/{y}.webp',
+          minZoom: 10, maxZoom: cap, crossOrigin: 'anonymous'
+        })
+      }));
+      if (exportLabelsEl.checked) {
+        if (needFallback) {
+          offLayers.push(new ol.layer.Tile({
+            source: new ol.source.XYZ({
+              url: './labels/{z}/{x}/{y}.png',
+              minZoom: 10, maxZoom: 17, crossOrigin: 'anonymous'
+            })
+          }));
+        }
+        offLayers.push(new ol.layer.Tile({
+          source: new ol.source.XYZ({
+            url: './labels/{z}/{x}/{y}.png',
+            minZoom: 10, maxZoom: cap, crossOrigin: 'anonymous'
+          })
+        }));
+      }
+      if (exportBoundaryEl.checked && aoiSource.getFeatures().length) {
+        const bsource = new ol.source.Vector({
+          features: aoiSource.getFeatures().map(function (f) { return f.clone(); })
+        });
+        offLayers.push(new ol.layer.Vector({
+          source: bsource,
+          style: new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#35d0ff', width: 2.2 }),
+            fill: new ol.style.Fill({ color: 'rgba(53,208,255,0.05)' })
+          })
+        }));
+      }
+
+      const center = view.getCenter();
+      const baseRes = view.getResolution();
+      const targetRes = baseRes / p.outScale;
+      // 分块模式只处理北向上；勾选旋转时 exportPlan 已改为单图模式。
+      const rot = 0;
+
+      // 把输出像素换算成地图坐标。
+      // 屏幕右方向 = (cosθ, sinθ)，屏幕下方向 = (sinθ, -cosθ)。
+      // 这样旋转视图也能正确切横带。
+      const cosR = Math.cos(rot);
+      const sinR = Math.sin(rot);
+      function outputPixelToCoord(px, py) {
+        const dx = (px - p.outW / 2) * targetRes;
+        const dy = (py - p.outH / 2) * targetRes;
+        return [
+          center[0] + dx * cosR + dy * sinR,
+          center[1] + dx * sinR - dy * cosR
+        ];
+      }
+
+      const firstCenter = outputPixelToCoord(p.outW / 2, bandH / 2);
+      const offView = new ol.View({
+        center: firstCenter,
+        resolution: targetRes,
+        rotation: rot,
+        projection: view.getProjection(),
+        minZoom: 9,
+        maxZoom: 18,
+        constrainResolution: false
+      });
+      offMap = new ol.Map({
+        target: div,
+        layers: offLayers,
+        view: offView,
+        controls: [],
+        interactions: [],
+        pixelRatio: 1
+      });
+      const offSources = offLayers.map(function (l) {
+        return l.getSource ? l.getSource() : null;
+      }).filter(Boolean);
+      offMap.setSize([p.outW, bandH]);
+      offMap.updateSize();
+
+      // PNG 头
+      const signature = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const ihdr = new Uint8Array(13);
+      const dv = new DataView(ihdr.buffer);
+      dv.setUint32(0, p.outW);
+      dv.setUint32(4, p.outH);
+      ihdr[8] = 8;  // bit depth
+      ihdr[9] = 6;  // RGBA
+      ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+      const pngParts = [signature];
+      pngParts.push(...pngChunkParts('IHDR', ihdr));
+
+      // 一个连续的 zlib/deflate 流；每段输出作为一个 IDAT 块。
+      const cs = new CompressionStream('deflate');
+      writer = cs.writable.getWriter();
+      const reader = cs.readable.getReader();
+      pumpPromise = (async function () {
+        while (true) {
+          const item = await reader.read();
+          if (item.done) break;
+          pngParts.push(...pngChunkParts('IDAT', item.value));
+        }
+      })();
+
+      const bg = exportBackgroundEl.value;
+      const fillColor = bg === 'black' ? '#000000' : (bg === 'white' ? '#ffffff' : null);
+      const bandCanvas = document.createElement('canvas');
+      const bandCtx = bandCanvas.getContext('2d');
+      const stride = p.outW * 4 + 1;
+
+      for (let i = 0; i < totalBands; i++) {
+        const y0 = i * bandH;
+        const bh = Math.min(bandH, p.outH - y0);
+        const bandCenter = outputPixelToCoord(p.outW / 2, y0 + bh / 2);
+
+        div.style.height = bh + 'px';
+        bandCanvas.width = p.outW;
+        bandCanvas.height = bh;
+        offMap.setSize([p.outW, bh]);
+        offMap.updateSize();
+        offView.setCenter(bandCenter);
+        offView.setRotation(rot);
+        offView.setResolution(targetRes);
+
+        // 不能只看 rendercomplete：它可能在上一段旧瓦片还在缓存时提前触发。
+        // 注册 tileloadstart/end，等这一段的新瓦片真正加载完再取像素。
+        const rendered = waitForTiles(offMap, offSources, 60000);
+        offMap.renderSync();
+        await rendered;
+
+        bandCtx.clearRect(0, 0, p.outW, bh);
+        if (fillColor) {
+          bandCtx.fillStyle = fillColor;
+          bandCtx.fillRect(0, 0, p.outW, bh);
+        }
+        div.querySelectorAll('canvas').forEach(function (c) {
+          bandCtx.drawImage(c, 0, 0, p.outW, bh);
+        });
+
+        const image = bandCtx.getImageData(0, 0, p.outW, bh);
+        const bandBytes = new Uint8Array(stride * bh);
+        const src = image.data;
+        for (let r = 0; r < bh; r++) {
+          const dst = r * stride;
+          bandBytes[dst] = 0; // filter: None
+          bandBytes.set(src.subarray(r * p.outW * 4, (r + 1) * p.outW * 4), dst + 1);
+        }
+        await writer.write(bandBytes);
+
+        exportInfoEl.textContent =
+          '分块渲染 ' + (i + 1) + ' / ' + totalBands +
+          '（每段 ' + bh + ' px，共 ' + p.outW + '×' + p.outH + '）…';
+      }
+
+      await writer.write(new Uint8Array(0));
+      await writer.close();
+      writer = null;
+      await pumpPromise;
+      pumpPromise = null;
+      pngParts.push(...pngChunkParts('IEND', new Uint8Array(0)));
+
+      const blob = new Blob(pngParts, { type: 'image/png' });
+      downloadBlob(
+        blob,
+        '桑珠孜区_2025_' + p.outW + 'x' + p.outH + '_chunk.png'
+      );
+      exportInfoEl.textContent =
+        '已导出分块 PNG：' + p.outW + ' × ' + p.outH +
+        ' px，每段 ' + p.bandHeight + ' px，共 ' + totalBands + ' 段。';
+    } catch (err) {
+      console.error(err);
+      exportInfoEl.textContent = '分块导出失败：' + (err && err.message ? err.message : err);
+    } finally {
+      if (writer) {
+        try { await writer.abort(); } catch (e) {}
+      }
+      if (pumpPromise) {
+        try { await pumpPromise; } catch (e) {}
+      }
+      if (offMap) offMap.setTarget(null);
+      div.remove();
+      exporting = false;
+      exportStartBtn.disabled = false;
+      exportCancelBtn.disabled = false;
+      exportStartBtn.textContent = '开始渲染';
+    }
+  }
+
+  async function runExport() {
+    if (exporting) return;
+    const p = exportPlan();
+    if (p.chunked) {
+      return runChunkedExport(p);
+    }
+    const format = exportFormatEl.value;
+    const ext = format === 'image/jpeg' ? 'jpg' : 'png';
+    const div = document.createElement('div');
+    div.style.cssText =
+      'position:fixed;left:-100000px;top:0;pointer-events:none;' +
+      'width:' + p.renderW + 'px;height:' + p.renderH + 'px;';
+    document.body.appendChild(div);
+
+    exporting = true;
+    exportStartBtn.disabled = true;
+    exportCancelBtn.disabled = true;
+    exportStartBtn.textContent = '渲染中…';
+    exportInfoEl.textContent =
+      '正在离屏渲染 ' + p.renderW + ' × ' + p.renderH + ' px，请求 z' +
+      Math.min(MAX_TILE_ZOOM, p.z + p.depth).toFixed(1) + ' 瓦片…';
+
+    let offMap = null;
+    try {
+      const offLayers = [];
+      const needFallback = p.z + p.depth > 17.01;
+
+      // z18 只有核心区有；视口跨出核心区时，先铺一层 z17 底图，
+      // 再叠 z18 高清层。z18 缺失处透出 z17，而不是透明/黑块。
+      if (needFallback) {
+        offLayers.push(new ol.layer.Tile({
+          source: new ol.source.XYZ({
+            url: './imagery/{z}/{x}/{y}.webp',
+            minZoom: 10,
+            maxZoom: 17,
+            crossOrigin: 'anonymous'
+          })
+        }));
+      }
+      offLayers.push(new ol.layer.Tile({
+        source: new ol.source.XYZ({
+          url: './imagery/{z}/{x}/{y}.webp',
+          minZoom: 10,
+          maxZoom: 18,
+          crossOrigin: 'anonymous'
+        })
+      }));
+      if (exportLabelsEl.checked) {
+        if (needFallback) {
+          offLayers.push(new ol.layer.Tile({
+            source: new ol.source.XYZ({
+              url: './labels/{z}/{x}/{y}.png',
+              minZoom: 10,
+              maxZoom: 17,
+              crossOrigin: 'anonymous'
+            })
+          }));
+        }
+        offLayers.push(new ol.layer.Tile({
+          source: new ol.source.XYZ({
+            url: './labels/{z}/{x}/{y}.png',
+            minZoom: 10,
+            maxZoom: 18,
+            crossOrigin: 'anonymous'
+          })
+        }));
+      }
+      if (exportBoundaryEl.checked && aoiSource.getFeatures().length) {
+        const bsource = new ol.source.Vector({
+          features: aoiSource.getFeatures().map(function (f) { return f.clone(); })
+        });
+        offLayers.push(new ol.layer.Vector({
+          source: bsource,
+          style: new ol.style.Style({
+            stroke: new ol.style.Stroke({ color: '#35d0ff', width: 2.2 }),
+            fill: new ol.style.Fill({ color: 'rgba(53,208,255,0.05)' })
+          })
+        }));
+      }
+
+      const offView = new ol.View({
+        center: map.getView().getCenter(),
+        zoom: p.z + p.depth,
+        rotation: exportRotationEl.checked ? map.getView().getRotation() : 0,
+        projection: map.getView().getProjection(),
+        minZoom: 9,
+        maxZoom: 18,
+        constrainResolution: false
+      });
+      offMap = new ol.Map({
+        target: div,
+        layers: offLayers,
+        view: offView,
+        controls: [],
+        interactions: [],
+        pixelRatio: 1
+      });
+      offMap.setSize([p.renderW, p.renderH]);
+      offMap.updateSize();
+
+      await waitForOffscreen(offMap, 120000);
+
+      const canvases = Array.from(div.querySelectorAll('canvas'));
+      if (!canvases.length) throw new Error('离屏地图没有生成 canvas');
+
+      const bg = exportBackgroundEl.value;
+      const fillColor = bg === 'black' ? '#000000' : (bg === 'white' ? '#ffffff' : null);
+      const raw = document.createElement('canvas');
+      raw.width = p.renderW;
+      raw.height = p.renderH;
+      const ctx = raw.getContext('2d');
+      if (fillColor) {
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(0, 0, raw.width, raw.height);
+      } else if (format === 'image/jpeg') {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, raw.width, raw.height);
+      }
+      canvases.forEach(function (c) {
+        ctx.drawImage(c, 0, 0, p.renderW, p.renderH);
+      });
+
+      let finalCanvas = raw;
+      if (p.outW !== p.renderW || p.outH !== p.renderH) {
+        finalCanvas = document.createElement('canvas');
+        finalCanvas.width = p.outW;
+        finalCanvas.height = p.outH;
+        const fctx = finalCanvas.getContext('2d');
+        if (format === 'image/jpeg') {
+          fctx.fillStyle = '#ffffff';
+          fctx.fillRect(0, 0, p.outW, p.outH);
+        }
+        fctx.drawImage(raw, 0, 0, p.outW, p.outH);
+      }
+
+      const blob = await new Promise(function (resolve) {
+        finalCanvas.toBlob(resolve, format, 0.92);
+      });
+      if (!blob) throw new Error('图片编码失败');
+      downloadBlob(
+        blob,
+        '桑珠孜区_2025_' + p.outW + 'x' + p.outH + '_d' + p.depth + '.' + ext
+      );
+      exportInfoEl.textContent =
+        '已导出：' + p.outW + ' × ' + p.outH + ' px，加载深度 +' + p.depth + '。\n' +
+        '如果浏览器询问下载权限，请允许。';
+    } catch (err) {
+      console.error(err);
+      exportInfoEl.textContent = '导出失败：' + (err && err.message ? err.message : err);
+    } finally {
+      if (offMap) offMap.setTarget(null);
+      div.remove();
+      exporting = false;
+      exportStartBtn.disabled = false;
+      exportCancelBtn.disabled = false;
+      exportStartBtn.textContent = '开始渲染';
+    }
+  }
+
+  document.getElementById('btnExport').addEventListener('click', function () {
+    exportMask.style.display = 'flex';
+    refreshExportInfo();
+  });
+  document.getElementById('exportClose').addEventListener('click', closeExport);
+  exportCancelBtn.addEventListener('click', closeExport);
+  exportMask.addEventListener('click', function (e) {
+    if (e.target === exportMask) closeExport();
+  });
+  [exportScaleEl, exportDepthEl, exportLabelsEl, exportBoundaryEl,
+   exportRotationEl, exportBackgroundEl, exportFormatEl,
+   chunkHeightEl, chunkForceEl]
+    .forEach(function (el) { el.addEventListener('change', refreshExportInfo); });
+  exportScaleEl.addEventListener('input', refreshExportInfo);
+  exportStartBtn.addEventListener('click', runExport);
+
+  // 鼠标经纬度
+  const coordEl = document.getElementById('coord');
+  map.on('pointermove', function (evt) {
+    const lonlat = ol.proj.toLonLat(evt.coordinate);
+    coordEl.textContent = lonlat[0].toFixed(5) + ', ' + lonlat[1].toFixed(5);
+  });
+
+  // 缩放级别
+  const zoomEl = document.getElementById('zoom');
+  function updateZoom() {
+    zoomEl.textContent = map.getView().getZoom().toFixed(1);
+  }
+  map.getView().on('change:resolution', updateZoom);
+  updateZoom();
+
+  // 图层开关
+  document.getElementById('cbImagery').addEventListener('change', function (e) {
+    imageryLayer.setVisible(e.target.checked);
+  });
+  document.getElementById('cbLabels').addEventListener('change', function (e) {
+    labelLayer.setVisible(e.target.checked);
+  });
+  document.getElementById('cbBorder').addEventListener('change', function (e) {
+    aoiLayer.setVisible(e.target.checked);
+    detailLayer.setVisible(e.target.checked);
+  });
+  document.getElementById('labelOpacity').addEventListener('input', function (e) {
+    labelLayer.setOpacity(Number(e.target.value) / 100);
+  });
+
+  // 瓦片加载提示（只显示“还有请求”，不阻塞）
+  let pending = 0;
+  const loadingEl = document.getElementById('loading');
+  function startTile() {
+    pending++;
+    loadingEl.style.display = 'block';
+  }
+  function endTile() {
+    pending = Math.max(0, pending - 1);
+    if (pending === 0) loadingEl.style.display = 'none';
+  }
+  [imagerySource, labelSource].forEach(function (src) {
+    src.on('tileloadstart', startTile);
+    src.on('tileloadend', endTile);
+    src.on('tileloaderror', endTile);
+  });
+
+  // 读取边界
+  function readGeoJSON(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error(url + ' HTTP ' + r.status);
+      return r.json();
+    }).then(function (json) {
+      return new ol.format.GeoJSON().readFeatures(json, {
+        dataProjection: 'EPSG:4326',
+        featureProjection: 'EPSG:3857'
+      });
+    });
+  }
+
+  Promise.all([
+    readGeoJSON('./aoi.geojson').catch(function (e) { console.warn('aoi.geojson 读取失败', e); return []; }),
+    readGeoJSON('./detail_aoi.geojson').catch(function () { return []; })
+  ]).then(function (results) {
+    const aoiFeatures = results[0];
+    const detailFeatures = results[1];
+
+    if (aoiFeatures.length) {
+      aoiSource.addFeatures(aoiFeatures);
+      allExtent = aoiSource.getExtent();
+    }
+    if (detailFeatures.length) {
+      detailSource.addFeatures(detailFeatures);
+      coreExtent = detailSource.getExtent();
+    }
+
+    if (allExtent) {
+      view.fit(allExtent, { padding: [40, 40, 60, 340], maxZoom: 12, duration: 0 });
+    } else {
+      // 没有 GeoJSON 时至少把视角放在桑珠孜区
+      view.setCenter(ol.proj.fromLonLat(DISTRICT_CENTER));
+      view.setZoom(11);
+    }
+    checkHdCoverage();
+  });
+
+  document.getElementById('btnAll').addEventListener('click', function () {
+    if (allExtent) view.fit(allExtent, { padding: [40, 40, 60, 340], duration: 500 });
+  });
+  document.getElementById('btnCore').addEventListener('click', function () {
+    const center = coreExtent
+      ? ol.extent.getCenter(coreExtent)
+      : ol.proj.fromLonLat([88.88, 29.27]);
+    view.animate({ center: center, zoom: 15, duration: 500 });
+  });
+
+  // 如果通过 file:// 打开，fetch 会被浏览器拦截，给一个明确提示。
+  if (location.protocol === 'file:') {
+    showToast('请通过本地服务器打开：双击“启动预览.bat”，或运行 python start_preview.py。');
+  } else {
+    // 仅探测 preview 是否放在输出根目录；失败时给出提示，不影响瓦片显示。
+    fetch('./metadata.json', { cache: 'no-store' }).catch(function () {
+      console.warn('metadata.json 未读取到，但瓦片仍可显示。');
+    });
+  }
+})();
+</script>
+</body>
+</html>
+

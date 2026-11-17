@@ -1,0 +1,2 @@
+hypercorn>=0.18
+cryptography>=42
