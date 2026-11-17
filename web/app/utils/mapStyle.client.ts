@@ -8,16 +8,23 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // OpenLayers continues to own navigation, drawing, editing and record overlays.
 setWorkerUrl(workerUrl)
 const archives = new Map<string, PMTiles>()
+function archiveFor(id: string) {
+  let archive = archives.get(id)
+  if (!archive) {
+    archive = new PMTiles(`/api/map/archive/${encodeURIComponent(id)}`)
+    archives.set(id, archive)
+  }
+  return archive
+}
+export async function prefetchArchiveVectorTile(id: string, z: number, x: number, y: number, signal: AbortSignal) {
+  if (signal.aborted) return
+  await archiveFor(id).getZxy(z, x, y)
+}
 addProtocol('hbtiles', async ({ url }) => {
   const match = /^hbtiles:\/\/([^/]+)\/(\d+)\/(\d+)\/(\d+)$/.exec(url)
   if (!match) throw new Error('Invalid PMTiles tile URL')
   const [, id, z, x, y] = match
-  let archive = archives.get(id!)
-  if (!archive) {
-    archive = new PMTiles(`/api/map/archive/${encodeURIComponent(id!)}`)
-    archives.set(id!, archive)
-  }
-  const result = await archive.getZxy(Number(z), Number(x), Number(y))
+  const result = await archiveFor(id!).getZxy(Number(z), Number(x), Number(y))
   if (!result) return { data: new ArrayBuffer(0) }
   return { data: result.data }
 })
