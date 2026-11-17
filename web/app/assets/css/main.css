@@ -85,6 +85,9 @@ a.list-row:hover { background:var(--surface-2); }
 .filter-box { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--surface); }
 .filter-search { display:flex;gap:6px;grid-column:1/-1;min-width:0; }
 .filter-search > :first-child { flex:1;min-width:0; }
+.filter-clear-action { flex:none; width:40px; min-width:40px; height:40px; min-height:40px; padding:0; margin-left:auto; align-self:end; justify-self:end; }
+@media(max-width:767px){.filter-clear-action{grid-column:2;margin-left:0}}
+
 .filter-field { min-width:0; }
 .filter-field > label { display:block;font-size:12px;line-height:18px;color:var(--text-3);margin-bottom:2px; }
 .filter-dates { display:none;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;grid-column:1/-1; }
@@ -256,8 +259,11 @@ a.list-row:hover { background:var(--surface-2); }
 
 @media (max-width:767px) {
   .page-stack.map-page { height:calc(100dvh - 68px - env(safe-area-inset-bottom)); }
-  .page-stack.map-page .filter-box:not(.map-filters-expanded) > :not(.filter-search),
+  .page-stack.map-page .filter-box:not(.map-filters-expanded) > :not(.filter-search):not(.filter-clear-action),
   .page-stack.map-page .map-filter-extra-hidden { display:none; }
+  .page-stack.map-page .filter-box:not(.map-filters-expanded) { grid-template-columns:minmax(0,1fr) 40px; }
+  .page-stack.map-page .filter-box:not(.map-filters-expanded) > .filter-search { grid-column:1; }
+  .page-stack.map-page .filter-box:not(.map-filters-expanded) > .filter-clear-action { grid-column:2; }
   .page-stack.map-page > :not(.record-map-shell) { flex-shrink:0; }
   .page-stack.map-page > .record-map-shell { flex:1 0 280px; height:auto; min-height:280px; }
 }
@@ -267,7 +273,7 @@ a.list-row:hover { background:var(--surface-2); }
 .main-shell>.workspace-content{position:relative;z-index:1}
 .has-background-map .workspace-content,.has-background-map .page-stack{pointer-events:none}
 .has-background-map .page-stack>:not(.record-map-shell){pointer-events:auto}
-.has-background-map .page-header,.has-background-map .chip-row{background:var(--surface)}
+.has-background-map .page-header,.has-background-map .chip-row{background:transparent}
 @media(min-width:768px){.main-shell{--main-map-left:56px}}
 @media(min-width:1024px){.main-shell{--main-map-left:208px}}
 @media(max-width:767px){
