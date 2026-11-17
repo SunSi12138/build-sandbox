@@ -48,6 +48,7 @@ jobs:
       - run: npm run typecheck
         working-directory: web
       - run: npm run test:coordinates
+        working-directory: web
       - run: npm run test:depth
         working-directory: web
       - run: npm run generate
