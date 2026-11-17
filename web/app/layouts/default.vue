@@ -1,6 +1,8 @@
 <script setup lang="ts">
 const route = useRoute()
 const { bootstrap, load } = useAppData()
+const sidebarCollapsed = useState<boolean>('community-sidebar-collapsed', () => false)
+watch(sidebarCollapsed, value => { if (import.meta.client) localStorage.setItem('community-sidebar-collapsed', String(value)) })
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 const formPage = computed(() => Boolean(route.meta.formPage) || overlayForm.value)
 const links = [
@@ -17,12 +19,12 @@ function active(path: string) {
 }
 function refreshOnReturn() { if (document.visibilityState === 'visible') void load().catch(() => {}) }
 function skipToContent() { document.getElementById('main-content')?.focus() }
-onMounted(() => { void load().catch(() => {}); document.addEventListener('visibilitychange', refreshOnReturn) })
+onMounted(() => { sidebarCollapsed.value = localStorage.getItem('community-sidebar-collapsed') === 'true'; void load().catch(() => {}); document.addEventListener('visibilitychange', refreshOnReturn) })
 onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshOnReturn))
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'form-page': formPage, 'map-page': route.path === '/map' }">
+  <div class="app-shell" :class="{ 'form-page': formPage, 'map-page': route.path === '/map', 'sidebar-collapsed': sidebarCollapsed }">
     <a href="#main-content" class="skip-link" @click.prevent="skipToContent">跳到主要内容</a>
     <aside class="desktop-sidebar">
       <NuxtLink to="/" class="brand" aria-label="社区管理首页"><UIcon name="i-lucide-leaf" /><strong>社区管理</strong></NuxtLink>
@@ -31,6 +33,7 @@ onBeforeUnmount(() => document.removeEventListener('visibilitychange', refreshOn
           <NuxtLink :to="item.to" class="sidebar-nav-link" :class="{ 'is-active': active(item.to) }" :aria-label="item.label" :aria-current="active(item.to) ? 'page' : undefined"><UIcon :name="item.icon" /><span class="sidebar-nav-label">{{ item.label }}</span></NuxtLink>
         </UTooltip>
       </nav>
+      <button class="sidebar-toggle" type="button" :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'" :aria-expanded="!sidebarCollapsed" @click="sidebarCollapsed = !sidebarCollapsed"><UIcon :name="sidebarCollapsed ? 'i-lucide-panel-left-open' : 'i-lucide-panel-left-close'" /><span class="sidebar-nav-label">{{ sidebarCollapsed ? '展开' : '收起' }}</span></button>
       <p class="sidebar-street">{{ bootstrap?.settings.streetName }}</p>
     </aside>
     <div class="main-shell"><main id="main-content" class="workspace-content" tabindex="-1"><slot /></main></div>
