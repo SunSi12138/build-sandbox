@@ -3,7 +3,7 @@ export interface MapFeature { id: string; kind: 'point' | 'grid'; name: string; 
 export interface MapLayer { id: string; name: string; folder: string; scheme: 'xyz' | 'tms'; enabled: boolean; isDefault: boolean; opacity: number; minZoom: number; maxZoom: number; sortOrder: number; urlTemplate: string; apiKey: string; subdomains: string; updateCache: boolean; annotation: boolean; mapKey: string; cacheVersion: number; tileType: 'raster' | 'mvt'; styleJson: string }
 export interface MapState { layers: MapLayer[]; features: MapFeature[] }
 export interface CommunityRecord<T = Record<string, unknown>> { id: string; kind: string; parentId: string; name: string; data: T; revision: number; updatedAt: string; archived: boolean }
-export interface PurposeField { id: string; label: string; type: 'text' | 'number'; required: boolean }
+export interface PurposeField { id: string; label: string; type: 'text' | 'number' | 'image' | 'tags'; required: boolean; multiline?: boolean }
 export interface PurposeData { icon: string; fields: PurposeField[] }
 export interface UseData { position: string; purposeId: string; contact: string; phone: string; startDate: string; endDate: string; state: string; notes: string; photoIds: string[]; values: Record<string,string|number>; fieldSnapshot?: PurposeField[] }
 export interface UnitData { parentUnitId?: string; floor: string; area: string; notes: string; photoIds?: string[] }
