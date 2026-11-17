@@ -184,7 +184,7 @@ onMounted(() => {
             if (depth) {
               const grid = createXYZ({ maxZoom })
               registerPrefetch({
-                depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio,
+                depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0,
                 getExtent: currentMapExtent,
                 tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
                 // MapLibre draws vector geometry at the current view zoom.
@@ -238,7 +238,7 @@ onMounted(() => {
         if (depth) {
           const grid = createXYZ({ maxZoom: MAX_TILE_ZOOM })
           registerPrefetch({
-            depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
+            depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0, getExtent: currentMapExtent,
             tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
             fetchTile: async (z, x, y, signal) => {
               const tileUrl = `/api/map/tiles/${encodeURIComponent(layer.id)}/${z}/${x}/${y}?cache=server`
