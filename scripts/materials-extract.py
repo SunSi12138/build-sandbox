@@ -46,15 +46,41 @@ def read_text_file(path: Path) -> str:
 
 
 def extract_docx(path: Path) -> str:
-    if docx is None:
-        raise RuntimeError("缺少 python-docx")
-    document = docx.Document(str(path))
-    lines = [paragraph.text for paragraph in document.paragraphs]
-    for table in document.tables:
-        for row in table.rows:
-            cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+    """直接解析 word/document.xml，避免 python-docx 在大文件上加载图片关系而变慢。"""
+    import xml.etree.ElementTree as ElementTree
+
+    with zipfile.ZipFile(path) as archive:
+        try:
+            xml = archive.read("word/document.xml")
+        except KeyError as error:
+            raise RuntimeError("docx 缺少 word/document.xml") from error
+    namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    root = ElementTree.fromstring(xml)
+    lines = []
+    for paragraph in root.iter(namespace + "p"):
+        pieces = []
+        for node in paragraph.iter():
+            if node.tag == namespace + "t" and node.text:
+                pieces.append(node.text)
+            elif node.tag == namespace + "tab":
+                pieces.append("\t")
+            elif node.tag == namespace + "br":
+                pieces.append("\n")
+        line = "".join(pieces).strip()
+        if line:
+            lines.append(line)
+    for table in root.iter(namespace + "tbl"):
+        rows = []
+        for row in table.iter(namespace + "tr"):
+            cells = []
+            for cell in row.iter(namespace + "tc"):
+                text = "".join(node.text or "" for node in cell.iter(namespace + "t")).strip()
+                cells.append(text)
             if any(cells):
-                lines.append(" | ".join(cells))
+                rows.append(" | ".join(cells))
+        if rows:
+            lines.append("[表格]")
+            lines.extend(rows)
     return "\n".join(lines)
 
 
@@ -88,7 +114,7 @@ def extract_pptx(path: Path) -> str:
 
 def extract_legacy(path: Path) -> str:
     """旧版 doc/xls/wps/et 的保守字符串扫描：抓 UTF-16LE / GB18030 可读片段。"""
-    data = path.read_bytes()
+    data = path.read_bytes()[:6 * 1024 * 1024]
     chunks = []
     for encoding in ("utf-16-le", "gb18030"):
         try:
@@ -175,8 +201,12 @@ def main(argv=None):
                 text = extract_pptx(path)
                 record.update(status="pptx", chars=len(text))
             elif suffix == ".pdf":
-                text = extract_pdf(path)
-                record.update(status="pdf", chars=len(text))
+                if path.stat().st_size > 15 * 1024 * 1024:
+                    record["status"] = "pdf-too-large"
+                    text = ""
+                else:
+                    text = extract_pdf(path)
+                    record.update(status="pdf", chars=len(text))
             elif suffix in LEGACY_SUFFIXES:
                 text = extract_legacy(path)
                 record.update(status="legacy-crude", chars=len(text))
@@ -193,6 +223,8 @@ def main(argv=None):
         except Exception as error:  # noqa: BLE001 - 单个文件失败不影响整体
             record["status"] = f"error: {type(error).__name__}: {error}"
         index.append(record)
+        if len(index) % 25 == 0:
+            print(f"  ... {len(index)} files", flush=True)
 
     (out / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
     counts = {}

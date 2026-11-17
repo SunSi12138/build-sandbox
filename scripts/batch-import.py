@@ -33,6 +33,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 try:
     from PIL import Image
 except ImportError:  # pragma: no cover - 运行环境缺少 Pillow 时给出明确提示
@@ -115,10 +119,21 @@ def add_days(date: str, days: int) -> str:
     return value.isoformat()
 
 
+MATERIALS_ROOT = Path(".")
+
+
+def resolve_photo_path(raw: str) -> Path:
+    text = str(raw).replace("\\", "/").lstrip("/")
+    path = Path(text)
+    if path.is_absolute():
+        return path
+    return MATERIALS_ROOT / path
+
+
 def read_photo_bytes(entry: dict, compress: bool, quality: int) -> tuple[bytes, dict]:
-    """返回 (jpeg 字节, 统计信息)。entry 支持 path / base64。"""
+    """返回 (jpeg 字节, 统计信息)。entry 支持 path / base64；相对路径按材料根目录解析。"""
     if entry.get("path"):
-        path = Path(entry["path"])
+        path = resolve_photo_path(entry["path"])
         if not path.is_file():
             raise ImportError_(f"照片不存在：{path}")
         data = path.read_bytes()
@@ -179,13 +194,15 @@ class Journal:
 
 
 class Importer:
-    def __init__(self, api: Api, journal: Journal, compress: bool, quality: int, dry_run: bool):
+    def __init__(self, api: Api, journal: Journal, compress: bool, quality: int, dry_run: bool, inspector: str = "城东街道"):
         self.api = api
         self.journal = journal
         self.compress = compress
         self.quality = quality
         self.dry_run = dry_run
+        self.inspector = inspector
         self.ids: dict[str, dict[str, str]] = {}
+        self.placeholder_points: dict[str, str] = {}
         self.summary = {"created": 0, "skipped": 0, "failed": 0, "photos": 0}
         self.errors: list[str] = []
         self.warnings: list[str] = []
@@ -251,6 +268,11 @@ class Importer:
         if existing:
             self.summary["skipped"] += 1
             return existing
+        if item.get("existingPointId"):
+            # 合并阶段判定该点位已在库中，直接复用，不重复创建。
+            self.journal.put("point", key, item["existingPointId"])
+            self.summary["skipped"] += 1
+            return item["existingPointId"]
         community = self.ensure("community", item.get("community"), "/api/communities")
         if community is None:
             raise ImportError_("点位缺少 community")
@@ -262,7 +284,7 @@ class Importer:
             "name": item.get("name") or "",
             "communityId": community,
             "typeId": point_type,
-            "address": item.get("address") or "",
+            "address": item.get("address") or "地址未载明（材料未记载）",
             "contact": item.get("contact") or "",
             "phone": item.get("phone") or "",
             "frequency": item.get("frequency") or "irregular",
@@ -276,6 +298,8 @@ class Importer:
         if item.get("shape"):
             payload["shape"] = item["shape"]
         if self.dry_run:
+            if key:
+                self.placeholder_points[key] = "(dry-run)"
             self.summary["created"] += 1
             return "(dry-run)"
         created = self.api.post("/api/points", payload)
@@ -287,7 +311,7 @@ class Importer:
         if item.get("pointId"):
             return item["pointId"]
         if item.get("pointKey"):
-            value = self.journal.get("point", item["pointKey"])
+            value = self.journal.get("point", item["pointKey"]) or self.placeholder_points.get(item["pointKey"])
             if not value:
                 raise ImportError_(f"找不到 pointKey={item['pointKey']}，请先导入点位")
             return value
@@ -320,7 +344,7 @@ class Importer:
         payload = {
             "pointId": point_id,
             "date": date,
-            "inspector": item.get("inspector") or "",
+            "inspector": item.get("inspector") or self.inspector,
             "result": item.get("result") or ("issues" if issue_payload else "normal"),
             "notes": item.get("notes") or "",
             "noticeNumber": item.get("noticeNumber") or "",
@@ -626,18 +650,21 @@ def command_bootstrap(args):
 
 
 def command_apply(args):
+    global MATERIALS_ROOT
+    MATERIALS_ROOT = Path(args.materials).resolve()
     manifest_path = Path(args.manifest)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     api = Api(args.server)
     journal = Journal(manifest_path)
     compress = False if args.no_compress else True
-    importer = Importer(api, journal, compress, args.quality, args.dry_run)
+    importer = Importer(api, journal, compress, args.quality, args.dry_run, args.inspector)
     only = {part.strip() for part in args.only.split(",") if part.strip()} if args.only else None
     summary = importer.run(manifest, only=only, limit=args.limit)
     print(json.dumps({
         "source": manifest.get("source"),
         "dryRun": args.dry_run,
         "compress": compress,
+        "materials": str(MATERIALS_ROOT),
         "summary": summary,
         "errors": importer.errors,
         "warnings": importer.warnings[:50],
@@ -685,6 +712,9 @@ def main(argv=None):
     apply_parser.add_argument("--quality", type=int, default=75)
     apply_parser.add_argument("--only", default="", help="只处理 point,inspection,activity,campaign,matter 中的若干类")
     apply_parser.add_argument("--limit", type=int, default=None)
+    apply_parser.add_argument("--inspector", default="城东街道", help="材料未写排查人时使用")
+    apply_parser.add_argument("--materials", default=str(Path("import/work/2026环保")),
+                              help="清单里照片相对路径的根目录")
     apply_parser.set_defaults(func=command_apply)
 
     old = sub.add_parser("old-db", help="把旧版部署目录转换成清单")
