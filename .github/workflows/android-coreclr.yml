@@ -29,8 +29,11 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 11.0.100
-      - name: Install Android SDK command line tools
-        uses: android-actions/setup-android@v3
+      - name: Check preinstalled Android SDK
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+          test -d "${ANDROID_HOME}/cmdline-tools"
+          ls -l "${ANDROID_HOME}/cmdline-tools"
       - name: Install MAUI Android workload for .NET 11
         working-directory: android
         run: |
