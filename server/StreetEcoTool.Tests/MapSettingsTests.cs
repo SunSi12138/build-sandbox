@@ -166,7 +166,7 @@ public sealed class MapSettingsTests
     }
 
     [Fact]
-    public void EachLayerPreloadDepthZeroToThreePersistsWithoutSchemaChanges()
+    public void EachLayerHigherZoomDepthZeroToThreePersistsWithoutSchemaChanges()
     {
         using var env = new V2Environment();
         using var store = env.Open();
