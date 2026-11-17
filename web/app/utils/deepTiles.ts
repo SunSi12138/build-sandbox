@@ -40,9 +40,9 @@ export function installDeepRasterTiles(source: XYZ, options: {
 export function deeperTileCoordinates(
   depth: number, zoom: number, pixelRatio: number, maxZoom: number,
   extent: Extent, tileRange: (extent: Extent, zoom: number) => TileRange,
-  limit = MAX_PREFETCH_TILES,
+  limit = MAX_PREFETCH_TILES, renderedOverride?: number,
 ): Array<[number, number, number]> {
-  const rendered = effectiveRenderDepth(depth, zoom, pixelRatio, maxZoom)
+  const rendered = renderedOverride ?? effectiveRenderDepth(depth, zoom, pixelRatio, maxZoom)
   if (depth <= rendered || limit <= 0) return []
   const start = Math.floor(zoom) + Math.ceil(rendered) + 1
   const end = Math.min(Math.trunc(maxZoom), Math.floor(zoom) + Math.trunc(depth))
@@ -70,6 +70,8 @@ export function makeDeepTilePrefetch(options: {
   maxZoom: number
   getZoom: () => number
   getPixelRatio: () => number
+  // Vector renderers keep their native zoom; their higher-z tiles are prefetch-only.
+  getRenderedDepth?: () => number
   getExtent: () => Extent | undefined
   tileRange: (extent: Extent, zoom: number) => TileRange
   fetchTile: (z: number, x: number, y: number, signal: AbortSignal) => Promise<unknown>
@@ -88,7 +90,7 @@ export function makeDeepTilePrefetch(options: {
     if (!extent) return
     let coords: Array<[number, number, number]>
     try {
-      coords = deeperTileCoordinates(options.depth, options.getZoom(), options.getPixelRatio(), options.maxZoom, extent, options.tileRange)
+      coords = deeperTileCoordinates(options.depth, options.getZoom(), options.getPixelRatio(), options.maxZoom, extent, options.tileRange, MAX_PREFETCH_TILES, options.getRenderedDepth?.())
     } catch { return }
     const pending = coords.filter(([z, x, y]) => !visited.has(`${z}/${x}/${y}`))
     if (visited.size > 20000) visited.clear()
