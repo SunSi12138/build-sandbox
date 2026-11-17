@@ -60,7 +60,8 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await page.getByRole('button', { name: '上移地名标注层', exact: true }).click(); await reordered
       assert((await page.getByTestId('map-layer-row').first().textContent()).includes('地名标注层'))
       const toggled = response('/map/settings/' + extra.id + '/enabled', 'PUT')
-      await page.getByRole('checkbox', { name: '启用地名标注层', exact: true }).uncheck(); await toggled
+      await page.getByRole('checkbox', { name: '启用地名标注层', exact: true }).click(); await toggled
+      await page.getByRole('checkbox', { name: '启用地名标注层', exact: true }).waitFor()
       assert.deepEqual((await api('/map/layers')).map(layer => layer.id), [first.id])
       await page.getByTestId('map-layer-new').click()
       const archiveEditor = page.getByRole('dialog', { name: '新增图层', exact: true })
@@ -78,7 +79,7 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await page.getByRole('button', { name: '检查离线单文件地名图层可用性', exact: true }).click()
       await page.getByText('尚未找到本地 PMTiles 文件。可将归档复制到设置的路径。', { exact: true }).waitFor()
       const archiveDisabled = response('/map/settings/' + archiveLayer.id + '/enabled', 'PUT')
-      await page.getByRole('checkbox', { name: '启用离线单文件地名', exact: true }).uncheck()
+      await page.getByRole('checkbox', { name: '启用离线单文件地名', exact: true }).click()
       await archiveDisabled
       await page.screenshot({ path: path.join(evidence, 'map-management-375.png'), fullPage: true, animations: 'disabled' })
       await go('/settings?tab=maps')
