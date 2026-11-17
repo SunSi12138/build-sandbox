@@ -124,6 +124,48 @@ public sealed class MapSettingsTests
     }
 
     [Fact]
+    public void VectorStyleDirectoryIsOptionalPersistentAndReadWithoutCopying()
+    {
+        using var env = new V2Environment();
+        using var store = env.Open();
+        var original = Assert.Single(store.GetMapSettings().Providers);
+        var styleDirectory = Path.Combine(env.Root, "tiles", "custom-style");
+        Directory.CreateDirectory(Path.Combine(styleDirectory, "font", "Test Font"));
+        Directory.CreateDirectory(Path.Combine(styleDirectory, "sprite"));
+        File.WriteAllText(Path.Combine(styleDirectory, "style.json"),
+            """{"version":8,"sources":{"base":{"type":"vector"}},"layers":[]}""");
+        File.WriteAllBytes(Path.Combine(styleDirectory, "font", "Test Font", "0-255.pbf"), [1, 2, 3]);
+        File.WriteAllText(Path.Combine(styleDirectory, "sprite", "png.json"), "{}");
+
+        var vector = store.CreateMapProvider(original with
+        {
+            Id = "", Name = "外部矢量样式", Folder = "vector-pbf", Scheme = "xyz",
+            Format = "mvt", StyleDirectory = "custom-style"
+        });
+        Assert.True(vector.HasStyle);
+        Assert.Equal("custom-style", vector.StyleDirectory);
+        Assert.Equal($"/api/map/style/{vector.Id}/style.json", store.GetMapLayers().Single(layer => layer.Id == vector.Id).StyleUrl);
+        using (var reopened = env.Open())
+            Assert.Equal("custom-style", reopened.GetMapSettings().Providers.Single(layer => layer.Id == vector.Id).StyleDirectory);
+
+        var archive = store.CreateMapProvider(vector with
+        {
+            Id = "", Name = "外部 PMTiles 样式", Folder = "archive/labels.pmtiles", Format = "pmtiles"
+        });
+        Assert.True(archive.HasStyle);
+        Assert.Equal($"/api/map/style/{archive.Id}/style.json", store.GetMapLayers().Single(layer => layer.Id == archive.Id).StyleUrl);
+
+        File.Delete(Path.Combine(styleDirectory, "style.json"));
+        Assert.False(store.GetMapSettings().Providers.Single(layer => layer.Id == vector.Id).HasStyle);
+        Assert.Null(store.GetMapLayers().Single(layer => layer.Id == vector.Id).StyleUrl);
+        Assert.Equal("custom-style", store.GetMapSettings().Providers.Single(layer => layer.Id == vector.Id).StyleDirectory);
+        Assert.False(Directory.Exists(Path.Combine(env.Root, "map-styles")));
+        var raster = store.SaveMapProvider(vector.Id, vector with { Format = "raster" });
+        Assert.Empty(raster.StyleDirectory);
+        Assert.False(raster.HasStyle);
+    }
+
+    [Fact]
     public void EachLayerPreloadDepthZeroToThreePersistsWithoutSchemaChanges()
     {
         using var env = new V2Environment();
