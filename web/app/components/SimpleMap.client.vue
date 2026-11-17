@@ -8,6 +8,9 @@ import VectorSource from 'ol/source/Vector'
 import VectorLayer from 'ol/layer/Vector'
 import TileLayer from 'ol/layer/Tile'
 import XYZ from 'ol/source/XYZ'
+import MVT from 'ol/format/MVT'
+import VectorTileSource from 'ol/source/VectorTile'
+import VectorTileLayer from 'ol/layer/VectorTile'
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
 import DragRotate from 'ol/interaction/DragRotate'
@@ -33,6 +36,26 @@ const rotation = ref(0)
 const isRotated = computed(() => Math.abs(Math.sin(rotation.value / 2)) > 0.01)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
+const mvtLabelCache = new globalThis.Map<string, Style>()
+function mvtLabel(text: string, line: boolean): Style {
+  const key = `${line ? 'line:' : 'point:'}${text}`
+  let style = mvtLabelCache.get(key)
+  if (!style) {
+    if (mvtLabelCache.size > 1500) mvtLabelCache.clear()
+    style = new Style({
+      text: new Text({
+        text,
+        placement: line ? 'line' : 'point',
+        font: '600 13px "Microsoft YaHei","Noto Sans CJK SC",sans-serif',
+        fill: new Fill({ color: '#263442' }),
+        stroke: new Stroke({ color: 'rgba(255,255,255,0.94)', width: 3 }),
+        overflow: false,
+      }),
+    })
+    mvtLabelCache.set(key, style)
+  }
+  return style
+}
 let reporting = false
 function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(gcj02ToWgs84(shape.coordinates[0]!))) : new Polygon([shape.coordinates.map(c => fromLonLat(gcj02ToWgs84(c)))]) }
 function toShape(feature: Feature<Geometry>): GeoShape {
@@ -146,11 +169,29 @@ onMounted(() => {
     const [longitude, latitude] = wgs84ToGcj02(toLonLat(coordinate))
     try { localStorage.setItem(mapViewKey, JSON.stringify({ longitude, latitude, zoom: map!.getView().getZoom() ?? 16 })) } catch { /* Optional map preference. */ }
   })
-  void $fetch<{ id: string }[]>('/api/map/layers', { signal: layerRequest.signal }).then(layers => {
+  void $fetch<{ id: string; kind?: 'raster' | 'mvt' }[]>('/api/map/layers', { signal: layerRequest.signal }).then(layers => {
     if (layerRequest.signal.aborted || !map) return
     layers.forEach((layer, index) => {
-      const source = new XYZ({ url: `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`, maxZoom: 18 })
-      map!.getLayers().insertAt(index, new TileLayer({ source }))
+      const url = `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`
+      if (layer.kind === 'mvt') {
+        const source = new VectorTileSource({ format: new MVT(), url, maxZoom: 18 })
+        const vectorLayer = new VectorTileLayer({
+          source,
+          declutter: true,
+          style: feature => {
+            const name = ['name:zh', 'name_zh', 'name_zh_cn', 'NAME_CHN', 'name', 'NAME', 'Name', 'label', 'text', 'name_en']
+              .map(field => feature.get(field))
+              .find(value => typeof value === 'string' && value.trim().length > 0 && value.length <= 80)
+            if (typeof name !== 'string') return undefined
+            const kind = 'getType' in feature ? feature.getType() : feature.getGeometry()?.getType()
+            return mvtLabel(name.trim(), kind === 'LineString' || kind === 'MultiLineString')
+          },
+        })
+        map!.getLayers().insertAt(index, vectorLayer)
+      } else {
+        const source = new XYZ({ url, maxZoom: 18 })
+        map!.getLayers().insertAt(index, new TileLayer({ source }))
+      }
     })
   }).catch(() => { /* No base layers is a supported offline state. */ })
   map.on('singleclick', event => {

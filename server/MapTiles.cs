@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
@@ -7,7 +8,7 @@ using Microsoft.Data.Sqlite;
 namespace StreetEcoTool;
 
 public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0);
-public sealed record MapLayerDto(string Id);
+public sealed record MapLayerDto(string Id, string Kind = "raster");
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
 public sealed record MapSettingsDto(TileProvider[] Providers, TileProvider[] Defaults, string CacheRoot);
@@ -27,7 +28,11 @@ public sealed partial class Store
     private static readonly HttpClient MapHttp = new(new SocketsHttpHandler { AllowAutoRedirect = false, AutomaticDecompression = System.Net.DecompressionMethods.All }) { Timeout = TimeSpan.FromSeconds(15) };
     private readonly SemaphoreSlim _mapDownloads = new(6);
     private int _mapGeneration;
-    private static readonly string[] TileExtensions = [".png", ".jpg", ".webp"];
+    private static readonly string[] RasterTileExtensions = [".png", ".jpg", ".webp"];
+    private static readonly string[] VectorTileExtensions = [".pbf", ".mvt"];
+    private static bool IsMvt(TileProvider provider) => provider.Scheme is "mvt-xyz" or "mvt-tms";
+    private static bool IsTms(TileProvider provider) => provider.Scheme is "tms" or "mvt-tms";
+    private static string[] TileExtensions(TileProvider provider) => IsMvt(provider) ? VectorTileExtensions : RasterTileExtensions;
     private static TileProvider[] DefaultMapProviders() =>
     [
         new("jlyh", "jlyh", "tms", "https://api.jl1mall.com/getMap/{z}/{x}/{y}?mk={mk}&tk={key}", Name: "吉林一号"),
@@ -60,7 +65,7 @@ public sealed partial class Store
             UrlTemplate = Text(request.UrlTemplate, "调用链接", 4000), ApiKey = Text(request.ApiKey, "服务密钥", 2000),
             MapKey = Text(request.MapKey, "地图密钥", 2000), Subdomains = Text(request.Subdomains, "子域名", 200)
         };
-        if (provider.Scheme is not ("xyz" or "tms")) throw new ApiException(400, "图块坐标格式应为 XYZ 或 TMS。");
+        if (provider.Scheme is not ("xyz" or "tms" or "mvt-xyz" or "mvt-tms")) throw new ApiException(400, "图层格式应为图片或 MVT，图块坐标应为 XYZ 或 TMS。");
         if (provider.ForceRefresh && provider.UrlTemplate.Length == 0) throw new ApiException(400, "强制更新缓存需要填写调用链接。");
         if (provider.UrlTemplate.Length > 0)
         {
@@ -151,20 +156,20 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
+            using var command = Command("SELECT id,scheme FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
             using var rows = command.ExecuteReader(); var layers = new List<MapLayerDto>();
-            while (rows.Read()) layers.Add(new(rows.GetString(0)));
+            while (rows.Read()) layers.Add(new(rows.GetString(0), rows.GetString(1) is "mvt-xyz" or "mvt-tms" ? "mvt" : "raster"));
             return layers.ToArray();
         }
     }
     // Availability checks are explicit, read-only diagnostics. In offline mode
     // they only inspect the configured cache directory, never attempt network IO.
-    private static (int Z, int X, int Row)? SampleCachedMapTile(string directory)
+    private static (int Z, int X, int Row)? SampleCachedMapTile(string directory, string[] extensions)
     {
         if (!Directory.Exists(directory)) return null;
         foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
         {
-            if (!TileExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)) continue;
+            if (!extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase)) continue;
             var path = Path.GetRelativePath(directory, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
             if (path.Length != 3 ||
                 !int.TryParse(path[0], NumberStyles.None, CultureInfo.InvariantCulture, out var z) ||
@@ -183,7 +188,7 @@ public sealed partial class Store
         lock (_gate) provider = GetMapProvider(id);
         var hasUrl = !string.IsNullOrWhiteSpace(provider.UrlTemplate);
         (int Z, int X, int Row)? cached;
-        try { cached = SampleCachedMapTile(MapCacheDirectory(provider.Folder)); }
+        try { cached = SampleCachedMapTile(MapCacheDirectory(provider.Folder), TileExtensions(provider)); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return new("error", "无法读取该图层的缓存目录，请检查目录和访问权限。", false, hasUrl);
@@ -194,14 +199,14 @@ public sealed partial class Store
                 ? new("cached", "检测到本地图块，可在已缓存区域离线使用；未检查全部区域。", true, false)
                 : new("empty", "未配置调用链接，也未发现本地图块。空白底图不影响点位和区域操作。", false, false);
 
-        // Test one representative image tile using the same URL formatter as
+        // Test one representative image or MVT tile using the same URL formatter as
         // actual map requests. A successful sample does not guarantee coverage.
         const int defaultZoom = 12;
         var zoom = cached?.Z ?? defaultZoom;
         var xTile = cached?.X ?? (int)Math.Floor((88.893426 + 180) / 360 * (1 << defaultZoom));
         var latitude = 29.274331 * Math.PI / 180;
         var xyzY = (int)Math.Floor((1 - Math.Log(Math.Tan(latitude) + 1 / Math.Cos(latitude)) / Math.PI) / 2 * (1 << defaultZoom));
-        var row = cached?.Row ?? (provider.Scheme == "tms" ? (1 << defaultZoom) - 1 - xyzY : xyzY);
+        var row = cached?.Row ?? (IsTms(provider) ? (1 << defaultZoom) - 1 - xyzY : xyzY);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -219,7 +224,7 @@ public sealed partial class Store
                     if (read == 0) break;
                     length += read;
                 }
-                var valid = length >= 8 && header[0] == 137 && header[1] == 80 && header[2] == 78 && header[3] == 71
+                var valid = IsMvt(provider) ? length > 2 && (header[0] == 0x1a || header[0] == 0x1f && header[1] == 0x8b) : length >= 8 && header[0] == 137 && header[1] == 80 && header[2] == 78 && header[3] == 71
                     || length >= 3 && header[0] == 255 && header[1] == 216 && header[2] == 255
                     || length >= 12 && header[0] == 82 && header[1] == 73 && header[2] == 70 && header[3] == 70
                         && header[8] == 87 && header[9] == 69 && header[10] == 66 && header[11] == 80;
@@ -241,21 +246,21 @@ public sealed partial class Store
             .Replace("{s}", hosts.Length > 0 ? hosts[(x + row) % hosts.Length] : "0", StringComparison.Ordinal)
             .Replace("{key}", Uri.EscapeDataString(provider.ApiKey), StringComparison.Ordinal).Replace("{mk}", Uri.EscapeDataString(provider.MapKey), StringComparison.Ordinal);
     }
-    private static string? CachedMapTile(string path) => TileExtensions.Select(extension => path + extension).Where(File.Exists).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+    private static string? CachedMapTile(string path, TileProvider provider) => TileExtensions(provider).Select(extension => path + extension).Where(File.Exists).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
     private async Task<string?> GetMapTileAsync(string layer, int z, int x, int y, CancellationToken cancellationToken)
     {
         if (z < 0 || z > 18 || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
         TileProvider provider; int generation;
         lock (_gate) { provider = GetMapProvider(layer); generation = _mapGeneration; }
         if (!provider.Enabled) return null;
-        var row = provider.Scheme == "tms" ? (1 << z) - 1 - y : y;
+        var row = IsTms(provider) ? (1 << z) - 1 - y : y;
         var path = Path.Combine(MapCacheDirectory(provider.Folder), z.ToString(CultureInfo.InvariantCulture), x.ToString(CultureInfo.InvariantCulture), row.ToString(CultureInfo.InvariantCulture));
-        var cached = CachedMapTile(path);
+        var cached = CachedMapTile(path, provider);
         if (provider.UrlTemplate.Length == 0 || cached is not null && !provider.ForceRefresh) return cached;
         await _mapDownloads.WaitAsync(cancellationToken);
         try
         {
-            cached = CachedMapTile(path);
+            cached = CachedMapTile(path, provider);
             if (cached is not null && !provider.ForceRefresh) return cached;
             using var request = new HttpRequestMessage(HttpMethod.Get, MapTileUrl(provider, z, x, row));
             if (provider.ForceRefresh) request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true };
@@ -273,7 +278,24 @@ public sealed partial class Store
                 }
             }
             var data = bytes.ToArray();
-            var extension = data.Length >= 8 && data[0] == 137 && data[1] == 80 && data[2] == 78 && data[3] == 71 ? ".png"
+            // HTTP Content-Encoding is normally decompressed by MapHttp. Also
+            // accept providers returning gzip bytes without that header.
+            if (IsMvt(provider) && data.Length >= 2 && data[0] == 0x1f && data[1] == 0x8b)
+            {
+                using var compressed = new MemoryStream(data);
+                using var unzip = new GZipStream(compressed, CompressionMode.Decompress);
+                using var uncompressed = new MemoryStream();
+                var buffer = new byte[81920]; int read;
+                while ((read = unzip.Read(buffer)) > 0)
+                {
+                    if (uncompressed.Length + read > 10 * 1024 * 1024) throw new IOException("矢量图块解压后过大。");
+                    uncompressed.Write(buffer, 0, read);
+                }
+                data = uncompressed.ToArray();
+            }
+            var extension = IsMvt(provider)
+                ? data.Length > 2 && data[0] == 0x1a ? ".pbf" : throw new IOException("地图服务未返回有效 MVT 图块。")
+                : data.Length >= 8 && data[0] == 137 && data[1] == 80 && data[2] == 78 && data[3] == 71 ? ".png"
                 : data.Length >= 3 && data[0] == 255 && data[1] == 216 && data[2] == 255 ? ".jpg"
                 : data.Length >= 12 && System.Text.Encoding.ASCII.GetString(data, 0, 4) == "RIFF" && System.Text.Encoding.ASCII.GetString(data, 8, 4) == "WEBP" ? ".webp" : throw new IOException("地图服务未返回图片。");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -283,15 +305,15 @@ public sealed partial class Store
                 await File.WriteAllBytesAsync(temp, data, cancellationToken);
                 lock (_gate)
                 {
-                    if (generation != _mapGeneration) return CachedMapTile(path);
+                    if (generation != _mapGeneration) return CachedMapTile(path, provider);
                     File.Move(temp, path + extension, true);
-                    foreach (var old in TileExtensions.Where(item => item != extension)) TryDeleteFile(path + old);
+                    foreach (var old in TileExtensions(provider).Where(item => item != extension)) TryDeleteFile(path + old);
                 }
             }
             finally { TryDeleteFile(temp); }
             return path + extension;
         }
-        catch (Exception error) when (error is HttpRequestException or IOException or TaskCanceledException) { return CachedMapTile(path); }
+        catch (Exception error) when (error is HttpRequestException or IOException or TaskCanceledException) { return CachedMapTile(path, provider); }
         finally { _mapDownloads.Release(); }
     }
     public void MapApi(WebApplication app)
@@ -317,7 +339,15 @@ public sealed partial class Store
         {
             var file = await GetMapTileAsync((string)context.Request.RouteValues["layer"]!, int.Parse((string)context.Request.RouteValues["z"]!, CultureInfo.InvariantCulture), int.Parse((string)context.Request.RouteValues["x"]!, CultureInfo.InvariantCulture), int.Parse((string)context.Request.RouteValues["y"]!, CultureInfo.InvariantCulture), context.RequestAborted);
             if (file is null) { context.Response.StatusCode = 404; return; }
-            context.Response.ContentType = Path.GetExtension(file) switch { ".jpg" => "image/jpeg", ".webp" => "image/webp", _ => "image/png" };
+            context.Response.ContentType = Path.GetExtension(file) switch { ".jpg" => "image/jpeg", ".webp" => "image/webp", ".pbf" or ".mvt" => "application/vnd.mapbox-vector-tile", _ => "image/png" };
+            // Locally imported PBFs are sometimes gzip-compressed. Let the browser transparently decode them.
+            if (file.EndsWith(".pbf", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".mvt", StringComparison.OrdinalIgnoreCase))
+            {
+                var header = new byte[2];
+                using var input = File.OpenRead(file);
+                if (input.Read(header) == 2 && header[0] == 0x1f && header[1] == 0x8b)
+                    context.Response.Headers["Content-Encoding"] = "gzip";
+            }
             context.Response.Headers.CacheControl = "no-store";
             await context.Response.SendFileAsync(file, context.RequestAborted);
         };

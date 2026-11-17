@@ -49,9 +49,12 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       const add = page.getByRole('dialog', { name: '新增图层', exact: true })
       await add.getByLabel('名称', { exact: true }).fill('地名标注层')
       await add.getByLabel('缓存目录', { exact: true }).fill('custom-labels')
+      await add.getByLabel('图层格式', { exact: true }).click()
+      await page.getByRole('option', { name: 'MVT 矢量地名（PBF）', exact: true }).click()
       const created = response('/map/settings', 'POST')
       await add.getByRole('button', { name: '保存', exact: true }).click()
       const extra = await (await created).json()
+      assert.equal(extra.scheme, 'mvt-xyz')
       await page.getByRole('button', { name: '上移地名标注层', exact: true }).waitFor()
       const reordered = response('/map/settings/order', 'PUT')
       await page.getByRole('button', { name: '上移地名标注层', exact: true }).click(); await reordered
