@@ -94,7 +94,7 @@ test('layer canvases use their CSS transforms and opacity instead of stretching 
   class Matrix {
     constructor(value) {
       [this.a, this.b, this.c, this.d, this.e, this.f] =
-        value.match(/^matrix\\(([^)]+)\\)$/)[1].split(',').map(Number);
+        value.slice(7, -1).split(',').map(Number);
     }
   }
   const compose = pageFunction('drawOffscreenLayers', {
