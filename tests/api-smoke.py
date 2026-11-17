@@ -660,7 +660,7 @@ class ApiSmoke:
         delete_id, delete_point = final_temporary["inspection"]["id"], final_temporary["inspection"]["pointId"]
         self.json("DELETE", "/api/inspections/" + delete_id, expected=400)
         self.json("DELETE", "/api/inspections/" + delete_id + "?confirm=true", expected=204)
-        self.json("GET", "/api/points/" + delete_point, expected=404)
+        require(self.json("GET", "/api/points/" + delete_point)["point"]["temporary"], "Deleting the final inspection must preserve the temporary point")
         self.request("GET", "/photos/" + cleanup_photo["id"], expected=404)
 
         community = self.json("POST", "/api/communities", {"name": "V2整治社区", "title": "V2整治社区居民委员会"}, expected=201)
