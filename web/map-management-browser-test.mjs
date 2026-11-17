@@ -141,7 +141,7 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await go('/points')
       await page.getByTestId('point-create').click()
       const editor = page.getByRole('dialog', { name: '新增点位', exact: true })
-      await editor.getByRole('button', { name: '标记位置', exact: true }).click()
+      await editor.getByRole('button', { name: /^(标记位置|编辑位置)$/ }).click()
       const picker = page.getByRole('dialog', { name: '标记位置', exact: true })
       const canvas = picker.locator('.simple-map-canvas')
       await canvas.locator('.ol-viewport').waitFor()
