@@ -172,12 +172,10 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite(); var activity = GetActivity(id);
-            var deletePoint = activity.PointId is not null && IsLastTemporaryRecord(activity.PointId, activityId: id);
-            var photos = ReadPhotos(activityId: id).Concat(deletePoint ? ReadPhotos(pointId: activity.PointId) : []).Select(photo => photo.Id).ToArray();
+            var photos = ReadPhotos(activityId: id).Select(photo => photo.Id).ToArray();
             ExecuteWithPhotoDeletion(photos, tx =>
             {
                 using (var command = Command("DELETE FROM activities WHERE id=$id;", tx, ("$id", id))) RequireChanged(command.ExecuteNonQuery(), "活动记录");
-                if (deletePoint) { using var point = Command("DELETE FROM points WHERE id=$id;", tx, ("$id", activity.PointId)); point.ExecuteNonQuery(); }
             });
         }
     }
