@@ -7,8 +7,6 @@ public static class CommunityApi
         ImportApi.Map(app, store);
         store.MapManagementApi(app);
         store.MapArchiveApi(app);
-        store.MapCacheImportApi(app);
-        store.MapTileUpdateApi(app);
         RequestDelegate dossier = async c => await Api.Write(c, store.CreatePlaceDossier(await Api.Read(c, CommunityJsonContext.Default.PlaceDossierWrite)), AppJsonContext.Default.PointDto, 201);
         app.MapPost("/api/place-dossiers", dossier);
         store.MapStatisticsApi(app);
@@ -31,7 +29,7 @@ public static class CommunityApi
         RequestDelegate tile = async context =>
         {
             if (!int.TryParse(context.Request.RouteValues["z"]?.ToString(), out var z) || !int.TryParse(context.Request.RouteValues["x"]?.ToString(), out var x) || !int.TryParse(context.Request.RouteValues["y"]?.ToString(), out var y)) throw new ApiException(400, "地图编号不正确。");
-            var path = await store.ResolveTile((string)context.Request.RouteValues["layer"]!, z, x, y, context.RequestAborted);
+            var path = store.FindTile((string)context.Request.RouteValues["layer"]!, z, x, y);
             if (path is null) { context.Response.StatusCode = 404; return; }
             context.Response.Headers.CacheControl = "no-cache";
             context.Response.ContentType = Path.GetExtension(path) switch { ".jpg" => "image/jpeg", ".webp" => "image/webp", _ => "image/png" };

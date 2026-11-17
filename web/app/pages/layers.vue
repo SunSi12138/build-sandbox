@@ -28,7 +28,7 @@ onMounted(load)
 </div>
 <template v-if="expanded===layer.id">
 <div class="field-grid">
-<div class="field-full flex flex-wrap gap-5"><UCheckbox v-model="layer.updateCache" label="更新缓存" /><UCheckbox v-model="layer.annotation" label="地名标注" /></div>
+<div class="field-full flex flex-wrap gap-5"><UCheckbox v-model="layer.annotation" label="地名标注" /></div>
 <UFormField label="瓦片链接模板" class="field-full">
 <UTextarea v-model="layer.urlTemplate" placeholder="https://tiles.example.com/{z}/{x}/{y}.png?key={key}" :rows="3" class="w-full" />
 <p class="text-xs text-muted mt-2" v-text="'支持 {z} 级别、{x} 列、{y} 行、{-y} 反向行号、{s} 子域、{key} 密钥、{mk} 图层标识、{quadkey} 四叉树编码。WMTS 可直接拼接 TileMatrix={z}&TileCol={x}&TileRow={y}。'" />
@@ -63,7 +63,6 @@ onMounted(load)
 
 </template>
 </section>
-<details class="panel panel-body"><summary class="cursor-pointer">导入地图缓存</summary><div class="mt-4"><CacheImport /></div></details>
 <UModal v-model:open="adding" title="新增图层" :dismissible="!busy" :close="!busy">
 <template #body>
 <div class="space-y-3">
