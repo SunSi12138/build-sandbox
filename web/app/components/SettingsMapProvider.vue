@@ -8,6 +8,12 @@ const provider = reactive<TileProvider>({ ...props.initial })
 const saving = ref(false), error = ref(''), saved = ref(false), showKeys = ref(false)
 watch(saving, value => emit('busy', value))
 const schemes = [{ label: 'XYZ', value: 'xyz' }, { label: 'TMS', value: 'tms' }]
+const preloadDepths = [
+  { label: '0 · 仅当前层级', value: 0 },
+  { label: '1 · 预加载 1 级', value: 1 },
+  { label: '2 · 预加载 2 级', value: 2 },
+  { label: '3 · 预加载 3 级', value: 3 },
+]
 const tileFormats = [{ label: '图片（PNG / JPG / WebP）', value: 'raster' }, { label: 'MVT 矢量地名（PBF）', value: 'mvt' }, { label: 'PMTiles 单文件（MVT / 图片）', value: 'pmtiles' }]
 const tileFormat = computed<'raster' | 'mvt' | 'pmtiles'>({
   get: () => provider.format,
@@ -23,6 +29,7 @@ const tileFormat = computed<'raster' | 'mvt' | 'pmtiles'>({
 function validate(state: TileProvider): FormError[] {
   const result: FormError[] = []
   if (!state.name.trim()) result.push({ name: 'name', message: '请填写名称' })
+  if (!Number.isInteger(state.preload) || state.preload < 0 || state.preload > 3) result.push({ name: 'preload', message: '加载深度必须为 0–3' })
   if (!state.folder.trim()) result.push({ name: 'folder', message: '请填写缓存目录或 PMTiles 文件路径' })
   if (state.format === 'pmtiles' && !state.folder.toLowerCase().endsWith('.pmtiles')) result.push({ name: 'folder', message: 'PMTiles 文件路径必须以 .pmtiles 结尾' })
   if (state.forceRefresh && !state.urlTemplate.trim()) result.push({ name: 'urlTemplate', message: '强制更新需要调用链接' })
@@ -57,6 +64,7 @@ async function save() {
           <UFormField :label="tileFormat === 'pmtiles' ? '本地 PMTiles 文件路径' : '缓存目录'" name="folder" required class="field-full"><UInput v-model="provider.folder" :maxlength="1000" :disabled="saving" class="w-full" :placeholder="tileFormat === 'pmtiles' ? 'labels.pmtiles' : undefined" /><p class="mt-1 break-all text-xs text-muted">{{ tileFormat === 'pmtiles' ? '相对文件路径基于 ' : '相对目录基于 ' }}{{ cacheRoot }}，也可填写绝对路径。{{ tileFormat === 'pmtiles' ? '离线使用时将完整 .pmtiles 文件复制到此路径。' : '' }}</p></UFormField>
           <UFormField label="图层格式"><USelect v-model="tileFormat" :items="tileFormats" :disabled="saving" class="w-full" /><p v-if="tileFormat === 'mvt'" class="mt-1 text-xs text-muted">MVT / PBF 需要包含 name、name:zh 等地名属性。当前采用内置中文地名样式，不读取外部 style.json。</p></UFormField>
           <UFormField v-if="tileFormat !== 'pmtiles'" label="图块坐标"><USelect v-model="provider.scheme" :items="schemes" :disabled="saving" class="w-full" /></UFormField><p v-else class="field-full text-xs text-muted">PMTiles v3 归档使用 XYZ 坐标，自动识别内部 MVT 或图片类型。</p>
+          <UFormField label="加载深度" name="preload"><USelect v-model="provider.preload" :items="preloadDepths" :disabled="saving" class="w-full" /><p class="mt-1 text-xs text-muted">每个图层独立设置。0 不预加载；1–3 逐级预加载低分辨率图块，深度越大可能增加读取量。</p></UFormField>
           <UFormField v-if="provider.urlTemplate.includes('{s}')" label="子域名"><UInput v-model="provider.subdomains" placeholder="0,1,2,3,4,5,6,7" :maxlength="200" :disabled="saving" class="w-full" /></UFormField>
           <div v-if="tileFormat !== 'pmtiles'" class="field-full"><UCheckbox v-model="provider.forceRefresh" label="强制更新缓存" :disabled="saving" /><p class="mt-1 text-xs text-muted">重新下载加载的图块；失败时使用已有缓存。</p></div>
         </div>

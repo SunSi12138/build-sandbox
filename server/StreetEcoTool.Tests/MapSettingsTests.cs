@@ -124,6 +124,50 @@ public sealed class MapSettingsTests
     }
 
     [Fact]
+    public void EachLayerPreloadDepthZeroToThreePersistsWithoutSchemaChanges()
+    {
+        using var env = new V2Environment();
+        using var store = env.Open();
+        var original = Assert.Single(store.GetMapSettings().Providers);
+        Assert.Equal(0, original.Preload);
+        var raster = store.SaveMapProvider(original.Id, original with { Preload = 1 });
+        var vector = store.CreateMapProvider(original with
+        {
+            Id = "", Name = "矢量地名", Folder = "vector-preload", Format = "mvt", Preload = 2
+        });
+        var archive = store.CreateMapProvider(original with
+        {
+            Id = "", Name = "单文件地名", Folder = "preload/labels.pmtiles",
+            UrlTemplate = "", Format = "pmtiles", ForceRefresh = false, Preload = 3
+        });
+        var config = store.GetMapSettings();
+        Assert.Equal(1, config.Providers.Single(item => item.Id == raster.Id).Preload);
+        Assert.Equal(2, config.Providers.Single(item => item.Id == vector.Id).Preload);
+        Assert.Equal(3, config.Providers.Single(item => item.Id == archive.Id).Preload);
+        var layers = store.GetMapLayers();
+        Assert.Equal(("raster", 1), (layers.Single(item => item.Id == raster.Id).Kind, layers.Single(item => item.Id == raster.Id).Preload));
+        Assert.Equal(("mvt", 2), (layers.Single(item => item.Id == vector.Id).Kind, layers.Single(item => item.Id == vector.Id).Preload));
+        Assert.Equal(("pmtiles", 3), (layers.Single(item => item.Id == archive.Id).Kind, layers.Single(item => item.Id == archive.Id).Preload));
+
+        foreach (var invalid in new[] { -1, 4, 99 })
+        {
+            Assert.Equal(400, Assert.Throws<ApiException>(() =>
+                store.SaveMapProvider(archive.Id, archive with { Preload = invalid })).StatusCode);
+            Assert.Equal(3, store.GetMapSettings().Providers.Single(item => item.Id == archive.Id).Preload);
+        }
+
+        using var reopened = env.Open();
+        Assert.Equal(1, reopened.GetMapSettings().Providers.Single(item => item.Id == raster.Id).Preload);
+        Assert.Equal(2, reopened.GetMapSettings().Providers.Single(item => item.Id == vector.Id).Preload);
+        Assert.Equal(3, reopened.GetMapSettings().Providers.Single(item => item.Id == archive.Id).Preload);
+        Assert.Equal("pmtiles", reopened.GetMapLayers().Single(item => item.Id == archive.Id).Kind);
+        var reset = store.SaveMapProvider(vector.Id, vector with { Preload = 0 });
+        Assert.Equal(0, reset.Preload);
+        Assert.Equal("mvt", store.GetMapLayers().Single(item => item.Id == vector.Id).Kind);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Fact]
     public void LayerSettingsPersistInDatabaseWithoutChangingOtherLayers()
     {
         using var env = new V2Environment(); TileProvider saved;

@@ -9,8 +9,8 @@ using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
 
-public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster");
-public sealed record MapLayerDto(string Id, string Kind = "raster");
+public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0);
+public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0);
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
 public sealed record MapSettingsDto(TileProvider[] Providers, TileProvider[] Defaults, string CacheRoot);
@@ -34,6 +34,18 @@ public sealed partial class Store
     private static readonly string[] VectorTileExtensions = [".pbf", ".mvt"];
     private const string MvtUrlPrefix = "mvt+";
     private const string PmtilesUrlPrefix = "pmtiles+";
+    // Existing url_template stores the format prefix. An optional preload prefix
+    // keeps 0-3 per-layer values without adding columns or rewriting old rows.
+    private const string PreloadUrlPrefix = "hb-preload-";
+    private static (string Url, int Preload) UnwrapStoredMapUrl(string value)
+    {
+        if (value.StartsWith(PreloadUrlPrefix, StringComparison.Ordinal) &&
+            value.Length > PreloadUrlPrefix.Length + 1 &&
+            value[PreloadUrlPrefix.Length] is >= '1' and <= '3' &&
+            value[PreloadUrlPrefix.Length + 1] == '+')
+            return (value[(PreloadUrlPrefix.Length + 2)..], value[PreloadUrlPrefix.Length] - '0');
+        return (value, 0);
+    }
     private const int ArchiveMaxRange = 16 * 1024 * 1024;
     private static readonly Regex ArchiveRange = new(@"^bytes=(\d+)-(\d+)$", RegexOptions.CultureInvariant);
     private static bool IsPmtiles(TileProvider provider) => provider.Format == "pmtiles";
@@ -42,8 +54,12 @@ public sealed partial class Store
         data[2] == (byte)'T' && data[3] == (byte)'i' && data[4] == (byte)'l' &&
         data[5] == (byte)'e' && data[6] == (byte)'s' && data[7] == 3;
     private static bool IsMvt(TileProvider provider) => provider.Format == "mvt";
-    private static string StoredMapUrl(TileProvider provider) => IsPmtiles(provider)
-        ? PmtilesUrlPrefix + provider.UrlTemplate : IsMvt(provider) ? MvtUrlPrefix + provider.UrlTemplate : provider.UrlTemplate;
+    private static string StoredMapUrl(TileProvider provider)
+    {
+        var value = IsPmtiles(provider)
+            ? PmtilesUrlPrefix + provider.UrlTemplate : IsMvt(provider) ? MvtUrlPrefix + provider.UrlTemplate : provider.UrlTemplate;
+        return provider.Preload == 0 ? value : PreloadUrlPrefix + provider.Preload.ToString(CultureInfo.InvariantCulture) + "+" + value;
+    }
     private static bool IsTms(TileProvider provider) => provider.Scheme == "tms";
     private static string[] TileExtensions(TileProvider provider) => IsMvt(provider) ? VectorTileExtensions : RasterTileExtensions;
     private static TileProvider[] DefaultMapProviders() =>
@@ -54,13 +70,13 @@ public sealed partial class Store
     private const string MapProviderColumns = "id,folder,scheme,url_template,api_key,map_key,subdomains,name,force_refresh,enabled,sort_order";
     private static TileProvider ReadMapProvider(SqliteDataReader row)
     {
-        var storedUrl = row.GetString(3);
+        var (storedUrl, preload) = UnwrapStoredMapUrl(row.GetString(3));
         var mvt = storedUrl.StartsWith(MvtUrlPrefix, StringComparison.Ordinal);
         var archive = storedUrl.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal);
         return new(row.GetString(0), row.GetString(1), row.GetString(2),
             archive ? storedUrl[PmtilesUrlPrefix.Length..] : mvt ? storedUrl[MvtUrlPrefix.Length..] : storedUrl,
             row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7),
-            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), archive ? "pmtiles" : mvt ? "mvt" : "raster");
+            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), archive ? "pmtiles" : mvt ? "mvt" : "raster", preload);
     }
     private TileProvider GetMapProvider(string id)
     {
@@ -88,6 +104,7 @@ public sealed partial class Store
             MapKey = Text(request.MapKey, "地图密钥", 2000), Subdomains = Text(request.Subdomains, "子域名", 200)
         };
         if (provider.Scheme is not ("xyz" or "tms")) throw new ApiException(400, "图块坐标应为 XYZ 或 TMS。");
+        if (provider.Preload is < 0 or > 3) throw new ApiException(400, "图层加载深度必须在 0 到 3 之间。");
         if (provider.Format is not ("raster" or "mvt" or "pmtiles")) throw new ApiException(400, "图层类型应为图片、MVT 或 PMTiles。");
         if (IsPmtiles(provider) && (!provider.Folder.EndsWith(".pmtiles", StringComparison.OrdinalIgnoreCase) || provider.Scheme != "xyz"))
             throw new ApiException(400, "PMTiles 请填写 .pmtiles 文件路径并使用 XYZ 坐标。");
@@ -191,7 +208,13 @@ public sealed partial class Store
         {
             using var command = Command("SELECT id,url_template FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
             using var rows = command.ExecuteReader(); var layers = new List<MapLayerDto>();
-            while (rows.Read()) layers.Add(new(rows.GetString(0), rows.GetString(1).StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal) ? "pmtiles" : rows.GetString(1).StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster"));
+            while (rows.Read())
+            {
+                var (url, preload) = UnwrapStoredMapUrl(rows.GetString(1));
+                layers.Add(new(rows.GetString(0),
+                    url.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal) ? "pmtiles" :
+                    url.StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster", preload));
+            }
             return layers.ToArray();
         }
     }
