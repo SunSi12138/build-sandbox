@@ -32,6 +32,7 @@ public sealed class CommunityWorkflowTests
     public void ImportPreviewApplyAndRetryKeepAtomicRows()
     {
         using var environment = new V2Environment(); using var store = environment.Open();
+        store.SavePointType(null, new("其他"));
         var grid = store.PreviewImport(Encoding.UTF8.GetBytes("名称,区域坐标\n第一网格,\n"), "grid.csv", "grid", "wgs84");
         Assert.Equal(new ImportResult(1, 0), store.ApplyImport(new(grid.Rows)));
         Assert.Equal(new ImportResult(0, 1), store.ApplyImport(new(grid.Rows)));

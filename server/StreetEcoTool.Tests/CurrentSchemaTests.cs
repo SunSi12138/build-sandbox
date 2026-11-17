@@ -60,7 +60,7 @@ public sealed class CurrentSchemaTests
     [InlineData(".restore-staging", true)]
     [InlineData(".restore-journal.json", false)]
     [InlineData(".restore-journal.json.tmp", false)]
-    public void UnsupportedLayoutNeverMovesOrDeletesExistingFiles(string name, bool directory)
+    public void UnknownFilesArePreservedWhenReopeningCurrentSchema(string name, bool directory)
     {
         using var environment = new V2Environment();
         using (var store = environment.Open()) environment.CreatePoint(store);
@@ -68,8 +68,8 @@ public sealed class CurrentSchemaTests
         if (directory) { Directory.CreateDirectory(path); path = Path.Combine(path, "preserve"); }
         File.WriteAllText(path, "do not discard");
         var before = Fingerprint(environment.Root);
-        Assert.Throws<ApiException>(() => environment.Open());
-        Assert.Throws<ApiException>(() => environment.Open());
+        using (var reopened = environment.Open())
+            Assert.Equal(Store.SchemaVersion, V2Environment.Number(reopened.DatabasePath, "PRAGMA user_version;"));
         Assert.Equal(before, Fingerprint(environment.Root));
     }
 

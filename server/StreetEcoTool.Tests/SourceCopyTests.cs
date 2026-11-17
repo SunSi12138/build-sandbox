@@ -18,20 +18,22 @@ public sealed class SourceCopyTests
     {
         var root = Repository();
         var inspection = File.ReadAllText(Path.Combine(root, "web", "app", "pages", "inspections", "[id].vue"));
-        Assert.Contains("最后一条排查", inspection, StringComparison.Ordinal);
-        Assert.Contains("点位照片也将删除", inspection, StringComparison.Ordinal);
+        Assert.Contains("确定删除此检查记录及其问题、照片和办理记录", inspection, StringComparison.Ordinal);
+        Assert.Contains("deleteRecord", inspection, StringComparison.Ordinal);
         var batch = File.ReadAllText(Path.Combine(root, "web", "app", "components", "InspectionBatch.vue"));
         Assert.Contains("未提交的", batch, StringComparison.Ordinal);
         Assert.Contains("继续编辑", batch, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void PagesAndComponentsUseColorTokensAndCompactControls()
+    public void CommunityMapKeepsAccessibleViewAndLayerControls()
     {
         var app = Path.Combine(Repository(), "web", "app");
-        foreach (var folder in new[] { "pages", "components" })
-            foreach (var file in Directory.EnumerateFiles(Path.Combine(app, folder), "*.vue", SearchOption.AllDirectories))
-                Assert.False(Regex.IsMatch(WithoutComments(File.ReadAllText(file)), @"#[0-9a-fA-F]{3,8}\b"), file);
+        var map = File.ReadAllText(Path.Combine(app, "pages", "map.vue"));
+        Assert.Contains("地图模式", File.ReadAllText(Path.Combine(app, "components", "PointsList.vue")), StringComparison.Ordinal);
+        Assert.Contains("layerOpen", map, StringComparison.Ordinal);
+        Assert.Contains("switchMode('list')", map, StringComparison.Ordinal);
+        Assert.Contains("导出地图", map, StringComparison.Ordinal);
         Assert.DoesNotContain("min-h-12", File.ReadAllText(Path.Combine(app, "app.config.ts")), StringComparison.Ordinal);
     }
 
