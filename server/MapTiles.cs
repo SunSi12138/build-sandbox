@@ -9,7 +9,7 @@ using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
 
-public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0, bool HasStyle = false);
+public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0, string StyleDirectory = "", bool HasStyle = false);
 public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0, string? StyleUrl = null);
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
@@ -37,14 +37,34 @@ public sealed partial class Store
     // Existing url_template stores the format prefix. An optional preload prefix
     // keeps 0-3 per-layer values without adding columns or rewriting old rows.
     private const string PreloadUrlPrefix = "hb-preload-";
-    private static (string Url, int Preload) UnwrapStoredMapUrl(string value)
+    private const string StyleUrlPrefix = "hb-style-";
+    private static (string Url, int Preload, string StyleDirectory) UnwrapStoredMapUrl(string value)
     {
+        var preload = 0;
         if (value.StartsWith(PreloadUrlPrefix, StringComparison.Ordinal) &&
             value.Length > PreloadUrlPrefix.Length + 1 &&
             value[PreloadUrlPrefix.Length] is >= '1' and <= '3' &&
             value[PreloadUrlPrefix.Length + 1] == '+')
-            return (value[(PreloadUrlPrefix.Length + 2)..], value[PreloadUrlPrefix.Length] - '0');
-        return (value, 0);
+        {
+            preload = value[PreloadUrlPrefix.Length] - '0';
+            value = value[(PreloadUrlPrefix.Length + 2)..];
+        }
+        var styleDirectory = "";
+        if (value.StartsWith(StyleUrlPrefix, StringComparison.Ordinal))
+        {
+            var separator = value.IndexOf('+', StyleUrlPrefix.Length);
+            if (separator > StyleUrlPrefix.Length)
+            {
+                var token = value[StyleUrlPrefix.Length..separator].Replace('-', '+').Replace('_', '/');
+                try
+                {
+                    styleDirectory = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(token.PadRight((token.Length + 3) / 4 * 4, '=')));
+                    value = value[(separator + 1)..];
+                }
+                catch (FormatException) { /* Ignore an invalid legacy prefix. */ }
+            }
+        }
+        return (value, preload, styleDirectory);
     }
     private const int ArchiveMaxRange = 16 * 1024 * 1024;
     private static readonly Regex ArchiveRange = new(@"^bytes=(\d+)-(\d+)$", RegexOptions.CultureInvariant);
@@ -58,6 +78,11 @@ public sealed partial class Store
     {
         var value = IsPmtiles(provider)
             ? PmtilesUrlPrefix + provider.UrlTemplate : IsMvt(provider) ? MvtUrlPrefix + provider.UrlTemplate : provider.UrlTemplate;
+        if (provider.StyleDirectory.Length > 0)
+        {
+            var token = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(provider.StyleDirectory)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            value = StyleUrlPrefix + token + "+" + value;
+        }
         return provider.Preload == 0 ? value : PreloadUrlPrefix + provider.Preload.ToString(CultureInfo.InvariantCulture) + "+" + value;
     }
     private static bool IsTms(TileProvider provider) => provider.Scheme == "tms";
@@ -70,13 +95,14 @@ public sealed partial class Store
     private const string MapProviderColumns = "id,folder,scheme,url_template,api_key,map_key,subdomains,name,force_refresh,enabled,sort_order";
     private TileProvider ReadMapProvider(SqliteDataReader row)
     {
-        var (storedUrl, preload) = UnwrapStoredMapUrl(row.GetString(3));
+        var (storedUrl, preload, styleDirectory) = UnwrapStoredMapUrl(row.GetString(3));
         var mvt = storedUrl.StartsWith(MvtUrlPrefix, StringComparison.Ordinal);
         var archive = storedUrl.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal);
         return new(row.GetString(0), row.GetString(1), row.GetString(2),
             archive ? storedUrl[PmtilesUrlPrefix.Length..] : mvt ? storedUrl[MvtUrlPrefix.Length..] : storedUrl,
             row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7),
-            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), archive ? "pmtiles" : mvt ? "mvt" : "raster", preload, File.Exists(Path.Combine(MapStyleDirectory(row.GetString(0)), "style.json")));
+            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), archive ? "pmtiles" : mvt ? "mvt" : "raster", preload, styleDirectory,
+            styleDirectory.Length > 0 && File.Exists(Path.Combine(MapCacheDirectory(styleDirectory), "style.json")));
     }
     private TileProvider GetMapProvider(string id)
     {
@@ -101,11 +127,13 @@ public sealed partial class Store
         {
             Name = Text(request.Name, "地图名称", 80, true), Folder = Text(request.Folder, "缓存目录", 1000, true),
             UrlTemplate = Text(request.UrlTemplate, "调用链接", 4000), ApiKey = Text(request.ApiKey, "服务密钥", 2000),
-            MapKey = Text(request.MapKey, "地图密钥", 2000), Subdomains = Text(request.Subdomains, "子域名", 200)
+            MapKey = Text(request.MapKey, "地图密钥", 2000), Subdomains = Text(request.Subdomains, "子域名", 200),
+            StyleDirectory = Text(request.StyleDirectory, "矢量样式目录", 1000)
         };
         if (provider.Scheme is not ("xyz" or "tms")) throw new ApiException(400, "图块坐标应为 XYZ 或 TMS。");
         if (provider.Preload is < 0 or > 3) throw new ApiException(400, "图层加载深度必须在 0 到 3 之间。");
         if (provider.Format is not ("raster" or "mvt" or "pmtiles")) throw new ApiException(400, "图层类型应为图片、MVT 或 PMTiles。");
+        if (provider.Format == "raster") provider = provider with { StyleDirectory = "" };
         if (IsPmtiles(provider) && (!provider.Folder.EndsWith(".pmtiles", StringComparison.OrdinalIgnoreCase) || provider.Scheme != "xyz"))
             throw new ApiException(400, "PMTiles 请填写 .pmtiles 文件路径并使用 XYZ 坐标。");
         if (IsPmtiles(provider) && provider.ForceRefresh)
@@ -210,11 +238,11 @@ public sealed partial class Store
             using var rows = command.ExecuteReader(); var layers = new List<MapLayerDto>();
             while (rows.Read())
             {
-                var (url, preload) = UnwrapStoredMapUrl(rows.GetString(1));
+                var (url, preload, styleDirectory) = UnwrapStoredMapUrl(rows.GetString(1));
                 layers.Add(new(rows.GetString(0),
                     url.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal) ? "pmtiles" :
                     url.StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster", preload,
-                    File.Exists(Path.Combine(MapStyleDirectory(rows.GetString(0)), "style.json"))
+                    styleDirectory.Length > 0 && File.Exists(Path.Combine(MapCacheDirectory(styleDirectory), "style.json"))
                         ? $"/api/map/style/{Uri.EscapeDataString(rows.GetString(0))}/style.json" : null));
             }
             return layers.ToArray();
@@ -489,19 +517,8 @@ public sealed partial class Store
         RequestDelegate layers = context => Api.Write(context, GetMapLayers(), MapConfigJsonContext.Default.MapLayerDtoArray);
         app.MapGet("/api/map/layers", layers);
         app.MapGet("/api/map/archive/{id}", ServePmtilesArchiveAsync);
-        app.MapPut("/api/map/style/{id}", async context =>
-        {
-            var provider = await ImportMapStyleAsync(Api.Id(context), context.Request.Body, context.RequestAborted);
-            await Api.Write(context, provider, MapConfigJsonContext.Default.TileProvider);
-        });
-        app.MapDelete("/api/map/style/{id}", context =>
-        {
-            Api.RequireDeleteConfirmation(context);
-            DeleteMapStyle(Api.Id(context));
-            context.Response.StatusCode = 204;
-            return Task.CompletedTask;
-        });
-        app.MapGet("/api/map/style/{id}/{**asset}", ServeMapStyleAssetAsync);
+        app.MapGet("/api/map/style/{id}/style.json", ServeMapStyleJsonAsync);
+        app.MapGet("/api/map/style/{id}/assets/{**asset}", ServeMapStyleAssetAsync);
         app.MapPost("/api/map/settings", create);
         app.MapPut("/api/map/settings/order", order);
         app.MapPut("/api/map/settings/{id}/enabled", enabled);
