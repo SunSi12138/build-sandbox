@@ -10,6 +10,9 @@ import TileLayer from 'ol/layer/Tile'
 import XYZ from 'ol/source/XYZ'
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
+import DragRotate from 'ol/interaction/DragRotate'
+import { defaults as defaultInteractions } from 'ol/interaction/defaults'
+import { primaryAction } from 'ol/events/condition'
 import { defaults as defaultControls, ScaleLine } from 'ol/control'
 import { fromLonLat, toLonLat } from 'ol/proj'
 import { isEmpty } from 'ol/extent'
@@ -26,6 +29,8 @@ const host = ref<HTMLElement>()
 const locateError = ref('')
 const layerRequest = new AbortController()
 const sketchVertices = ref(0)
+const rotation = ref(0)
+const isRotated = computed(() => Math.abs(Math.sin(rotation.value / 2)) > 0.01)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
 let reporting = false
@@ -76,7 +81,7 @@ function interactions() {
     draw.on('drawend', event => { emit('drawing', false); report(event.feature) })
     map.addInteraction(draw)
   } else if (props.mode === 'edit') {
-    modify = new Modify({ source: editingSource }); modify.on('modifyend', event => { const feature = event.features.item(0); if (feature) report(feature) }); map.addInteraction(modify)
+    modify = new Modify({ source: editingSource, condition: event => primaryAction(event) && !(event.originalEvent instanceof PointerEvent && event.originalEvent.ctrlKey) }); modify.on('modifyend', event => { const feature = event.features.item(0); if (feature) report(feature) }); map.addInteraction(modify)
   }
 }
 function fitAll() {
@@ -98,6 +103,7 @@ function initialMapView() {
   } catch { /* Local storage may be unavailable in private browsing. */ }
   return { coordinate: [88.893426, 29.274331], zoom: 16 }
 }
+function resetNorth() { map?.getView().animate({ rotation: 0, duration: 250 }) }
 function locateCurrent() {
   locateError.value = ''
   if (!navigator.geolocation) { locateError.value = '当前浏览器不支持定位'; return }
@@ -120,7 +126,20 @@ watch(() => props.selected, () => recordsLayer.changed(), { deep: true })
 const recordsLayer = new VectorLayer({ source: recordsSource, style: feature => style(feature as Feature<Geometry>), declutter: false })
 onMounted(() => {
   const lastView = initialMapView()
-  map = new Map({ target: host.value, layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })], view: new View({ center: fromLonLat(gcj02ToWgs84(lastView.coordinate)), zoom: lastView.zoom, minZoom: 3, maxZoom: 21 }), controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]) })
+  const view = new View({ center: fromLonLat(gcj02ToWgs84(lastView.coordinate)), zoom: lastView.zoom, minZoom: 3, maxZoom: 21 })
+  view.on('change:rotation', () => { rotation.value = view.getRotation() })
+  map = new Map({
+    target: host.value,
+    layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })],
+    view,
+    controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]),
+    interactions: defaultInteractions().extend([new DragRotate({
+      condition: event => event.originalEvent instanceof PointerEvent &&
+        event.originalEvent.pointerType === 'mouse' && event.originalEvent.button === 0 &&
+        event.originalEvent.ctrlKey && !event.originalEvent.altKey &&
+        !event.originalEvent.shiftKey && !event.originalEvent.metaKey,
+    })]),
+  })
   map.on('moveend', () => {
     const coordinate = map?.getView().getCenter()
     if (!coordinate) return
@@ -151,8 +170,8 @@ onMounted(() => {
 onBeforeUnmount(() => { layerRequest.abort(); observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
 </script>
 <template>
-  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图" /><div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
+  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图，按住 Ctrl 并拖动鼠标可以旋转" title="按住 Ctrl 并拖动鼠标可以旋转地图" /><div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button v-if="isRotated" type="button" class="map-north" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
-.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-locate{position:absolute;right:12px;bottom:174px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:24px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-location-hint{position:absolute;left:12px;bottom:12px;max-width:calc(100% - 78px);background:var(--surface);padding:6px 9px;border-radius:6px;font-size:12px;z-index:2}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}
+.simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-north{position:absolute;right:12px;bottom:220px;width:38px;height:38px;border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;font-weight:700;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-locate{position:absolute;right:12px;bottom:174px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:24px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-location-hint{position:absolute;left:12px;bottom:12px;max-width:calc(100% - 78px);background:var(--surface);padding:6px 9px;border-radius:6px;font-size:12px;z-index:2}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}
 </style>
