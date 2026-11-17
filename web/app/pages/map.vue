@@ -79,7 +79,7 @@ useHead({title:'社区地图'})
       <aside v-if="useOpen&&detail" class="map-pane floating" :class="{'mobile-active':mobilePane==='use'}" aria-label="使用情况窗"><header><div><small>{{ detail.point.name }}</small><h2>{{ currentUse?'使用情况':'添加使用情况' }}</h2></div><UButton icon="i-lucide-x" aria-label="关闭使用情况" color="neutral" variant="ghost" @click="closeUse" /></header><div class="pane-scroll"><UseDetailPanel :return-to="returnTo" ref="usePanel" :key="useId||'new'" :point-id="detail.point.id" :record="currentUse" @saved="useSaved" @cancel="useOpen=false;mobilePane='place'" /></div></aside>
       <aside v-if="inspectionId" class="map-pane floating" :class="{'mobile-active':mobilePane==='inspection'}" aria-label="排查详情窗"><header><h2>排查详情</h2><UButton icon="i-lucide-x" aria-label="关闭排查详情" color="neutral" variant="ghost" @click="inspectionId='';mobilePane='place'" /></header><div class="pane-scroll"><MapInspectionPanel :return-to="returnTo" :id="inspectionId" @changed="refreshed" /></div></aside>
     </div>
-    <MapLayerControl v-model="mapState.layers" v-model:hd="highDefinition" :get-bounds="()=>canvas?.bounds()" />
+
     <GridEditor v-model:open="gridEditor" :record="editingGrid" :shape="pending" :initial-parent-id="filter.grid==='all'?'':filter.grid" @saved="gridCreated" />
     <PointEditor v-model:open="editor" :point="editingPoint" :initial-coordinates="pendingCoordinates" :initial-shape="pending" @saved="created" />
   </div>

@@ -26,13 +26,14 @@ public static class CommunityApi
         RequestDelegate saveLayer = async context => await Api.Write(context, store.SaveMapLayer(await Api.Read(context, CommunityJsonContext.Default.MapLayerDto)), CommunityJsonContext.Default.MapLayerDto);
         app.MapGet("/api/map/layers", layers);
         app.MapPost("/api/map/layers", saveLayer);
+        app.MapDelete("/api/map/layers/{id}", context => { Api.RequireDeleteConfirmation(context); store.DeleteMapLayer(Api.Id(context)); context.Response.StatusCode = 204; return Task.CompletedTask; });
         RequestDelegate tile = async context =>
         {
             if (!int.TryParse(context.Request.RouteValues["z"]?.ToString(), out var z) || !int.TryParse(context.Request.RouteValues["x"]?.ToString(), out var x) || !int.TryParse(context.Request.RouteValues["y"]?.ToString(), out var y)) throw new ApiException(400, "地图编号不正确。");
             var path = store.FindTile((string)context.Request.RouteValues["layer"]!, z, x, y);
             if (path is null) { context.Response.StatusCode = 404; return; }
             context.Response.Headers.CacheControl = "no-cache";
-            context.Response.ContentType = Path.GetExtension(path) switch { ".jpg" => "image/jpeg", ".webp" => "image/webp", _ => "image/png" };
+            context.Response.ContentType = Path.GetExtension(path) switch { ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".pbf" or ".mvt" => "application/vnd.mapbox-vector-tile", _ => "image/png" };
             await context.Response.SendFileAsync(path, context.RequestAborted);
         };
         app.MapGet("/api/map/tiles/{layer}/{z}/{x}/{y}", tile);

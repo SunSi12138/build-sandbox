@@ -9,20 +9,27 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,cache_version,annotation,map_key FROM map_layers ORDER BY sort_order,id;");
+            using var command = Command("SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,cache_version,annotation,map_key,tile_type,style_json FROM map_layers ORDER BY sort_order,id;");
             using var rows = command.ExecuteReader();
             var items = new List<MapLayerDto>();
-            while (rows.Read()) items.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9), rows.GetString(10), rows.GetString(11), rows.GetString(12), rows.GetInt32(13) != 0, rows.GetInt32(14), rows.GetInt32(15) != 0, rows.GetString(16)));
+            while (rows.Read()) items.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9), rows.GetString(10), rows.GetString(11), rows.GetString(12), rows.GetInt32(13) != 0, rows.GetInt32(14), rows.GetInt32(15) != 0, rows.GetString(16), rows.GetString(17), rows.GetString(18)));
             return [.. items];
         }
     }
 
     public MapLayerDto SaveMapLayer(MapLayerDto request)
     {
-        if (!Regex.IsMatch(request.Id, "^[a-zA-Z0-9_-]{1,60}$") || !Regex.IsMatch(request.Folder, "^[a-zA-Z0-9_-]{1,60}$")) throw new ApiException(400, "图层目录只能包含英文字母、数字、短横线和下划线。");
+        if (!Regex.IsMatch(request.Id, "^[a-zA-Z0-9_-]{1,60}$")) throw new ApiException(400, "图层编号不正确。");
+        var folder = Text(request.Folder, "本地缓存目录", 1024, true);
+        if (folder.IndexOfAny(Path.GetInvalidPathChars()) >= 0 || (!Path.IsPathFullyQualified(folder) && (folder.Split(['/', '\\']).Any(x => x is ".." or "." or "")))) throw new ApiException(400, "本地缓存目录不正确。");
+        if (request.TileType is not ("raster" or "mvt")) throw new ApiException(400, "请选择瓦片类型。");
         if (request.Scheme is not ("xyz" or "tms") || request.MinZoom < 0 || request.MaxZoom > 22 || request.MaxZoom < request.MinZoom || !double.IsFinite(request.Opacity) || request.Opacity < 0 || request.Opacity > 1) throw new ApiException(400, "图层参数不正确。");
-        ValidateTileTemplate(request);
-        var value = request with { Name = Text(request.Name, "图层名称", 100, true) };
+        if (!string.IsNullOrWhiteSpace(request.StyleJson))
+        {
+            try { using var style = JsonDocument.Parse(request.StyleJson); if (style.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException(); }
+            catch (JsonException) { throw new ApiException(400, "MVT 样式 JSON 不正确。"); }
+        }
+        var value = request with { Name = Text(request.Name, "图层名称", 100, true), Folder = folder, UpdateCache = false, UrlTemplate = "", ApiKey = "", MapKey = "" };
         lock (_gate)
         {
             PrepareWrite();
@@ -34,15 +41,25 @@ public sealed partial class Store
                 using var reset = Command("UPDATE map_layers SET is_default=0;", transaction); reset.ExecuteNonQuery();
             }
             using (var command = Command("""
-                INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,annotation,map_key)
-                VALUES($id,$name,$folder,$scheme,$enabled,$default,$opacity,$min,$max,$order,$url,$key,$subdomains,$update,$annotation,$mk)
+                INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,annotation,map_key,tile_type,style_json)
+                VALUES($id,$name,$folder,$scheme,$enabled,$default,$opacity,$min,$max,$order,$url,$key,$subdomains,$update,$annotation,$mk,$tileType,$styleJson)
                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,folder=excluded.folder,scheme=excluded.scheme,enabled=excluded.enabled,
                   is_default=excluded.is_default,opacity=excluded.opacity,min_zoom=excluded.min_zoom,max_zoom=excluded.max_zoom,sort_order=excluded.sort_order,
-                  url_template=excluded.url_template,api_key=excluded.api_key,subdomains=excluded.subdomains,update_cache=excluded.update_cache,annotation=excluded.annotation,map_key=excluded.map_key;
+                  url_template=excluded.url_template,api_key=excluded.api_key,subdomains=excluded.subdomains,update_cache=excluded.update_cache,annotation=excluded.annotation,map_key=excluded.map_key,tile_type=excluded.tile_type,style_json=excluded.style_json;
                 """, transaction, ("$id", value.Id), ("$name", value.Name), ("$folder", value.Folder), ("$scheme", value.Scheme),
                 ("$enabled", value.Enabled ? 1 : 0), ("$default", value.IsDefault ? 1 : 0), ("$opacity", value.Opacity), ("$min", value.MinZoom), ("$max", value.MaxZoom), ("$order", value.SortOrder),
-                ("$url", value.UrlTemplate), ("$key", value.ApiKey), ("$subdomains", value.Subdomains), ("$update", value.UpdateCache ? 1 : 0), ("$annotation", value.Annotation ? 1 : 0), ("$mk", value.MapKey))) command.ExecuteNonQuery();
+                ("$url", value.UrlTemplate), ("$key", value.ApiKey), ("$subdomains", value.Subdomains), ("$update", value.UpdateCache ? 1 : 0), ("$annotation", value.Annotation ? 1 : 0), ("$mk", value.MapKey), ("$tileType", value.TileType), ("$styleJson", value.StyleJson))) command.ExecuteNonQuery();
             transaction.Commit(); return value;
+        }
+    }
+
+    public void DeleteMapLayer(string id)
+    {
+        lock (_gate)
+        {
+            PrepareWrite();
+            using var command = Command("DELETE FROM map_layers WHERE id=$id;", null, ("$id", id));
+            if (command.ExecuteNonQuery() == 0) throw new ApiException(404, "图层不存在。");
         }
     }
 
@@ -156,7 +173,8 @@ public sealed partial class Store
         var layer = GetMapLayers().FirstOrDefault(x => x.Id == layerId) ?? throw new ApiException(404, "图层不存在。");
         if (z < layer.MinZoom || z > layer.MaxZoom || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
         var row = layer.Scheme == "tms" ? (1 << z) - 1 - y : y;
-        var tilePath = Path.Combine(RootDir, "tiles", layer.Folder, z.ToString(), x.ToString(), row.ToString());
-        return new[] { ".png", ".jpg", ".webp" }.Select(ext => tilePath + ext).FirstOrDefault(File.Exists);
+        var directory = Path.IsPathFullyQualified(layer.Folder) ? layer.Folder : Path.Combine(RootDir, "tiles", layer.Folder);
+        var tilePath = Path.Combine(directory, z.ToString(), x.ToString(), row.ToString());
+        return new[] { ".png", ".jpg", ".jpeg", ".webp", ".pbf", ".mvt" }.Select(ext => tilePath + ext).FirstOrDefault(File.Exists);
     }
 }

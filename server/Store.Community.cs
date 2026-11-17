@@ -35,9 +35,9 @@ public sealed partial class Store
               enabled INTEGER NOT NULL, is_default INTEGER NOT NULL, opacity REAL NOT NULL,
               min_zoom INTEGER NOT NULL, max_zoom INTEGER NOT NULL, sort_order INTEGER NOT NULL,
               url_template TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '', subdomains TEXT NOT NULL DEFAULT '0,1,2,3',
-              update_cache INTEGER NOT NULL DEFAULT 0, annotation INTEGER NOT NULL DEFAULT 0, map_key TEXT NOT NULL DEFAULT '', cache_version INTEGER NOT NULL DEFAULT 0);
-            INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('jlyh','吉林一号','jlyh','tms',1,1,1,12,18,0);
-            INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,annotation) VALUES('tdt-cva','地名标注','tdt-cva','xyz',0,0,1,0,18,10000,1);
+              update_cache INTEGER NOT NULL DEFAULT 0, annotation INTEGER NOT NULL DEFAULT 0, map_key TEXT NOT NULL DEFAULT '', cache_version INTEGER NOT NULL DEFAULT 0, tile_type TEXT NOT NULL DEFAULT 'raster', style_json TEXT NOT NULL DEFAULT '');
+            INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order) VALUES('jlyh','卫星图','satellite','xyz',1,1,1,0,20,0);
+            INSERT INTO map_layers(id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,annotation) VALUES('tdt-cva','标注','labels','xyz',1,0,1,0,20,10000,1);
             CREATE VIEW active_inspections AS SELECT rowid AS rowid,* FROM inspections WHERE voided=0;
             CREATE VIEW active_issues AS SELECT x.rowid AS rowid,x.* FROM issues x JOIN inspections n ON n.id=x.inspection_id WHERE x.voided=0 AND n.voided=0;
             """, transaction)) command.ExecuteNonQuery();

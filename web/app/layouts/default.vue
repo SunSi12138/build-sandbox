@@ -15,7 +15,7 @@ const links = [
   { to: '/settings', label: '工具设置', short: '设置', icon: 'i-lucide-settings' }
 ]
 function active(path: string) {
-  const groups:Record<string,string[]>= {'/settings':['/catalogs','/layers','/imports','/management','/archive'], '/inspections':['/plans','/drafts','/reminders'], '/reports':['/statistics']}
+  const groups:Record<string,string[]>= {'/settings':['/catalogs','/imports','/management','/archive'], '/inspections':['/plans','/drafts','/reminders'], '/reports':['/statistics']}
   return path==='/'?route.path==='/':route.path.startsWith(path)||(groups[path]??[]).some(prefix=>route.path.startsWith(prefix))
 }
 function refreshOnReturn() { if (document.visibilityState === 'visible') void load().catch(() => {}) }

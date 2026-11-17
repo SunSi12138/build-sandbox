@@ -17,6 +17,7 @@ const tabs = [
   { value: 'basic', label: '基本信息' },
   { value: 'grids', label: '网格' },
   { value: 'places', label: '场所与用途' },
+  { value: 'map', label: '地图设置' },
   { value: 'backup', label: '备份与恢复' }
 ]
 const active = ref<string | number>(tabs.some(t => t.value === route.query.tab) ? String(route.query.tab) : 'basic')
@@ -61,7 +62,7 @@ onMounted(() => { void fetchSettings() })
 <template>
   <div class="page-stack">
     <PageHeader title="系统设置" />
-    <div class="flex gap-2 flex-wrap"><UButton to="/catalogs" label="人员与检查类型" icon="i-lucide-list-checks" variant="outline" /><UButton to="/layers" label="地图图层" icon="i-lucide-map" variant="outline" /></div>
+    <div class="flex gap-2 flex-wrap"><UButton to="/catalogs" label="人员与检查类型" icon="i-lucide-list-checks" variant="outline" /></div>
     <UTabs v-model="active" :items="tabs" :content="false" variant="link" :ui="{ root: 'min-w-0', list: 'overflow-x-auto flex-nowrap justify-start', trigger: 'shrink-0 min-h-10 text-sm px-3', indicator: 'h-0.5' }" />
     <UAlert v-if="error" :description="error" color="error" variant="subtle"><template #actions><UButton v-if="!ready" color="neutral" variant="outline" @click="fetchSettings(true)">重试</UButton></template></UAlert>
     <div v-if="loading && !ready" class="space-y-3" aria-busy="true"><USkeleton v-for="n in 4" :key="n" class="h-16 w-full rounded-md" /></div>
@@ -83,6 +84,7 @@ onMounted(() => { void fetchSettings() })
         <SettingsDictionary v-if="active==='places'" kind="point-types" :items="bootstrap?.pointTypes ?? []" @changed="dictionaryChanged" /><MapCatalogSettings v-if="active==='places'" />
         <SettingsDictionary v-if="active==='places'" kind="campaign-types" :items="bootstrap?.campaignTypes ?? []" @changed="dictionaryChanged" />
       </div>
+      <SettingsMapLayers v-else-if="active === 'map'" />
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
       <details class="panel panel-body"><summary class="cursor-pointer">资料管理</summary><div class="flex gap-3 flex-wrap mt-3"><UButton to="/management" label="重复资料合并" variant="outline" /><UButton to="/archive" label="作废记录与恢复" variant="outline" /></div></details>
     </template>
