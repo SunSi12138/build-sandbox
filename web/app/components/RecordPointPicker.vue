@@ -91,13 +91,13 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
           <UButton v-if="points.length < total" type="button" label="加载更多" color="neutral" variant="link" :disabled="disabled" :loading="searching" @click="list(false)" />
         </div>
       </UFormField>
-      <p v-if="error" class="text-sm text-error" role="alert">{{ error }}</p>
+      <p v-if="selected?.openIssueCount" class="text-sm text-warning">该点位还有 {{ selected.openIssueCount }} 项未闭环问题。<NuxtLink :to="`/points/${selected.id}`" target="_blank" class="text-primary underline">查看已有问题</NuxtLink></p><p v-if="error" class="text-sm text-error" role="alert">{{ error }}</p>
     </template>
     <div v-else class="field-grid">
       <UFormField label="名称" name="newPoint.name" required class="field-full"><UInput v-model="newPoint.name" :maxlength="200" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-name`" /></UFormField>
       <UFormField label="社区" name="newPoint.communityId" required><USelect v-model="newPoint.communityId" :items="communities" placeholder="请选择" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-community`" /></UFormField>
       <UFormField label="类型" name="newPoint.typeId" required><USelect v-model="newPoint.typeId" :items="types" placeholder="请选择" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-type`" /></UFormField>
-      <UFormField label="详细地址" name="newPoint.address" required class="field-full"><UInput v-model="newPoint.address" :maxlength="1000" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-address`" /></UFormField>
+      <UFormField label="详细地址" name="newPoint.address" required class="field-full"><UInput v-model="newPoint.address" :maxlength="1000" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-address`" /></UFormField><PointDuplicateHint :name="newPoint.name" :address="newPoint.address" :community-id="newPoint.communityId" />
       <UFormField label="联系人" name="newPoint.contact"><NameTagsInput v-model="newPoint.contact" :maxlength="100" :disabled="disabled" :data-testid="`${prefix}-temporary-contact`" /></UFormField>
       <UFormField label="电话" name="newPoint.phone"><UInput v-model="newPoint.phone" type="tel" :maxlength="100" class="w-full" :disabled="disabled" /></UFormField>
       <UFormField label="经纬度" name="newPoint.coordinates" class="field-full"><template #label><CoordinateLabel /></template><UInput v-model="newPoint.coordinates" aria-label="经纬度" placeholder="88.893426,29.274331" class="w-full" :disabled="disabled" :data-testid="`${prefix}-temporary-coordinates`" /></UFormField>
