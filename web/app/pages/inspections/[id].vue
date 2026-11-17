@@ -42,7 +42,6 @@ const batchOpen = ref(false),
 const editOpen = ref(false),
   editing = ref(false),
   editError = ref(''),
-  promoteOpen = ref(false),
   deleteOpen = ref(false),
   deleting = ref(false),
   deleteError = ref('')
@@ -126,16 +125,6 @@ async function exportRecord(kind: string) {
 }
 const moreItems = computed(() => [
   { label: '编辑排查信息', onSelect: openEdit },
-  ...(detail.value?.inspection.pointTemporary
-    ? [
-        {
-          label: '转为常态点位',
-          onSelect: () => {
-            promoteOpen.value = true
-          },
-        },
-      ]
-    : []),
   {
     label: '删除排查',
     color: 'error' as const,
@@ -385,13 +374,7 @@ watch(() => route.query.issue, revealIssue)
         <section class="panel">
           <div class="panel-head">
             <h2 class="section-title">基本信息</h2>
-            <UButton
-              v-if="detail.inspection.pointTemporary"
-              label="转为常态点位"
-              variant="link"
-              data-testid="promote-point"
-              @click="promoteOpen = true"
-            />
+            <UButton v-if="detail.inspection.pointTemporary" :to="`/points/${detail.inspection.pointId}`" label="编辑点位性质" data-testid="edit-point-nature" variant="link" />
           </div>
           <dl class="detail-grid panel-body">
             <div>
@@ -604,11 +587,6 @@ watch(() => route.query.issue, revealIssue)
       :selected-issue="selectedIssue"
       @saved="batchSaved"
       @busy="batchBusy = $event"
-    /><PointPromote
-      v-if="detail"
-      v-model:open="promoteOpen"
-      :point-id="detail.inspection.pointId"
-      @saved="load"
     />
     <UModal
       v-model:open="editOpen"
