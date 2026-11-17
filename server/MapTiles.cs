@@ -9,6 +9,8 @@ using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
 
+// Preload is a legacy API/storage name kept for existing databases.
+// It now represents high-resolution depth; OpenLayers preload is fixed at 1.
 public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0, string StyleDirectory = "", bool HasStyle = false);
 public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0, string? StyleUrl = null);
 public sealed record MapOrderRequest(string[] Ids);
