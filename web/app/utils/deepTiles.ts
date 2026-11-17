@@ -27,9 +27,11 @@ export function installDeepRasterTiles(source: XYZ, options: {
   const currentDepth = () => effectiveRenderDepth(options.depth, options.getZoom(), options.getPixelRatio(), options.maxZoom)
   // Match mappreview: choose child tiles at a finer resolution, then compensate
   // the source pixel ratio so the tiles retain their geographic alignment.
-  grid.getZForResolution = (resolution, direction) => {
+  grid.getZForResolution = function (resolution, direction) {
     const depth = currentDepth()
-    return getZoom(depth ? resolution / 2 ** depth : resolution, direction)
+    // The renderer supplies a direction. Other tile-grid queries should keep
+    // their native resolution, matching the original mappreview patch.
+    return getZoom(depth && arguments.length >= 2 ? resolution / 2 ** depth : resolution, direction)
   }
   source.getTilePixelRatio = pixelRatio => {
     const depth = currentDepth()
