@@ -21,13 +21,6 @@ interface CampaignState {
   pointMode: 'regular' | 'temporary'
   newPoint: NewPointDraft
   date: string
-  endDate: string
-  organizer: string
-  participants: string
-  participantCount: string
-  vehicleCount: string
-  garbageTons: string
-  areaSqm: string
   content: string
   outcome: string
   notes: string
@@ -42,13 +35,6 @@ const state = reactive<CampaignState>({
   pointMode: 'regular',
   newPoint: emptyPoint(),
   date: todayLocal(),
-  endDate: '',
-  organizer: '',
-  participants: '',
-  participantCount: '',
-  vehicleCount: '',
-  garbageTons: '',
-  areaSqm: '',
   content: '',
   outcome: '',
   notes: '',
@@ -77,23 +63,16 @@ let ready = false,
   completed = false,
   original = '',
   leaveResolve: ((value: boolean) => void) | undefined
-const quantityFields = ['participantCount', 'vehicleCount', 'garbageTons', 'areaSqm'] as const
 const textFields = [
   'name',
   'typeId',
   'pointId',
   'date',
-  'endDate',
-  'organizer',
-  'participants',
   'content',
   'outcome',
   'notes',
 ] as const
 const photoFields = ['beforePhotos', 'processPhotos', 'afterPhotos'] as const
-function quantity(value: number | string): number | null {
-  return value === '' ? null : Number(value)
-}
 function restoreDraft() {
   try {
     const raw = localStorage.getItem(draftKey)
@@ -164,8 +143,6 @@ onMounted(async () => {
       const record = props.initial.campaign
       for (const field of textFields)
         state[field] = record[field] === null ? '' : String(record[field])
-      for (const field of quantityFields)
-        state[field] = record[field] === null ? '' : String(record[field])
       state.beforePhotos = props.initial.photos
         .filter((photo) => photo.phase === 'before')
         .map((photo) => ({ id: photo.id, width: photo.width, height: photo.height }))
@@ -177,7 +154,6 @@ onMounted(async () => {
         .map((photo) => ({ id: photo.id, width: photo.width, height: photo.height }))
     } else {
       state.date = bootstrap.value?.today ?? todayLocal()
-      state.organizer = bootstrap.value?.settings.issuingUnit ?? ''
       restoreDraft()
       const requested = queryText(route.query.pointId)
       if (requested && (state.pointMode === 'temporary' || (state.pointId && state.pointId !== requested))) {
@@ -219,25 +195,6 @@ function validate(value: CampaignState): FormError[] {
       if (coordinates.error) errors.push({ name: 'newPoint.coordinates', message: coordinates.error })
     }
   }
-  if (value.endDate && value.endDate < value.date)
-    errors.push({ name: 'endDate', message: '结束日期不能早于整治日期' })
-  for (const field of quantityFields) {
-    const number = quantity(value[field])
-    if (
-      number !== null &&
-      (!Number.isFinite(number) ||
-        number < 0 ||
-        number >
-          (field === 'participantCount' || field === 'vehicleCount' ? 2147483647 : 1000000000000))
-    )
-      errors.push({ name: field, message: '请输入有效的非负数量' })
-    else if (
-      number !== null &&
-      (field === 'participantCount' || field === 'vehicleCount') &&
-      !Number.isInteger(number)
-    )
-      errors.push({ name: field, message: '请输入整数' })
-  }
   return errors
 }
 async function save() {
@@ -254,13 +211,6 @@ async function save() {
       ...parseCoordinates(state.newPoint.coordinates), frequency: 'irregular', disabled: false, temporary: true,
     } : null,
     date: state.date,
-    endDate: state.endDate || null,
-    organizer: state.organizer,
-    participants: state.participants,
-    participantCount: quantity(state.participantCount),
-    vehicleCount: quantity(state.vehicleCount),
-    garbageTons: quantity(state.garbageTons),
-    areaSqm: quantity(state.areaSqm),
     content: state.content,
     outcome: state.outcome,
     notes: state.notes,
@@ -367,71 +317,6 @@ function useRequestedPoint() {
             type="date"
             class="w-full"
             data-testid="campaign-date"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="结束日期" name="endDate"
-          ><UInput
-            v-model="state.endDate"
-            type="date"
-            :min="state.date"
-            class="w-full"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="组织单位" name="organizer" class="field-full"
-          ><NameTagsInput
-            v-model="state.organizer"
-            maxlength="200"
-            class="w-full"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="参加单位及人员" name="participants" class="field-full"
-          ><NameTagsInput
-            v-model="state.participants"
-            data-testid="campaign-participants"
-            maxlength="2000"
-            class="w-full"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="参加人数（人）" name="participantCount"
-          ><UInput
-            v-model="state.participantCount"
-            type="number"
-            inputmode="numeric"
-            min="0"
-            step="1"
-            class="w-full"
-            data-testid="campaign-people"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="出动车辆（辆）" name="vehicleCount"
-          ><UInput
-            v-model="state.vehicleCount"
-            type="number"
-            inputmode="numeric"
-            min="0"
-            step="1"
-            class="w-full"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="清运垃圾（吨）" name="garbageTons"
-          ><UInput
-            v-model="state.garbageTons"
-            type="number"
-            inputmode="decimal"
-            min="0"
-            step="0.01"
-            class="w-full"
-            data-testid="campaign-garbage"
-            :disabled="formDisabled"
-        /></UFormField>
-        <UFormField label="清理面积（㎡）" name="areaSqm"
-          ><UInput
-            v-model="state.areaSqm"
-            type="number"
-            inputmode="decimal"
-            min="0"
-            step="0.01"
-            class="w-full"
             :disabled="formDisabled"
         /></UFormField>
       </div>

@@ -138,12 +138,8 @@ public sealed partial class Store
                 throw new ApiException(400, "不能更换已保存整治的点位。");
             var type = RequireCampaignType(Text(request.TypeId, "整治类型", 100, true));
             var date = DateText(request.Date, "整治日期");
-            var endDate = OptionalDate(request.EndDate, "结束日期");
-            CheckDateRange(date, endDate);
-            if (request.ParticipantCount is < 0 || request.VehicleCount is < 0 || request.GarbageTons is < 0 || request.AreaSqm is < 0)
-                throw new ApiException(400, "数量不能为负数。");
-            if (request.GarbageTons is > 1000000000000m || request.AreaSqm is > 1000000000000m) throw new ApiException(400, "数量过大。");
-            var organizer = Text(request.Organizer ?? GetSettings().IssuingUnit, "组织单位", 200);
+            string? endDate = null;
+            const string organizer = "";
             var actualId = id ?? NewId();
             using (var transaction = _db.BeginTransaction())
             {
@@ -155,9 +151,7 @@ public sealed partial class Store
                     ("$community", existing?.CommunityId ?? point.CommunityId), ("$communityName", existing?.CommunityName ?? point.CommunityName),
                     ("$location", existing?.Location ?? point.Address), ("$date", date), ("$end", endDate),
                     ("$organizer", organizer),
-                    ("$participants", Text(request.Participants, "参加单位及人员", 2000)), ("$people", request.ParticipantCount),
-                    ("$vehicles", request.VehicleCount), ("$garbage", request.GarbageTons is decimal garbage ? decimal.Round(garbage, 2, MidpointRounding.AwayFromZero) : null),
-                    ("$area", request.AreaSqm is decimal area ? decimal.Round(area, 2, MidpointRounding.AwayFromZero) : null),
+                    ("$participants", ""), ("$people", null), ("$vehicles", null), ("$garbage", null), ("$area", null),
                     ("$content", Text(request.Content, "整治内容", 12000, true)), ("$outcome", Text(request.Outcome, "整治成效", 12000)),
                     ("$notes", Text(request.Notes, "备注", 8000))];
                 using (var command = Command(id is null ? """
