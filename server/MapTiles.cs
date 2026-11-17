@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
@@ -63,6 +64,10 @@ public sealed partial class Store
         }
         return (value, preload, styleDirectory);
     }
+    // Keep existing local PMTiles range bounds and 416 semantics. This does
+    // not involve any upstream HTTP proxy or external URL.
+    private const int ArchiveMaxRange = 16 * 1024 * 1024;
+    private static readonly Regex ArchiveRange = new(@"^bytes=(\d+)-(\d+)$", RegexOptions.CultureInvariant);
     private static bool IsPmtiles(TileProvider provider) => provider.Format == "pmtiles";
     private static bool ValidPmtilesHeader(ReadOnlySpan<byte> data) =>
         data.Length >= 127 && data[0] == (byte)'P' && data[1] == (byte)'M' &&
@@ -317,6 +322,12 @@ public sealed partial class Store
         TileProvider provider;
         lock (_gate) provider = GetMapProvider(Api.Id(context));
         if (!provider.Enabled || !IsPmtiles(provider)) { context.Response.StatusCode = 404; return; }
+        var match = ArchiveRange.Match(context.Request.Headers.Range.ToString());
+        if (!match.Success ||
+            !long.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var start) ||
+            !long.TryParse(match.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var end) ||
+            end < start || end - start >= ArchiveMaxRange)
+        { context.Response.StatusCode = 416; return; }
         context.Response.Headers.CacheControl = "no-store";
         context.Response.Headers.AcceptRanges = "bytes";
         var local = MapCacheDirectory(provider.Folder);
