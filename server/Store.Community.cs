@@ -166,6 +166,33 @@ public sealed partial class Store
         }
     }
 
+    public void DeleteDictionaryRecord(string kind, string id)
+    {
+        if (kind is not ("purpose-type" or "inspection-type" or "staff")) throw new ApiException(400, "不支持删除此资料。");
+        lock (_gate)
+        {
+            PrepareWrite();
+            if (!ListCommunityRecords(kind, includeArchived: true).Any(x => x.Id == id))
+                throw new ApiException(404, "资料不存在。");
+            if (kind == "purpose-type")
+            {
+                using var references = Command("SELECT COUNT(*) FROM community_records WHERE kind='use' AND json_extract(body,'$.purposeId')=$id;", null, ("$id", id));
+                if (Convert.ToInt32(references.ExecuteScalar()) > 0) throw new ApiException(409, "该用途已被场所使用，不能删除。");
+            }
+            if (kind == "inspection-type")
+            {
+                using var inspections = Command("SELECT COUNT(*) FROM inspections WHERE inspection_type_id=$id;", null, ("$id", id));
+                using var plans = Command("SELECT COUNT(*) FROM community_records WHERE kind='plan' AND json_extract(body,'$.typeId')=$id;", null, ("$id", id));
+                if (Convert.ToInt32(inspections.ExecuteScalar()) > 0 || Convert.ToInt32(plans.ExecuteScalar()) > 0)
+                    throw new ApiException(409, "该检查类型已被记录引用，不能删除。");
+            }
+            using var transaction = _db.BeginTransaction();
+            using (var history = Command("DELETE FROM community_history WHERE kind=$kind AND record_id=$id;", transaction, ("$kind", kind), ("$id", id))) history.ExecuteNonQuery();
+            using (var record = Command("DELETE FROM community_records WHERE kind=$kind AND id=$id;", transaction, ("$kind", kind), ("$id", id))) record.ExecuteNonQuery();
+            transaction.Commit();
+        }
+    }
+
     internal static string JsonText(JsonElement data, string property) => data.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
 
     private void AddCommunityHistory(string kind, string id, string before, string after, string action, SqliteTransaction transaction)

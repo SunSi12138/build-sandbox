@@ -62,6 +62,7 @@ public static class CommunityApi
         app.MapGet("/api/records/{kind}/{id}", record);
         app.MapPost("/api/records/{kind}", add);
         app.MapPut("/api/records/{kind}/{id}", edit);
+        app.MapDelete("/api/records/{kind}/{id}", context => { Api.RequireDeleteConfirmation(context); store.DeleteDictionaryRecord((string)context.Request.RouteValues["kind"]!, Api.Id(context)); context.Response.StatusCode = 204; return Task.CompletedTask; });
         app.MapGet("/api/history/{id}", history);
         RequestDelegate photos = context => Api.Write(context, store.GetRecordPhotos(Api.Id(context)), AppJsonContext.Default.PhotoDtoArray);
         app.MapGet("/api/record-photos/{id}", photos);
