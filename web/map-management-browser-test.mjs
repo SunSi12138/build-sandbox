@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { mkdir, writeFile, unlink } from 'node:fs/promises'
-import MVT from 'ol/format/MVT'
+import MVT from 'ol/format/MVT.js'
 import { createMvtPmtilesFixture } from './pmtiles-mvt-test-fixture.mjs'
 
 export async function verifyMapManagement({ browser, origin, api, test, bootstrap, evidence }) {
