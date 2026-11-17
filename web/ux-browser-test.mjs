@@ -47,7 +47,7 @@ export async function verifyUsability({ browser, origin, api, test, bootstrap, a
           for (const photo of photos) {
             await page.locator(`[data-photo-id="${photo.id}"]`).getByRole('button', { name: '删除第 1 张照片', exact: true }).click()
             const dialog = page.getByRole('dialog', { name: '移除照片？', exact: true })
-            await expect(dialog).toContainText('保存活动后移除，取消编辑会保留原照片')
+            await expect(dialog).toContainText('保存本次修改后移除，取消编辑会保留原照片')
             await dialog.getByRole('button', { name: '移除', exact: true }).click()
             await expect(dialog).toBeHidden()
             const originalPhoto = await fetch(directOrigin + '/photos/' + photo.id)
