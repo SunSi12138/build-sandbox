@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import Map from 'ol/Map'
 import View from 'ol/View'
-import Feature from 'ol/Feature'
+import Feature, { type FeatureLike } from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
 import VectorSource from 'ol/source/Vector'
@@ -199,7 +199,7 @@ onMounted(() => {
               maxZoom,
               tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
               tileLoadFunction: tile => {
-                const vectorTile = tile as VectorTile
+                const vectorTile = tile as VectorTile<FeatureLike>
                 vectorTile.setLoader((extent, _resolution, projection) => {
                   const coord = vectorTile.getTileCoord()
                   if (!coord) { vectorTile.setFeatures([]); return }
