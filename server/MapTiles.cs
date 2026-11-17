@@ -25,6 +25,8 @@ public partial class MapConfigJsonContext : JsonSerializerContext;
 
 public sealed partial class Store
 {
+    // Retained for database restore/reset lifecycle compatibility. No tile downloads occur.
+    private int _mapGeneration;
     private static readonly string[] RasterTileExtensions = [".png", ".jpg", ".webp"];
     private static readonly string[] VectorTileExtensions = [".pbf", ".mvt"];
     private const string MvtUrlPrefix = "mvt+";
