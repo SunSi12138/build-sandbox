@@ -113,6 +113,9 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       { timeout: 15000 })
       await go('/points?view=map&q=' + encodeURIComponent('depth-regression-no-matching-points'))
       await finer
+      // The next case changes enabled map layers via the API. Unmount the map
+      // so a fresh instance re-reads /api/map/layers for the PMTiles fixture.
+      await go('/settings?tab=maps')
     })
     await test('M05 real offline PMTiles MVT uses local style directory for geometry', async () => {
       const { archive, tile } = createMvtPmtilesFixture()
