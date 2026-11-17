@@ -10,6 +10,7 @@ const { bootstrap } = useAppData()
 const selected = ref<PointDto | null>(null)
 const expanded = ref(true)
 const search = ref('')
+const includeTemporary = ref(false)
 const points = ref<PointDto[]>([])
 const total = ref(0)
 const page = ref(0)
@@ -30,7 +31,7 @@ async function list(reset = true) {
   searching.value = true
   error.value = ''
   try {
-    const result = await $fetch<PageDto<PointDto>>('/api/points', { query: { q: search.value.trim() || undefined, recent: !search.value.trim(), temporary: 'false', page: reset ? 1 : page.value + 1, pageSize: 8 }, signal: controller.signal })
+    const result = await $fetch<PageDto<PointDto>>('/api/points', { query: { q: search.value.trim() || undefined, recent: !search.value.trim(), temporary: includeTemporary.value ? 'all' : 'false', disabled: 'false', page: reset ? 1 : page.value + 1, pageSize: 8 }, signal: controller.signal })
     if (version !== sequence) return
     points.value = reset ? result.items : [...points.value, ...result.items]
     total.value = result.total
@@ -63,7 +64,7 @@ watch(pointId, async id => {
     if (version === selectedSequence) { error.value = errorMessage(cause); selected.value = null; expanded.value = true; emit('selected', null) }
   } finally { if (version === selectedSequence) resolving.value = false }
 }, { immediate: true })
-watch(search, () => { clearTimeout(timer); timer = setTimeout(() => { void list() }, 250) })
+watch([search, includeTemporary], () => { clearTimeout(timer); timer = setTimeout(() => { void list() }, 250) })
 onMounted(() => { void list() })
 onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequence++; emit('busy', false) })
 </script>
@@ -76,17 +77,17 @@ onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequen
       <UButton type="button" color="neutral" variant="ghost" class="filter-chip" :aria-pressed="mode === 'temporary'" :disabled="disabled" :data-testid="`${prefix}-temporary-mode`" @click="mode = 'temporary'">临时点位</UButton>
     </div>
     <template v-if="mode === 'regular'">
-      <UFormField label="常态点位" name="pointId" required>
+      <UFormField label="已有点位" name="pointId" required>
         <div v-if="selected && !expanded" class="flex min-w-0 items-center gap-2" :data-testid="`${prefix}-selected-point`">
           <span class="min-w-0 flex-1 truncate text-sm">{{ selected.name }} · {{ selected.communityName }} · {{ selected.typeName }}</span>
           <UButton label="更换" color="neutral" variant="link" :disabled="disabled" @click="expanded = true" />
         </div>
         <div v-else>
-          <UInput v-model="search" type="search" icon="i-lucide-search" placeholder="搜索点位" aria-label="搜索常态点位" :data-testid="`${prefix}-point-search`" class="mb-2 w-full" :disabled="disabled" />
+          <UInput v-model="search" type="search" icon="i-lucide-search" placeholder="搜索点位" aria-label="搜索已有点位" :data-testid="`${prefix}-point-search`" class="mb-2 w-full" :disabled="disabled" /><UCheckbox v-model="includeTemporary" label="搜索时包含临时点位" :disabled="disabled" class="mb-2" />
           <UButton v-for="point in points" :key="point.id" type="button" color="neutral" variant="ghost" class="h-14 w-full justify-start border-b border-[var(--divider)] text-left" :aria-pressed="pointId === point.id" :disabled="disabled" :data-testid="`${prefix}-point-option`" @click="choose(point)">
-            <span class="min-w-0"><span class="block truncate font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}</span></span>
+            <span class="min-w-0"><span class="block truncate font-medium">{{ point.name }}</span><span class="block truncate text-xs text-muted">{{ point.communityName }} · {{ point.typeName }}{{ point.temporary ? " · 临时" : "" }}</span></span>
           </UButton>
-          <p v-if="!searching && !points.length" class="py-3 text-sm text-muted">暂无常态点位</p>
+          <p v-if="!searching && !points.length" class="py-3 text-sm text-muted">暂无匹配点位</p>
           <UButton v-if="points.length < total" type="button" label="加载更多" color="neutral" variant="link" :disabled="disabled" :loading="searching" @click="list(false)" />
         </div>
       </UFormField>
