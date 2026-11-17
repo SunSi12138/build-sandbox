@@ -109,19 +109,6 @@ public sealed partial class Store
         return point;
     }
 
-    // Both record types keep a temporary point alive. Call under the storage lock
-    // before staging photo deletion so the same decision governs files and SQL.
-    private bool IsLastTemporaryRecord(string pointId, string? inspectionId = null, string? activityId = null)
-    {
-        if (!GetPointInternal(pointId).Temporary) return false;
-        using var command = Command("""
-            SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$point AND id<>$inspection)
-                 + (SELECT COUNT(*) FROM activities WHERE point_id=$point AND id<>$activity)
-                 + (SELECT COUNT(*) FROM attachments WHERE point_id=$point) + (SELECT COUNT(*) FROM matters WHERE point_id=$point);
-            """, null, ("$point", pointId), ("$inspection", inspectionId ?? ""), ("$activity", activityId ?? ""));
-        return Convert.ToInt32(command.ExecuteScalar()) == 0;
-    }
-
     private string SavePointCore(string? id, PointWriteRequest request, SqliteTransaction transaction, bool createTemporary = false)
     {
         var existing = id is null ? null : GetPointInternal(id, transaction);
