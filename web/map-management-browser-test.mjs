@@ -142,7 +142,7 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
         assert.equal(layer.hasStyle, true)
         const matching = (await api('/map/layers')).find(item => item.id === layer.id)
         assert.equal(matching.styleUrl, '/api/map/style/' + layer.id + '/style.json')
-        const renderedStyle = await (await page.request.get(origin + matching.styleUrl)).json()
+        const renderedStyle = await api('/map/style/' + layer.id + '/style.json')
         assert.equal(renderedStyle.sources.fixture.tiles[0], 'hbtiles://' + layer.id + '/{z}/{x}/{y}')
         const checked = await api('/map/settings/' + layer.id + '/check')
         assert.equal(checked.status, 'cached')
