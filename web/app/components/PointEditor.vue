@@ -8,6 +8,7 @@ const emit = defineEmits<{ saved: [point: PointDto] }>()
 const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false)
+const originalPhotoIds = ref<string[]>([])
 interface PointState { shape: GeoShape | null; name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; temporary: boolean; notes: string; disabled: boolean; photos: PhotoUploadDto[]; tagIds: string[] }
 const defaults = (): PointState => ({ shape: null, name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', temporary: false, notes: '', disabled: false, photos: [], tagIds: [] })
 const state = reactive<PointState>(defaults())
@@ -54,7 +55,7 @@ watch(state, () => {
 watch(open, async value => {
   overlayForm.value = value
   if (!value) { detailRequest.cancel(); if (!props.point && !savedNew && hasUsefulDraft()) draftRecovery.flush(() => state); return }
-  savedNew = false; draftRestored.value = false
+  savedNew = false; draftRestored.value = false; originalPhotoIds.value = []
   const request = detailRequest.start()
   error.value = ''; loading.value = true
   const point = props.point
@@ -65,7 +66,7 @@ watch(open, async value => {
     if (!point) restorePointDraft()
     if (point) {
       const result = await $fetch<PointDetailDto>(`/api/points/${point.id}`, { signal: request.signal })
-      if (request.isCurrent()) state.photos = result.photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
+      if (request.isCurrent()) { state.photos = result.photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []; originalPhotoIds.value = state.photos.map(photo => photo.id) }
     }
   } catch (value) { if (request.isCurrent()) error.value = errorMessage(value) }
   finally { if (request.isCurrent()) loading.value = false }
@@ -110,7 +111,7 @@ onBeforeUnmount(() => { overlayForm.value = false })
         <UFormField label="排查频次" name="frequency" class="field-full"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="state.temporary" class="w-full" /><p v-if="state.temporary" class="mt-1 text-xs text-muted">临时点位不参与常态排查提醒</p></UFormField>
         <UFormField label="标签" class="field-full"><TagPicker v-model="state.tagIds" :disabled="loading || saving" /></UFormField>
         <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="3" maxlength="8000" class="w-full" /></UFormField>
-        <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" phase="point" :max="9" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" /></UFormField>
+        <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" :defer-delete-ids="point ? originalPhotoIds : undefined" phase="point" :max="9" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" /></UFormField>
         <UFormField v-if="point" label="状态" name="disabled" class="field-full"><div class="check-row"><UCheckbox v-model="state.disabled" label="停用" /></div></UFormField>
       </UForm>
     </template>
