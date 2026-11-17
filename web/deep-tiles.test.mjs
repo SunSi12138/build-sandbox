@@ -29,12 +29,12 @@ test('mappreview resolution shift is compensated by reciprocal tile-pixel ratio'
     getTilePixelRatio: pixelRatio => pixelRatio,
   }
   installDeepRasterTiles(source, { depth: 2, maxZoom: 18, getZoom: () => zoom, getPixelRatio: () => 1 })
-  const z = grid.getZForResolution(64)
+  const z = grid.getZForResolution(64, 0)
   assert.equal(receivedResolution, 16)
   assert.equal(z, 6)
   assert.equal(source.getTilePixelRatio(1), 0.25)
   zoom = 18
-  grid.getZForResolution(64)
+  grid.getZForResolution(64, 0)
   assert.equal(receivedResolution, 64, 'at source max zoom no extra resolution is requested')
   assert.equal(source.getTilePixelRatio(1), 1)
 })
