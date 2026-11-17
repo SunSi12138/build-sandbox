@@ -6,7 +6,6 @@ public static class CommunityApi
     {
         ImportApi.Map(app, store);
         store.MapManagementApi(app);
-        store.MapHandoffApi(app);
         store.MapArchiveApi(app);
         store.MapCacheImportApi(app);
         store.MapTileUpdateApi(app);
