@@ -1,18 +1,13 @@
 <script setup lang="ts">
 import Map from 'ol/Map'
+import Feature from 'ol/Feature'
 import View from 'ol/View'
-import Feature, { type FeatureLike } from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
 import VectorSource from 'ol/source/Vector'
 import VectorLayer from 'ol/layer/Vector'
 import TileLayer from 'ol/layer/Tile'
 import XYZ from 'ol/source/XYZ'
-import MVT from 'ol/format/MVT'
-import VectorTileSource from 'ol/source/VectorTile'
-import VectorTileLayer from 'ol/layer/VectorTile'
-import TileState from 'ol/TileState'
-import type VectorTile from 'ol/VectorTile'
 import type ImageTile from 'ol/ImageTile'
 import { PMTiles, TileType } from 'pmtiles'
 import Draw from 'ol/interaction/Draw'
@@ -40,72 +35,6 @@ const rotation = ref(0)
 const isRotated = computed(() => Math.abs(Math.sin(rotation.value / 2)) > 0.01)
 let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
-const mvtLabelCache = new globalThis.Map<string, Style>()
-const mvtGeometryCache = new globalThis.Map<string, Style>()
-function mvtGeometryStyle(kind: string, sourceLayer: string): Style | undefined {
-  const polygon = kind === 'Polygon' || kind === 'MultiPolygon'
-  const line = kind === 'LineString' || kind === 'MultiLineString'
-  if (!polygon && !line) return undefined
-  const category = /water|ocean|river|lake/i.test(sourceLayer) ? 'water'
-    : /road|transport|highway|street/i.test(sourceLayer) ? 'road'
-      : /building/i.test(sourceLayer) ? 'building'
-        : /park|landcover|landuse|forest|wood|vegetation/i.test(sourceLayer) ? 'green'
-          : /boundary|admin/i.test(sourceLayer) ? 'boundary' : 'general'
-  const key = `${polygon ? 'polygon' : 'line'}:${category}`
-  let style = mvtGeometryCache.get(key)
-  if (!style) {
-    const water = category === 'water'
-    const road = category === 'road'
-    const boundary = category === 'boundary'
-    const green = category === 'green'
-    style = new Style({
-      stroke: new Stroke({
-        color: water ? 'rgba(59,140,207,0.72)' : road ? 'rgba(170,128,71,0.70)'
-          : boundary ? 'rgba(114,104,148,0.65)' : 'rgba(103,115,124,0.45)',
-        width: road ? 1.6 : boundary ? 1.2 : 0.8,
-        lineDash: boundary ? [4, 3] : undefined,
-      }),
-      fill: polygon ? new Fill({
-        color: water ? 'rgba(65,160,219,0.24)' : green ? 'rgba(83,154,92,0.20)'
-          : 'rgba(130,142,151,0.10)',
-      }) : undefined,
-    })
-    mvtGeometryCache.set(key, style)
-  }
-  return style
-}
-function mvtFeatureStyles(feature: FeatureLike): Style | Style[] | undefined {
-  const type = 'getType' in feature ? feature.getType() : feature.getGeometry()?.getType()
-  const props = feature.getProperties()
-  const sourceLayer = String(feature.get('layer') ?? '')
-  const preferred = ['name:zh', 'name_zh', 'name_zh_cn', 'name:zh-Hans', 'name_int', 'NAME_CHN', 'name',
-    'NAME', 'Name', 'label', 'text', 'name_en', 'name_local', '名称', '地名']
-  const value = preferred.map(field => feature.get(field)).find(item => typeof item === 'string' && item.trim() && item.length <= 80)
-    ?? Object.entries(props).find(([key, item]) => /name|label|地名|名称/i.test(key)
-      && typeof item === 'string' && item.trim() && item.length <= 80)?.[1]
-  const base = mvtGeometryStyle(type ?? '', sourceLayer)
-  const label = typeof value === 'string' ? mvtLabel(value.trim(), type === 'LineString' || type === 'MultiLineString') : undefined
-  return base && label ? [base, label] : base ?? label
-}
-function mvtLabel(text: string, line: boolean): Style {
-  const key = `${line ? 'line:' : 'point:'}${text}`
-  let style = mvtLabelCache.get(key)
-  if (!style) {
-    if (mvtLabelCache.size > 1500) mvtLabelCache.clear()
-    style = new Style({
-      text: new Text({
-        text,
-        placement: line ? 'line' : 'point',
-        font: '600 13px "Microsoft YaHei","Noto Sans CJK SC",sans-serif',
-        fill: new Fill({ color: getComputedStyle(document.documentElement).getPropertyValue('--text').trim() || 'rgb(38,52,66)' }),
-        stroke: new Stroke({ color: 'rgba(255,255,255,0.94)', width: 3 }),
-        overflow: false,
-      }),
-    })
-    mvtLabelCache.set(key, style)
-  }
-  return style
-}
 let reporting = false
 function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(gcj02ToWgs84(shape.coordinates[0]!))) : new Polygon([shape.coordinates.map(c => fromLonLat(gcj02ToWgs84(c)))]) }
 function toShape(feature: Feature<Geometry>): GeoShape {
@@ -219,13 +148,7 @@ onMounted(() => {
     const [longitude, latitude] = wgs84ToGcj02(toLonLat(coordinate))
     try { localStorage.setItem(mapViewKey, JSON.stringify({ longitude, latitude, zoom: map!.getView().getZoom() ?? 16 })) } catch { /* Optional map preference. */ }
   })
-  const vectorLabels = (source: VectorTileSource, preload: number) => new VectorTileLayer({
-    source,
-    preload,
-    declutter: true,
-    style: mvtFeatureStyles,
-  })
-  void $fetch<{ id: string; kind?: 'raster' | 'mvt' | 'pmtiles'; preload?: number }[]>('/api/map/layers', { signal: layerRequest.signal }).then(async layers => {
+  void $fetch<{ id: string; kind?: 'raster' | 'mvt' | 'pmtiles'; preload?: number; styleUrl?: string | null }[]>('/api/map/layers', { signal: layerRequest.signal }).then(async layers => {
     const created = await Promise.all(layers.map(async layer => {
       const url = `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`
       const preload = Number.isInteger(layer.preload) ? Math.max(0, Math.min(3, layer.preload!)) : 0
@@ -235,23 +158,9 @@ onMounted(() => {
           const header = await archive.getHeader()
           const maxZoom = Math.min(header.maxZoom, 18)
           if (header.tileType === TileType.Mvt) {
-            const source = new VectorTileSource({
-              format: new MVT(),
-              maxZoom,
-              tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
-              tileLoadFunction: tile => {
-                const vectorTile = tile as VectorTile<FeatureLike>
-                vectorTile.setLoader((extent, _resolution, projection) => {
-                  const coord = vectorTile.getTileCoord()
-                  if (!coord) { vectorTile.setFeatures([]); return }
-                  void archive.getZxy(coord[0]!, coord[1]!, coord[2]!).then(result => {
-                    if (!result) { vectorTile.setFeatures([]); return }
-                    vectorTile.setFeatures(vectorTile.getFormat().readFeatures(result.data, { extent, featureProjection: projection }))
-                  }).catch(() => vectorTile.setState(TileState.ERROR))
-                })
-              },
-            })
-            return vectorLabels(source, preload)
+            if (!layer.styleUrl) return null
+            const { externalVectorStyle } = await import('~/utils/mapStyle.client')
+            return externalVectorStyle(layer.styleUrl)
           }
           const contentType = header.tileType === TileType.Png ? 'image/png'
             : header.tileType === TileType.Jpeg ? 'image/jpeg'
@@ -278,8 +187,11 @@ onMounted(() => {
           return new TileLayer({ source, preload })
         } catch { return null }
       }
-      if (layer.kind === 'mvt')
-        return vectorLabels(new VectorTileSource({ format: new MVT(), url, maxZoom: 18 }), preload)
+      if (layer.kind === 'mvt') {
+        if (!layer.styleUrl) return null
+        const { externalVectorStyle } = await import('~/utils/mapStyle.client')
+        return externalVectorStyle(layer.styleUrl)
+      }
       return new TileLayer({ source: new XYZ({ url, maxZoom: 18 }), preload })
     }))
     if (layerRequest.signal.aborted || !map) return
