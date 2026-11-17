@@ -63,8 +63,8 @@ async function openExport() { await flush(); exportOpen.value = true }
         <div class="filter-field"><label>开始日期</label><UInput v-model="from" type="date" aria-label="开始日期" class="w-full" /></div>
         <div class="filter-field"><label>结束日期</label><UInput v-model="to" type="date" aria-label="结束日期" class="w-full" /></div>
       </div>
-    </div>
-    <div class="filter-tool-row"><span>共 {{ result?.total ?? '—' }} 条</span><UButton v-if="Object.keys(route.query).length" to="/activities" label="清空筛选" color="neutral" variant="link" /></div>
+    <FilterClearButton :active="hasActiveFilters" :to="'/activities'" /></div>
+    <div class="filter-tool-row"><span>共 {{ result?.total ?? '—' }} 条</span></div>
     <div class="mobile-only"><UButton label="导出活动台账" color="neutral" variant="outline" icon="i-lucide-file-down" @click="openExport" /></div>
     <UAlert v-if="error" :description="error" color="error" variant="subtle"><template #actions><UButton label="重试" color="neutral" variant="outline" @click="refresh" /></template></UAlert>
     <div v-if="loading && !result" class="space-y-2"><USkeleton v-for="index in 5" :key="index" class="h-16 w-full" /></div>
@@ -83,7 +83,7 @@ async function openExport() { await flush(); exportOpen.value = true }
           </li>
         </ul>
       </section>
-      <EmptyState v-else-if="!loading" :title="hasActiveFilters ? '没有符合筛选条件的活动记录' : '暂无活动记录'"><UButton v-if="hasActiveFilters" to="/activities" label="清空筛选" color="neutral" variant="outline" /><UButton v-else to="/activities/new">新增活动</UButton></EmptyState>
+      <EmptyState v-else-if="!loading" :title="hasActiveFilters ? '没有符合筛选条件的活动记录' : '暂无活动记录'"><UButton v-if="!hasActiveFilters" to="/activities/new">新增活动</UButton></EmptyState>
       <div v-if="result.total > 30" class="flex items-center justify-between gap-2"><UButton label="上一页" color="neutral" variant="outline" :disabled="page <= 1 || loading" @click="setPage(page - 1)" /><span class="text-xs text-muted">{{ page }} / {{ Math.ceil(result.total / 30) }}</span><UButton label="下一页" color="neutral" variant="outline" :disabled="page >= Math.ceil(result.total / 30) || loading" @click="setPage(page + 1)" /></div>
     </template>
     <ActivityLedgerExport :current-query="filters" v-model:open="exportOpen" :community-id="communityId === 'all' ? undefined : communityId" :type-id="typeId === 'all' ? undefined : typeId" />
