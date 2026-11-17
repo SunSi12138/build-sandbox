@@ -1,0 +1,45 @@
+name: Community GIS validation
+
+on:
+  push:
+    branches: [community-gis]
+    paths:
+      - 'server/**'
+      - 'web/**'
+      - 'global.json'
+      - '.github/workflows/community-gis-verify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: community-gis-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm run generate
+        working-directory: web
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build server/StreetEcoTool.csproj -c Release
+      - run: dotnet test server/StreetEcoTool.Tests/StreetEcoTool.Tests.csproj -c Release
