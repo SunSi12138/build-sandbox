@@ -61,7 +61,6 @@ public sealed partial class Store
         }
         return (value, preload, styleDirectory);
     }
-    private const int ArchiveMaxRange = 16 * 1024 * 1024;
     private static bool IsPmtiles(TileProvider provider) => provider.Format == "pmtiles";
     private static bool ValidPmtilesHeader(ReadOnlySpan<byte> data) =>
         data.Length >= 127 && data[0] == (byte)'P' && data[1] == (byte)'M' &&
@@ -85,7 +84,7 @@ public sealed partial class Store
     // Existing databases keep their original providers and stored online fields.
     private static TileProvider[] DefaultMapProviders() =>
     [
-        new("local-imagery", "local-imagery", Name: "本地影像")
+        new("jlyh", "jlyh", "tms", Name: "本地影像")
     ];
     private const string MapProviderColumns = "id,folder,scheme,url_template,api_key,map_key,subdomains,name,force_refresh,enabled,sort_order";
     private TileProvider ReadMapProvider(SqliteDataReader row)
