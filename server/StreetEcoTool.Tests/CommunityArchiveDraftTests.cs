@@ -7,7 +7,7 @@ public sealed class CommunityArchiveDraftTests
 {
     private static JsonElement Data(string value) { using var d = JsonDocument.Parse(value); return d.RootElement.Clone(); }
     [Fact]
-    public void ArchiveRemovesLiveCountsAndRestoreRetainsOriginalPhotos()
+    public void IssueArchiveRestoresAndInspectionDeletionRemovesAssociatedData()
     {
         using var env = new V2Environment(); using var store = env.Open(); var point = env.CreatePoint(store);
         var photo = store.UploadPhoto(WordExporterTests.Jpeg(80, 60), "site");
@@ -17,14 +17,14 @@ public sealed class CommunityArchiveDraftTests
         Assert.Empty(store.ListIssues(new()).Items); Assert.Equal(0, store.GetPoint(point.Id).OpenIssueCount);
         Assert.Equal("voided", store.GetInspection(id).RectifyStatus);
         Assert.Empty(store.GetReport(new("issues")).Rows);
-        store.SetArchived("inspection", id, new(true, "登记有误", store.GetInspection(id).Revision));
-        Assert.Empty(store.ListInspections(new()).Items); Assert.Null(store.GetPoint(point.Id).LastInspectionDate);
-        Assert.Throws<ApiException>(() => store.UpdateInspection(id, new(Store.Today, "李四", Revision: store.GetInspection(id).Revision)));
-        store.SetArchived("inspection", id, new(false, "核对无误", store.GetInspection(id).Revision));
-        Assert.True(store.GetIssue(issue.Id).Voided);
         store.SetArchived("issue", issue.Id, new(false, "继续办理", store.GetIssue(issue.Id).Revision));
         Assert.Single(store.ListIssues(new()).Items); Assert.Equal(1, store.GetPoint(point.Id).OpenIssueCount);
-        using var bytes = store.OpenPhoto(photo.Id); Assert.True(bytes.Length > 0);
+        using (var bytes = store.OpenPhoto(photo.Id)) Assert.True(bytes.Length > 0);
+        store.DeleteInspection(id);
+        Assert.Empty(store.ListInspections(new()).Items); Assert.Empty(store.ListIssues(new()).Items);
+        Assert.Null(store.GetPoint(point.Id).LastInspectionDate);
+        Assert.Throws<ApiException>(() => store.GetInspection(id));
+        Assert.Throws<ApiException>(() => store.OpenPhoto(photo.Id));
         Assert.Empty(store.GetArchivedRecords());
     }
 

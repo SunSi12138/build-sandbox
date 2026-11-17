@@ -39,7 +39,7 @@ public sealed class CommunityReportingTests
         Assert.Equal(2, summary.Total.Inspections); Assert.Equal(1, summary.Total.Incomplete); Assert.Equal(1, summary.Total.CheckedPlaces);
         var selected = store.GetReport(new("inspections", Ids: [incomplete.Inspection.Id]));
         Assert.Single(selected.Rows); Assert.Equal(incomplete.Inspection.Id, selected.Rows[0][0]);
-        store.SetArchived("inspection", normal.Inspection.Id, new(true, "重复检查", normal.Inspection.Revision));
+        store.DeleteInspection(normal.Inspection.Id);
         Assert.Contains(store.GetTypeReminders(), x => x.PointId == point.Id && x.TypeId == type.Id);
         Assert.Equal(0, store.GetStatistics(Store.Today, Store.Today, "").Total.CheckedPlaces);
     }
