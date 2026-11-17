@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Net;
+using System.Text.RegularExpressions;
 using System.Net.Http.Headers;
 using System.IO.Compression;
 using System.Text.Json;
@@ -31,8 +33,17 @@ public sealed partial class Store
     private static readonly string[] RasterTileExtensions = [".png", ".jpg", ".webp"];
     private static readonly string[] VectorTileExtensions = [".pbf", ".mvt"];
     private const string MvtUrlPrefix = "mvt+";
+    private const string PmtilesUrlPrefix = "pmtiles+";
+    private const int ArchiveMaxRange = 16 * 1024 * 1024;
+    private static readonly Regex ArchiveRange = new(@"^bytes=(\d+)-(\d+)$", RegexOptions.CultureInvariant);
+    private static bool IsPmtiles(TileProvider provider) => provider.Format == "pmtiles";
+    private static bool ValidPmtilesHeader(ReadOnlySpan<byte> data) =>
+        data.Length >= 127 && data[0] == (byte)'P' && data[1] == (byte)'M' &&
+        data[2] == (byte)'T' && data[3] == (byte)'i' && data[4] == (byte)'l' &&
+        data[5] == (byte)'e' && data[6] == (byte)'s' && data[7] == 3;
     private static bool IsMvt(TileProvider provider) => provider.Format == "mvt";
-    private static string StoredMapUrl(TileProvider provider) => IsMvt(provider) ? MvtUrlPrefix + provider.UrlTemplate : provider.UrlTemplate;
+    private static string StoredMapUrl(TileProvider provider) => IsPmtiles(provider)
+        ? PmtilesUrlPrefix + provider.UrlTemplate : IsMvt(provider) ? MvtUrlPrefix + provider.UrlTemplate : provider.UrlTemplate;
     private static bool IsTms(TileProvider provider) => provider.Scheme == "tms";
     private static string[] TileExtensions(TileProvider provider) => IsMvt(provider) ? VectorTileExtensions : RasterTileExtensions;
     private static TileProvider[] DefaultMapProviders() =>
@@ -45,10 +56,11 @@ public sealed partial class Store
     {
         var storedUrl = row.GetString(3);
         var mvt = storedUrl.StartsWith(MvtUrlPrefix, StringComparison.Ordinal);
+        var archive = storedUrl.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal);
         return new(row.GetString(0), row.GetString(1), row.GetString(2),
-            mvt ? storedUrl[MvtUrlPrefix.Length..] : storedUrl,
+            archive ? storedUrl[PmtilesUrlPrefix.Length..] : mvt ? storedUrl[MvtUrlPrefix.Length..] : storedUrl,
             row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7),
-            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), mvt ? "mvt" : "raster");
+            row.GetInt32(8) != 0, row.GetInt32(9) != 0, row.GetInt32(10), archive ? "pmtiles" : mvt ? "mvt" : "raster");
     }
     private TileProvider GetMapProvider(string id)
     {
@@ -76,7 +88,11 @@ public sealed partial class Store
             MapKey = Text(request.MapKey, "地图密钥", 2000), Subdomains = Text(request.Subdomains, "子域名", 200)
         };
         if (provider.Scheme is not ("xyz" or "tms")) throw new ApiException(400, "图块坐标应为 XYZ 或 TMS。");
-        if (provider.Format is not ("raster" or "mvt")) throw new ApiException(400, "图层类型应为图片或 MVT。");
+        if (provider.Format is not ("raster" or "mvt" or "pmtiles")) throw new ApiException(400, "图层类型应为图片、MVT 或 PMTiles。");
+        if (IsPmtiles(provider) && (!provider.Folder.EndsWith(".pmtiles", StringComparison.OrdinalIgnoreCase) || provider.Scheme != "xyz"))
+            throw new ApiException(400, "PMTiles 请填写 .pmtiles 文件路径并使用 XYZ 坐标。");
+        if (IsPmtiles(provider) && provider.ForceRefresh)
+            throw new ApiException(400, "PMTiles 按需分段读取，不支持强制更新缓存。");
         if (provider.ForceRefresh && provider.UrlTemplate.Length == 0) throw new ApiException(400, "强制更新缓存需要填写调用链接。");
         if (provider.UrlTemplate.Length > 0)
         {
@@ -89,7 +105,13 @@ public sealed partial class Store
         try
         {
             var directory = MapCacheDirectory(provider.Folder);
-            Directory.CreateDirectory(directory);
+            if (IsPmtiles(provider))
+            {
+                var parent = Path.GetDirectoryName(directory);
+                if (parent is null) throw new ApiException(400, "PMTiles 文件路径不正确。");
+                Directory.CreateDirectory(parent);
+            }
+            else Directory.CreateDirectory(directory);
             if (provider.UrlTemplate.Length > 0)
             {
                 var probe = Path.Combine(directory, ".hbtool-map-" + NewId() + ".tmp");
@@ -169,7 +191,7 @@ public sealed partial class Store
         {
             using var command = Command("SELECT id,url_template FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
             using var rows = command.ExecuteReader(); var layers = new List<MapLayerDto>();
-            while (rows.Read()) layers.Add(new(rows.GetString(0), rows.GetString(1).StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster"));
+            while (rows.Read()) layers.Add(new(rows.GetString(0), rows.GetString(1).StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal) ? "pmtiles" : rows.GetString(1).StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster"));
             return layers.ToArray();
         }
     }
@@ -198,6 +220,7 @@ public sealed partial class Store
         TileProvider provider;
         lock (_gate) provider = GetMapProvider(id);
         var hasUrl = !string.IsNullOrWhiteSpace(provider.UrlTemplate);
+        if (IsPmtiles(provider)) return await CheckPmtilesAsync(provider, cancellationToken);
         (int Z, int X, int Row)? cached;
         try { cached = SampleCachedMapTile(MapCacheDirectory(provider.Folder), TileExtensions(provider)); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
@@ -249,6 +272,97 @@ public sealed partial class Store
             : new("unavailable", "调用链接样例图块不可访问，且未发现本地缓存；请检查网络、链接和密钥。", false, true);
     }
 
+    private async Task<MapLayerCheckDto> CheckPmtilesAsync(TileProvider provider, CancellationToken token)
+    {
+        var local = MapCacheDirectory(provider.Folder);
+        var hasLocal = false;
+        try
+        {
+            if (File.Exists(local))
+            {
+                await using var input = File.OpenRead(local);
+                var header = new byte[127];
+                hasLocal = await input.ReadAsync(header, token) == 127 && ValidPmtilesHeader(header);
+                if (!hasLocal) return new("unavailable", "本地文件不是有效的 PMTiles v3 归档。", false, provider.UrlTemplate.Length > 0);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { return new("error", "无法读取 PMTiles 文件，请检查路径与权限。", false, provider.UrlTemplate.Length > 0); }
+        if (hasLocal) return new("cached", "本地 PMTiles v3 归档可读取；未逐一检查其中的图块。", true, provider.UrlTemplate.Length > 0);
+        if (provider.UrlTemplate.Length == 0) return new("empty", "尚未找到本地 PMTiles 文件。可将归档复制到设置的路径。", false, false);
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(8));
+            using var request = new HttpRequestMessage(HttpMethod.Get, MapTileUrl(provider, 0, 0, 0));
+            request.Headers.Range = new RangeHeaderValue(0, 126);
+            using var response = await MapHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (response.StatusCode == HttpStatusCode.PartialContent &&
+                response.Content.Headers.ContentRange?.From == 0)
+            {
+                var header = new byte[127];
+                await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
+                var read = 0;
+                while (read < header.Length)
+                {
+                    var count = await input.ReadAsync(header.AsMemory(read), timeout.Token);
+                    if (count == 0) break;
+                    read += count;
+                }
+                if (read == 127 && ValidPmtilesHeader(header))
+                    return new("online", "在线 PMTiles v3 归档支持分段读取；未检查全部图块。", false, true);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException) { /* Only report a sanitized result. */ }
+        return new("unavailable", "在线 PMTiles 无法分段读取，请确认地址、权限及 HTTP Range 支持。", false, true);
+    }
+
+    private async Task ServePmtilesArchiveAsync(HttpContext context)
+    {
+        TileProvider provider;
+        lock (_gate) provider = GetMapProvider(Api.Id(context));
+        if (!provider.Enabled || !IsPmtiles(provider)) { context.Response.StatusCode = 404; return; }
+        var match = ArchiveRange.Match(context.Request.Headers.Range.ToString());
+        if (!match.Success ||
+            !long.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var start) ||
+            !long.TryParse(match.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var end) ||
+            end < start || end - start >= ArchiveMaxRange)
+        { context.Response.StatusCode = 416; return; }
+
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.AcceptRanges = "bytes";
+        var local = MapCacheDirectory(provider.Folder);
+        if (File.Exists(local))
+        {
+            await Results.File(local, "application/octet-stream", enableRangeProcessing: true).ExecuteAsync(context);
+            return;
+        }
+        if (provider.UrlTemplate.Length == 0) { context.Response.StatusCode = 404; return; }
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            using var request = new HttpRequestMessage(HttpMethod.Get, MapTileUrl(provider, 0, 0, 0));
+            request.Headers.Range = new RangeHeaderValue(start, end);
+            using var response = await MapHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            var remoteRange = response.Content.Headers.ContentRange;
+            if (response.StatusCode != HttpStatusCode.PartialContent || remoteRange?.From != start ||
+                remoteRange.To > end || response.Content.Headers.ContentLength is > ArchiveMaxRange)
+            { context.Response.StatusCode = 502; return; }
+            context.Response.StatusCode = 206;
+            context.Response.ContentType = "application/octet-stream";
+            context.Response.Headers.ContentRange = remoteRange.ToString();
+            if (response.Content.Headers.ContentLength is long size)
+                context.Response.ContentLength = size;
+            await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
+            await input.CopyToAsync(context.Response.Body, timeout.Token);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException)
+        { if (!context.Response.HasStarted) context.Response.StatusCode = 502; }
+    }
+
     private static string MapTileUrl(TileProvider provider, int z, int x, int row)
     {
         var hosts = provider.Subdomains.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -263,7 +377,7 @@ public sealed partial class Store
         if (z < 0 || z > 18 || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
         TileProvider provider; int generation;
         lock (_gate) { provider = GetMapProvider(layer); generation = _mapGeneration; }
-        if (!provider.Enabled) return null;
+        if (!provider.Enabled || IsPmtiles(provider)) return null;
         var row = IsTms(provider) ? (1 << z) - 1 - y : y;
         var path = Path.Combine(MapCacheDirectory(provider.Folder), z.ToString(CultureInfo.InvariantCulture), x.ToString(CultureInfo.InvariantCulture), row.ToString(CultureInfo.InvariantCulture));
         var cached = CachedMapTile(path, provider);
@@ -339,6 +453,7 @@ public sealed partial class Store
         RequestDelegate delete = context => { Api.RequireDeleteConfirmation(context); DeleteMapProvider(Api.Id(context)); context.Response.StatusCode = 204; return Task.CompletedTask; };
         RequestDelegate layers = context => Api.Write(context, GetMapLayers(), MapConfigJsonContext.Default.MapLayerDtoArray);
         app.MapGet("/api/map/layers", layers);
+        app.MapGet("/api/map/archive/{id}", ServePmtilesArchiveAsync);
         app.MapPost("/api/map/settings", create);
         app.MapPut("/api/map/settings/order", order);
         app.MapPut("/api/map/settings/{id}/enabled", enabled);

@@ -1004,10 +1004,55 @@ class ApiSmoke:
         self.attachment_id, self.attachment_payload = attachment["id"], payload
         require(not self.sql_rows("PRAGMA foreign_key_check"), "New-domain workflow violated referential integrity")
 
+    def test_pmtiles_archive(self) -> None:
+        settings = self.json("GET", "/api/map/settings")
+        original = settings["providers"][0]
+        provider = dict(original, id="", name="离线 PMTiles 文件", folder="smoke/maps.pmtiles",
+                        scheme="xyz", format="pmtiles", urlTemplate="", forceRefresh=False, enabled=True)
+        created = self.json("POST", "/api/map/settings", provider, expected=201)
+        layer_id = created["id"]
+        require(created["format"] == "pmtiles" and created["scheme"] == "xyz", "PMTiles format was not persisted")
+        layers = self.json("GET", "/api/map/layers")
+        require(any(layer["id"] == layer_id and layer["kind"] == "pmtiles" for layer in layers),
+                "PMTiles layer was not announced to the browser")
+        check = self.json("GET", "/api/map/settings/" + layer_id + "/check")
+        require(check["status"] == "empty", "Missing offline PMTiles should be reported as empty")
+        root = Path(settings["cacheRoot"])
+        archive = root / "smoke" / "maps.pmtiles"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        data = bytearray(16384)
+        data[:7] = b"PMTiles"
+        data[7] = 3
+        archive.write_bytes(data)
+        checked = self.json("GET", "/api/map/settings/" + layer_id + "/check")
+        require(checked["status"] == "cached" and checked["hasCache"], "Local PMTiles header was not recognized")
+        archive_url = self.origin + "/api/map/archive/" + layer_id
+        request = urllib.request.Request(archive_url, headers={"Range": "bytes=0-126"})
+        with self.opener.open(request, timeout=10) as response:
+            require(response.status == 206, "PMTiles archive must support HTTP 206 range requests")
+            require(response.headers.get("Content-Range") == "bytes 0-126/16384",
+                    "PMTiles Content-Range is incorrect")
+            require(response.read() == bytes(data[:127]), "PMTiles partial contents changed")
+        self.request("GET", "/api/map/archive/" + layer_id, expected=416)
+        oversized = urllib.request.Request(archive_url, headers={"Range": "bytes=0-20000000"})
+        try:
+            self.opener.open(oversized, timeout=10)
+            raise SmokeFailure("Oversized PMTiles range must be refused")
+        except urllib.error.HTTPError as error:
+            require(error.code == 416, "Oversized PMTiles range must return HTTP 416")
+        self.request("GET", "/api/map/tiles/" + layer_id + "/0/0/0", expected=404)
+        self.json("DELETE", "/api/map/settings/" + layer_id + "?confirm=true", expected=204)
+        require(archive.exists(), "Deleting a PMTiles layer must not delete its local archive")
+        archive.unlink()
+        require("scheme IN ('xyz','tms')" in self.sql_rows(
+            "SELECT sql FROM sqlite_master WHERE name='map_providers'")[0][0],
+            "PMTiles support must not change the database schema")
+
     def run(self) -> None:
         self.start(seed=True)
         for name, action in (
             ("startup, persistence location, settings and static-cache policy", self.test_startup_and_settings),
+            ("offline PMTiles archive ranges and schema compatibility", self.test_pmtiles_archive),
             ("dictionary and point CRUD, filters and reference protection", self.test_dictionaries_and_points),
             ("normal/multi-issue inspections, JPEG upload and transactional photo association", self.test_inspections_and_photos),
             ("feedback, optional-photo review, closure and return audit trail", self.test_state_transitions),

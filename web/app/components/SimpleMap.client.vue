@@ -11,6 +11,8 @@ import XYZ from 'ol/source/XYZ'
 import MVT from 'ol/format/MVT'
 import VectorTileSource from 'ol/source/VectorTile'
 import VectorTileLayer from 'ol/layer/VectorTile'
+import TileState from 'ol/TileState'
+import { PMTiles, TileType } from 'pmtiles'
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
 import DragRotate from 'ol/interaction/DragRotate'
@@ -169,30 +171,74 @@ onMounted(() => {
     const [longitude, latitude] = wgs84ToGcj02(toLonLat(coordinate))
     try { localStorage.setItem(mapViewKey, JSON.stringify({ longitude, latitude, zoom: map!.getView().getZoom() ?? 16 })) } catch { /* Optional map preference. */ }
   })
-  void $fetch<{ id: string; kind?: 'raster' | 'mvt' }[]>('/api/map/layers', { signal: layerRequest.signal }).then(layers => {
-    if (layerRequest.signal.aborted || !map) return
-    layers.forEach((layer, index) => {
+  const vectorLabels = (source: VectorTileSource) => new VectorTileLayer({
+    source,
+    declutter: true,
+    style: feature => {
+      const name = ['name:zh', 'name_zh', 'name_zh_cn', 'NAME_CHN', 'name', 'NAME', 'Name', 'label', 'text', 'name_en']
+        .map(field => feature.get(field))
+        .find(value => typeof value === 'string' && value.trim().length > 0 && value.length <= 80)
+      if (typeof name !== 'string') return undefined
+      const kind = 'getType' in feature ? feature.getType() : feature.getGeometry()?.getType()
+      return mvtLabel(name.trim(), kind === 'LineString' || kind === 'MultiLineString')
+    },
+  })
+  void $fetch<{ id: string; kind?: 'raster' | 'mvt' | 'pmtiles' }[]>('/api/map/layers', { signal: layerRequest.signal }).then(async layers => {
+    const created = await Promise.all(layers.map(async layer => {
       const url = `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`
-      if (layer.kind === 'mvt') {
-        const source = new VectorTileSource({ format: new MVT(), url, maxZoom: 18 })
-        const vectorLayer = new VectorTileLayer({
-          source,
-          declutter: true,
-          style: feature => {
-            const name = ['name:zh', 'name_zh', 'name_zh_cn', 'NAME_CHN', 'name', 'NAME', 'Name', 'label', 'text', 'name_en']
-              .map(field => feature.get(field))
-              .find(value => typeof value === 'string' && value.trim().length > 0 && value.length <= 80)
-            if (typeof name !== 'string') return undefined
-            const kind = 'getType' in feature ? feature.getType() : feature.getGeometry()?.getType()
-            return mvtLabel(name.trim(), kind === 'LineString' || kind === 'MultiLineString')
-          },
-        })
-        map!.getLayers().insertAt(index, vectorLayer)
-      } else {
-        const source = new XYZ({ url, maxZoom: 18 })
-        map!.getLayers().insertAt(index, new TileLayer({ source }))
+      if (layer.kind === 'pmtiles') {
+        try {
+          const archive = new PMTiles(`/api/map/archive/${encodeURIComponent(layer.id)}`)
+          const header = await archive.getHeader()
+          const maxZoom = Math.min(header.maxZoom, 18)
+          if (header.tileType === TileType.Mvt) {
+            const source = new VectorTileSource({
+              format: new MVT(),
+              maxZoom,
+              tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
+              tileLoadFunction: tile => {
+                tile.setLoader((extent, _resolution, projection) => {
+                  const coord = tile.getTileCoord()
+                  if (!coord) { tile.setFeatures([]); return }
+                  void archive.getZxy(coord[0], coord[1], coord[2]).then(result => {
+                    if (!result) { tile.setFeatures([]); return }
+                    tile.setFeatures(tile.getFormat().readFeatures(result.data, { extent, featureProjection: projection }))
+                  }).catch(() => tile.setState(TileState.ERROR))
+                })
+              },
+            })
+            return vectorLabels(source)
+          }
+          const contentType = header.tileType === TileType.Png ? 'image/png'
+            : header.tileType === TileType.Jpeg ? 'image/jpeg'
+            : header.tileType === TileType.Webp ? 'image/webp' : null
+          if (!contentType) return null
+          const source = new XYZ({
+            maxZoom,
+            tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
+            tileLoadFunction: tile => {
+              const coordinate = tile.getTileCoord()
+              if (!coordinate) { tile.setState(TileState.EMPTY); return }
+              void archive.getZxy(coordinate[0], coordinate[1], coordinate[2]).then(result => {
+                if (!result) { tile.setState(TileState.EMPTY); return }
+                const image = tile.getImage() as HTMLImageElement
+                const imageUrl = URL.createObjectURL(new Blob([result.data], { type: contentType }))
+                const cleanup = () => URL.revokeObjectURL(imageUrl)
+                image.addEventListener('load', cleanup, { once: true })
+                image.addEventListener('error', cleanup, { once: true })
+                image.src = imageUrl
+              }).catch(() => tile.setState(TileState.ERROR))
+            },
+          })
+          return new TileLayer({ source })
+        } catch { return null }
       }
-    })
+      if (layer.kind === 'mvt')
+        return vectorLabels(new VectorTileSource({ format: new MVT(), url, maxZoom: 18 }))
+      return new TileLayer({ source: new XYZ({ url, maxZoom: 18 }) })
+    }))
+    if (layerRequest.signal.aborted || !map) return
+    created.forEach((layer, index) => { if (layer) map!.getLayers().insertAt(index, layer) })
   }).catch(() => { /* No base layers is a supported offline state. */ })
   map.on('singleclick', event => {
     if (props.mode === 'point') {

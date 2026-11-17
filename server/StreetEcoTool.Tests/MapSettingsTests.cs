@@ -77,6 +77,53 @@ public sealed class MapSettingsTests
     }
 
     [Fact]
+    public async Task PmtilesArchiveUsesExistingSchemaAndCanBeCheckedOffline()
+    {
+        using var env = new V2Environment();
+        using var store = env.Open();
+        var original = Assert.Single(store.GetMapSettings().Providers);
+        var pmtiles = store.CreateMapProvider(original with
+        {
+            Id = "", Name = "离线 PMTiles 地名", Format = "pmtiles", Scheme = "xyz",
+            Folder = "archive/labels.pmtiles", UrlTemplate = "", ForceRefresh = false
+        });
+        Assert.Equal("pmtiles", pmtiles.Format);
+        Assert.Equal("xyz", pmtiles.Scheme);
+        Assert.Equal("pmtiles", store.GetMapLayers().Single(layer => layer.Id == pmtiles.Id).Kind);
+        var file = Path.Combine(env.Root, "tiles", "archive", "labels.pmtiles");
+        Assert.True(Directory.Exists(Path.GetDirectoryName(file)!));
+        var missing = await store.CheckMapLayerAsync(pmtiles.Id, CancellationToken.None);
+        Assert.Equal("empty", missing.Status);
+
+        var header = new byte[16384];
+        "PMTiles"u8.CopyTo(header);
+        header[7] = 3;
+        await File.WriteAllBytesAsync(file, header);
+        var ready = await store.CheckMapLayerAsync(pmtiles.Id, CancellationToken.None);
+        Assert.Equal("cached", ready.Status);
+        Assert.True(ready.HasCache);
+        Assert.False(ready.HasUrl);
+
+        using var reopened = env.Open();
+        var persisted = reopened.GetMapSettings().Providers.Single(layer => layer.Id == pmtiles.Id);
+        Assert.Equal("pmtiles", persisted.Format);
+        Assert.Equal("", persisted.UrlTemplate);
+        foreach (var invalid in new[]
+        {
+            pmtiles with { Scheme = "tms" },
+            pmtiles with { Folder = "archive" },
+            pmtiles with { ForceRefresh = true },
+            pmtiles with { Format = "other" }
+        })
+        {
+            Assert.Equal(400, Assert.Throws<ApiException>(() => store.SaveMapProvider(pmtiles.Id, invalid)).StatusCode);
+            Assert.Equal("pmtiles", store.GetMapSettings().Providers.Single(layer => layer.Id == pmtiles.Id).Format);
+        }
+        Assert.Equal("raster", store.GetMapSettings().Providers.Single(layer => layer.Id == original.Id).Format);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Fact]
     public void LayerSettingsPersistInDatabaseWithoutChangingOtherLayers()
     {
         using var env = new V2Environment(); TileProvider saved;
