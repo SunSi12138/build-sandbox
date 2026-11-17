@@ -9,7 +9,7 @@ const { bootstrap, load } = useAppData()
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 const saving = ref(false), loading = ref(false), error = ref(''), photosBusy = ref(false)
 interface PointState { shape: GeoShape | null; name: string; communityId: string; typeId: string; address: string; coordinates: string; contact: string; phone: string; frequency: Frequency; temporary: boolean; notes: string; disabled: boolean; photos: PhotoUploadDto[]; tagIds: string[] }
-const defaults = (): PointState => ({ shape: null, name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', temporary: true, notes: '', disabled: false, photos: [], tagIds: [] })
+const defaults = (): PointState => ({ shape: null, name: '', communityId: '', typeId: '', address: '', coordinates: '', contact: '', phone: '', frequency: 'irregular', temporary: false, notes: '', disabled: false, photos: [], tagIds: [] })
 const state = reactive<PointState>(defaults())
 const pointNature = computed({ get: () => state.temporary ? 'temporary' : 'regular', set: (value: string) => { state.temporary = value === 'temporary' } })
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
