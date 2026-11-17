@@ -100,6 +100,43 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await page.keyboard.press('Escape')
     })
 
+    await test('M07 clear-filter icon stays last and visible, and fullscreen map chrome is transparent', async () => {
+      await page.setViewportSize({ width: 375, height: 812 })
+      for (const target of ['/points', '/inspections', '/activities', '/matters']) {
+        await go(target + '?q=filter-clear-regression')
+        const filterBox = page.locator('.filter-box')
+        const reset = filterBox.locator('[aria-label="清空筛选"]')
+        await reset.waitFor()
+        assert.equal(await reset.count(), 1, target + ' should have exactly one common reset')
+        assert.equal(await filterBox.locator(':scope > :last-child').getAttribute('aria-label'), '清空筛选')
+        assert(await reset.isVisible(), target + ' clear icon should be visible on mobile')
+        assert.equal(await page.locator('.filter-tool-row [aria-label="清空筛选"]').count(), 0)
+        await reset.click()
+        await page.waitForFunction(target => location.hash === '#' + target, target)
+        assert(await page.locator('.filter-box [aria-label="清空筛选"]').isVisible())
+      }
+      for (const target of ['/points', '/inspections']) {
+        await go(target + '?view=map&q=filter-clear-regression')
+        const reset = page.locator('.filter-box [aria-label="清空筛选"]')
+        await reset.waitFor()
+        assert(await reset.isVisible(), target + ' collapsed map filters must still show reset')
+        await reset.click()
+        await page.waitForFunction(target => location.hash === '#' + target + '?view=map', target)
+        await page.getByTestId('map-fullscreen').click()
+        await waitFullscreen(true)
+        const backgrounds = await page.evaluate(() => ({
+          header: getComputedStyle(document.querySelector('.has-background-map .page-header')).backgroundColor,
+          chips: [...document.querySelectorAll('.has-background-map .chip-row')].map(element => getComputedStyle(element).backgroundColor),
+        }))
+        const transparent = value => value === 'rgba(0, 0, 0, 0)' || value === 'transparent'
+        assert(transparent(backgrounds.header), target + ' map header must be transparent: ' + backgrounds.header)
+        assert(backgrounds.chips.every(transparent), target + ' chips must be transparent: ' + backgrounds.chips)
+        if (target === '/inspections') assert(backgrounds.chips.length > 0, 'inspection chips must be present')
+        await page.getByTestId('map-fullscreen').click()
+        await waitFullscreen(false)
+      }
+    })
+
     await test('M06 depth 2 renders higher zoom tiles instead of only lower zoom preload', async () => {
       const settings = await api('/map/settings')
       const raster = settings.providers.find(layer => layer.enabled && layer.format === 'raster' && layer.preload === 2)
