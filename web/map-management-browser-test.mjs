@@ -9,10 +9,10 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
   const page = await context.newPage(), errors = []
   page.on('pageerror', error => errors.push(String(error)))
   await page.addInitScript(() => {
-    window.mapAnimations = []
+    window.mapSurfaceAnimations = 0
     const animate = Element.prototype.animate
     Element.prototype.animate = function (frames, options) {
-      if (this.classList.contains('record-map-surface')) window.mapAnimations.push(typeof options === 'number' ? options : options.duration)
+      if (this.classList.contains('record-map-surface')) window.mapSurfaceAnimations++
       return animate.call(this, frames, options)
     }
   })
@@ -27,7 +27,8 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
   async function waitFullscreen(value) {
     await page.waitForFunction(value => {
       const button = document.querySelector('[data-testid="map-fullscreen"]')
-      return button && button.getAttribute('aria-pressed') === String(value) && !button.disabled
+      return button && button.getAttribute('aria-pressed') === String(value) &&
+        (document.fullscreenElement === document.documentElement) === value
     }, value)
   }
   try {
@@ -167,40 +168,58 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
         await rm(styleDirectory, { recursive: true, force: true })
       }
     })
-    await test('M02 background map fullscreen preserves controls and animates both directions', async () => {
+    await test('M02 browser fullscreen toggles native API while map always fills viewport', async () => {
       for (let i = 0; i < 2; i++) await api('/points', { method: 'POST', body: { name: '全屏回归点位' + i, communityId: bootstrap.communities[i % bootstrap.communities.length].id, typeId: bootstrap.pointTypes[0].id, address: '全屏回归地址', frequency: 'irregular', longitude: 88.9 + i / 100, latitude: 29.3 } })
       await page.setViewportSize({ width: 1440, height: 900 })
       await go('/points?view=map&q=' + encodeURIComponent('全屏回归点位'))
       await page.getByTestId('map-fullscreen').waitFor()
-      const filterBox = await page.getByTestId('list-filters').boundingBox()
-      const header = await page.locator('.page-header').boundingBox()
+      await page.locator('#main-map-layer .record-map-surface').waitFor()
       const canvas = await page.locator('.simple-map-canvas').elementHandle()
       assert.equal(await page.locator('.ol-attribution').count(), 0)
+      async function assertFullViewport() {
+        const sizes = await page.evaluate(() => {
+          const surface = document.querySelector('#main-map-layer .record-map-surface')
+          const main = document.querySelector('.main-shell')
+          const mapLayer = document.querySelector('#main-map-layer')
+          const bounds = surface?.getBoundingClientRect()
+          const mainBounds = main?.getBoundingClientRect()
+          return { surface: bounds && { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height }, main: mainBounds && { x: mainBounds.x, width: mainBounds.width }, layer: Boolean(mapLayer?.contains(surface)), screenHeight: innerHeight }
+        })
+        assert(sizes.surface && sizes.main && sizes.layer, 'map must always be in the background layer')
+        assert(Math.abs(sizes.surface.x - sizes.main.x) < 1 && Math.abs(sizes.surface.width - sizes.main.width) < 1,
+          'background map must fill all page width to the side navigation')
+        assert(Math.abs(sizes.surface.y) < 1 && Math.abs(sizes.surface.height - sizes.screenHeight) < 1,
+          'background map must fill the entire viewport height')
+        assert(await canvas.evaluate(element => element.isConnected && document.getElementById('main-map-layer').contains(element)))
+      }
+      await assertFullViewport() // Map is already full-size before clicking anything.
+      assert.equal(await page.evaluate(() => document.fullscreenElement), null)
+      const filterBox = await page.getByTestId('list-filters').boundingBox()
+      const header = await page.locator('.page-header').boundingBox()
       await page.getByTestId('map-fullscreen').click(); await waitFullscreen(true)
-      const bounds = await page.locator('#main-map-layer .record-map-surface').boundingBox()
-      const main = await page.locator('.main-shell').boundingBox()
-      assert(bounds && main && Math.abs(bounds.x - main.x) < 1 && Math.abs(bounds.width - main.width) < 1 && bounds.y === 0 && bounds.height === 900)
+      await assertFullViewport()
+      assert.equal(await page.getByTestId('map-fullscreen').getAttribute('aria-label'), '退出浏览器全屏')
       assert.deepEqual(await page.getByTestId('list-filters').boundingBox(), filterBox)
       assert.deepEqual(await page.locator('.page-header').boundingBox(), header)
-      assert(await canvas.evaluate(element => document.getElementById('main-map-layer').contains(element)))
       await page.getByLabel('社区筛选', { exact: true }).click()
       const changed = response('/points')
       await page.getByRole('option', { name: bootstrap.communities[0].name, exact: true }).click(); await changed
-      await page.waitForFunction(() => !document.querySelector('.record-map-shell')?.getAttribute('aria-busy') || document.querySelector('.record-map-shell')?.getAttribute('aria-busy') === 'false')
-      assert.equal(await page.getByTestId('map-fullscreen').getAttribute('aria-pressed'), 'true')
-      assert(await canvas.evaluate(element => element.isConnected && document.getElementById('main-map-layer').contains(element)))
+      await page.waitForFunction(() => document.querySelector('.record-map-shell')?.getAttribute('aria-busy') === 'false')
+      await assertFullViewport()
       await page.screenshot({ path: path.join(evidence, 'map-fullscreen-1440.png'), fullPage: true, animations: 'disabled' })
       await page.getByTestId('map-fullscreen').click(); await waitFullscreen(false)
-      assert.equal(await page.locator('#main-map-layer .record-map-surface').count(), 0)
-      assert(await canvas.evaluate(element => element.isConnected && document.querySelector('.record-map-shell').contains(element)))
-      const durations = await page.evaluate(() => window.mapAnimations)
-      assert.equal(durations.length, 2); assert(durations.every(duration => duration > 0))
+      await assertFullViewport() // Exiting browser fullscreen must not move or shrink the map.
+      assert.equal(await page.getByTestId('map-fullscreen').getAttribute('aria-label'), '浏览器全屏')
+      assert.equal(await page.evaluate(() => window.mapSurfaceAnimations), 0)
       await page.setViewportSize({ width: 375, height: 812 })
+      await assertFullViewport()
       await page.getByTestId('map-fullscreen').click(); await waitFullscreen(true)
+      await assertFullViewport()
       const navigation = await page.getByRole('navigation', { name: '底部主导航' }).boundingBox()
       assert(await page.evaluate(({ x, y }) => !!document.elementFromPoint(x, y)?.closest('.mobile-tabs'), { x: navigation.x + 20, y: navigation.y + 20 }))
       await page.screenshot({ path: path.join(evidence, 'map-fullscreen-375.png'), fullPage: true, animations: 'disabled' })
       await page.keyboard.press('Escape'); await waitFullscreen(false)
+      await assertFullViewport()
     })
     await test('M03 clicking map center returns GCJ-02 coordinates instead of WGS84', async () => {
       await page.setViewportSize({ width: 1440, height: 900 })
