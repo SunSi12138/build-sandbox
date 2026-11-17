@@ -29,6 +29,37 @@ public sealed class PointMutationTests
     }
 
     [Fact]
+    public void PointNatureCanBeSelectedOnCreateAndChangedWithoutRewritingExistingPoints()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var original = environment.CreatePoint(store);
+        var created = store.SavePoint(null, new("新增临时点位", original.CommunityId, original.TypeId,
+            "新地址", Frequency: "weekly", Temporary: true));
+        Assert.True(created.Temporary);
+        Assert.Equal("irregular", created.Frequency);
+        Assert.False(store.GetPoint(original.Id).Temporary);
+
+        var permanent = store.SavePoint(created.Id, new(created.Name, created.CommunityId,
+            created.TypeId, created.Address, Frequency: "monthly", Temporary: false));
+        Assert.False(permanent.Temporary);
+        Assert.Equal("monthly", permanent.Frequency);
+
+        var temporary = store.SavePoint(created.Id, new(created.Name, created.CommunityId,
+            created.TypeId, created.Address, Frequency: "weekly", Temporary: true));
+        Assert.True(temporary.Temporary);
+        Assert.Equal("irregular", temporary.Frequency);
+
+        // Older clients that omit the property must not unexpectedly convert a point.
+        var legacyEdit = store.SavePoint(created.Id, new("更新名称", created.CommunityId,
+            created.TypeId, created.Address));
+        Assert.True(legacyEdit.Temporary);
+        Assert.Equal("irregular", legacyEdit.Frequency);
+        Assert.False(store.GetPoint(original.Id).Temporary);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Fact]
     public async Task ConcurrentPhotoCompletionsKeepBothAssociations()
     {
         using var environment = new V2Environment();
