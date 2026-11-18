@@ -20,6 +20,20 @@ function toggle(address: string, checked: boolean | 'indeterminate') {
   else if (checked === true) selected.value = [...selected.value.filter(value => value !== '0.0.0.0'), address]
   else selected.value = selected.value.filter(value => value !== address)
 }
+function currentOriginSurvives(listen: string[]) {
+  if (listen.includes('0.0.0.0')) return true
+  const host = window.location.hostname.toLowerCase()
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]'
+    ? listen.includes('127.0.0.1')
+    : listen.includes(host)
+}
+function switchToActiveAddress(url: string) {
+  // Saving a LAN-only binding removes the localhost listener. Navigation
+  // preserves the current Nuxt route and happens after the server restarts.
+  const target = new URL(url, window.location.href)
+  const current = new URL(window.location.href)
+  window.location.assign(target.origin + current.pathname + current.search + current.hash)
+}
 function confirmApply() {
   if (selected.value.length === 1 && selected.value[0] !== '127.0.0.1' && selected.value[0] !== '0.0.0.0') warningOpen.value = true
   else void apply()
@@ -30,6 +44,13 @@ async function apply() {
   try {
     const response = await $fetch<ListenUpdateResponse>('/api/system/listen', { method: 'PUT', body: { listen: selected.value }, retry: 0 })
     newAddresses.value = response.addresses
+    if (!currentOriginSurvives(response.listen)) {
+      // The current URL will be closed after the response. Give Kestrel time
+      // to finish rebinding, then open the advertised reachable host address.
+      await new Promise(resolve => window.setTimeout(resolve, 1200))
+      if (!disposed) switchToActiveAddress(response.localUrl)
+      return
+    }
     const deadline = Date.now() + 8000
     while (!disposed && Date.now() < deadline) {
       await new Promise(resolve => window.setTimeout(resolve, 400))
@@ -63,16 +84,17 @@ onBeforeUnmount(() => { disposed = true })
     <template #content><div class="w-80 max-w-[calc(100vw-24px)] space-y-2 p-3 compact">
       <h2 class="section-title">访问设置</h2>
       <USkeleton v-if="loading && !info" class="h-24 rounded" />
-      <template v-if="info?.canConfigure">
-        <div class="check-row"><UCheckbox :model-value="selected.includes('127.0.0.1')" :disabled="applying" label="仅本机" class="flex-1" @update:model-value="toggle('127.0.0.1', $event)" /><span class="text-xs text-muted">127.0.0.1</span></div>
-        <div class="check-row"><UCheckbox :model-value="selected.includes('0.0.0.0')" :disabled="applying" label="所有网卡" class="flex-1" @update:model-value="toggle('0.0.0.0', $event)" /><span class="text-xs text-muted">0.0.0.0</span></div>
+      <template v-if="info">
+        <p v-if="!info.canConfigure" role="status" class="text-xs text-muted">请在运行程序的电脑上打开此地址修改监听设置。</p>
+        <div class="check-row"><UCheckbox :model-value="selected.includes('127.0.0.1')" :disabled="applying || !info.canConfigure" label="仅本机" class="flex-1" @update:model-value="toggle('127.0.0.1', $event)" /><span class="text-xs text-muted">127.0.0.1</span></div>
+        <div class="check-row"><UCheckbox :model-value="selected.includes('0.0.0.0')" :disabled="applying || !info.canConfigure" label="所有网卡" class="flex-1" @update:model-value="toggle('0.0.0.0', $event)" /><span class="text-xs text-muted">0.0.0.0</span></div>
         <h3 class="border-t border-[var(--divider)] pt-2 text-xs text-muted">指定网卡</h3>
-        <div v-for="item in info.interfaces.filter(item => !item.other)" :key="item.address" class="check-row"><UCheckbox :model-value="selected.includes(item.address)" :disabled="applying" :label="item.name" class="min-w-0 flex-1" @update:model-value="toggle(item.address, $event)" /><span class="ml-2 text-xs text-muted">{{ item.address }}</span></div>
-        <UButton v-if="info.interfaces.some(item => item.other)" label="其他网卡" :trailing-icon="showOther ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" color="neutral" variant="link" @click="showOther = !showOther" />
+        <div v-for="item in info.interfaces.filter(item => !item.other)" :key="item.address" class="check-row"><UCheckbox :model-value="selected.includes(item.address)" :disabled="applying || !info.canConfigure" :label="item.name" class="min-w-0 flex-1" @update:model-value="toggle(item.address, $event)" /><span class="ml-2 text-xs text-muted">{{ item.address }}</span></div>
+        <UButton v-if="info.interfaces.some(item => item.other)" :disabled="!info.canConfigure" label="其他网卡" :trailing-icon="showOther ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'" color="neutral" variant="link" @click="showOther = !showOther" />
         <template v-if="showOther"><div v-for="item in info.interfaces.filter(item => item.other)" :key="item.address" class="check-row"><UCheckbox :model-value="selected.includes(item.address)" :disabled="applying" :label="item.name" class="min-w-0 flex-1" @update:model-value="toggle(item.address, $event)" /><span class="ml-2 text-xs text-muted">{{ item.address }}</span></div></template>
         <p v-for="address in info.unavailableSaved" :key="address" class="text-xs text-warning">已保存的 {{ address }} 当前不可用</p>
         <p v-if="!selected.length" class="text-xs text-error">至少选择一项</p>
-        <div class="flex justify-end"><UButton label="应用" :loading="applying" :disabled="!selected.length || !changed" data-testid="listen-apply" @click="confirmApply" /></div>
+        <div class="flex justify-end"><UButton label="应用" :loading="applying" :disabled="!info.canConfigure || applying || !selected.length || !changed" data-testid="listen-apply" @click="confirmApply" /></div>
       </template>
       <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
       <h3 class="border-t border-[var(--divider)] pt-2 text-xs text-muted">可访问地址</h3>
