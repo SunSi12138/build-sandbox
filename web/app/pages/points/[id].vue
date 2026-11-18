@@ -192,7 +192,7 @@ watch(id, load, { immediate: true })
                 ><span v-else>—</span>
               </dd>
             </div>
-            <ExtraFieldDetails :fields="typeFields" :values="detail.point.extraValues" />
+            <ExtraFieldDetails :fields="typeFields" :values="detail.point.extraValues ?? {}" />
             <div v-if="detail.point.notes" class="detail-wide">
               <dt>备注</dt>
               <dd class="whitespace-pre-wrap">{{ detail.point.notes }}</dd>
