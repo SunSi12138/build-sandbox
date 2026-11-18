@@ -53,6 +53,20 @@ public static class WordExporter
         document.Paragraph(report.Title, "Title");
         document.Paragraph(report.Scope, "ReportInfo", indent: false);
         document.Paragraph($"共 {report.Rows.Length} 条；生成日期：{Store.Today}", "ReportInfo", indent: false);
+        if (report.Sections is { Length: > 0 } sections)
+        {
+            foreach (var section in sections)
+            {
+                document.Section(section.Title);
+                document.Table(section.Headers, section.Rows,
+                    section.Headers.Select(header => header is "检查类型" or "名称" ? 19 : 12).ToArray(),
+                    centeredColumns: Enumerable.Range(0, section.Headers.Length)
+                        .Where(i => section.Headers[i] is not ("名称" or "检查类型")).ToArray(),
+                    repeatColumns: [0]);
+                if (section.Rows.Length == 0) document.Paragraph("当前筛选条件下没有记录。", "ReportInfo", indent: false);
+            }
+            return;
+        }
         // The printable report uses row numbers; Excel and the data API retain stable record IDs.
         var headers = report.Headers.ToArray();
         var numbered = headers.Length > 0 && headers[0] is "编号" or "安排编号";

@@ -5,7 +5,8 @@ using System.Text.Json.Serialization;
 using System.Xml.Linq;
 
 namespace StreetEcoTool;
-public sealed record ReportDto(string Title, string Scope, string[] Headers, string[][] Rows);
+public sealed record ReportSection(string Title, string[] Headers, string[][] Rows);
+public sealed record ReportDto(string Title, string Scope, string[] Headers, string[][] Rows, ReportSection[]? Sections = null);
 public sealed record ReportQuery(string Kind, string From = "", string To = "", string CommunityId = "", string Status = "", string Search = "", string TypeId = "", string PlanId = "", string[]? Ids = null);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(ReportDto))]
@@ -22,13 +23,36 @@ public sealed partial class Store
             CheckDateRange(from, to);
             var rows = new List<string[]>();
             string title; string[] headers;
+            ReportSection[]? sections = null;
             bool Match(string value) => string.IsNullOrEmpty(query.Search) || value.Contains(query.Search, StringComparison.OrdinalIgnoreCase);
             var scope = $"网格：{GetCommunities().FirstOrDefault(x => x.Id == query.CommunityId)?.Name ?? "全部"}；状态：{ReportStatus(query.Status)}";
             if (query.Kind == "statistics")
             {
                 title = "工作统计"; headers = ["编号", "分组", "在用场所", "已查场所", "检查次数", "未完成检查", "问题数", "已完成整改", "尚未完成且超期"];
                 var statistics = GetStatistics(query.From, query.To, query.CommunityId);
-                rows.AddRange(new[] { statistics.Total }.Concat(statistics.Grids).Select(x => new[] { x.Id, x.Name, x.Places.ToString(), x.CheckedPlaces.ToString(), x.Inspections.ToString(), x.Incomplete.ToString(), x.Issues.ToString(), x.Closed.ToString(), x.Overdue.ToString() }));
+                var gridRows = new[] { statistics.Total }.Concat(statistics.Grids).Select(x => new[] {
+                    x.Id, x.Name, x.Places.ToString(CultureInfo.InvariantCulture), x.CheckedPlaces.ToString(CultureInfo.InvariantCulture),
+                    x.Inspections.ToString(CultureInfo.InvariantCulture), x.Incomplete.ToString(CultureInfo.InvariantCulture),
+                    x.Issues.ToString(CultureInfo.InvariantCulture), x.Closed.ToString(CultureInfo.InvariantCulture),
+                    x.Overdue.ToString(CultureInfo.InvariantCulture)
+                }).ToArray();
+                var typeRows = statistics.Types.Select(x => new[] {
+                    x.Id, x.Name, "—", x.CheckedPlaces.ToString(CultureInfo.InvariantCulture),
+                    x.Inspections.ToString(CultureInfo.InvariantCulture), x.Incomplete.ToString(CultureInfo.InvariantCulture),
+                    x.Issues.ToString(CultureInfo.InvariantCulture), x.Closed.ToString(CultureInfo.InvariantCulture),
+                    x.Overdue.ToString(CultureInfo.InvariantCulture)
+                }).ToArray();
+                // Preserve an explicit section boundary for spreadsheet exports.
+                rows.Add(["", "【按网格】", "", "", "", "", "", "", ""]);
+                rows.AddRange(gridRows);
+                rows.Add(["", "【按检查类型】", "", "", "", "", "", "", ""]);
+                rows.AddRange(typeRows);
+                sections = [
+                    new("按网格", ["名称", "在用场所", "已查场所", "检查次数", "未完成检查", "问题数", "已完成整改", "超期"],
+                        gridRows.Select(x => x.Skip(1).ToArray()).ToArray()),
+                    new("按检查类型", ["检查类型", "已查场所", "检查次数", "未完成检查", "问题数", "已完成整改", "超期"],
+                        typeRows.Select(x => x.Skip(1).Skip(1).Prepend(x[1]).ToArray()).ToArray())
+                ];
                 scope = $"检查日期：{statistics.From} 至 {statistics.To}；整改为这些检查发现问题的当前状态；" + scope;
             }
             else if (query.Kind == "places")
@@ -107,12 +131,13 @@ public sealed partial class Store
             if (query.TypeId.Length > 0) scope += "；类型：" + (query.Kind == "inspections" ? ListCommunityRecords("inspection-type", includeArchived: true).FirstOrDefault(x => x.Id == query.TypeId)?.Name : GetPointTypes().FirstOrDefault(x => x.Id == query.TypeId)?.Name);
             if (query.Ids is { Length: > 0 })
             {
+                if (query.Kind == "statistics") throw new ApiException(400, "统计表按查询条件整体导出，不支持逐行勾选。");
                 if (query.Ids.Length > 200) throw new ApiException(400, "一次最多选择 200 条，请缩小查询范围。");
                 var ids = query.Ids.ToHashSet(StringComparer.Ordinal);
                 rows = rows.Where(x => ids.Contains(x[0])).ToList();
                 scope += $"；已勾选 {rows.Count} 条";
             }
-            return new(title, scope, headers, [.. rows]);
+            return new(title, scope, headers, [.. rows], sections);
         }
     }
     private static string ReportStatus(string s) => s switch { "" or "all" => "全部", "pending" => "待整改", "feedback" => "待复查", "closed" => "已完成", "overdue" => "已超期", "true" => "已停用", "false" => "使用中", "normal" => "未发现问题", "issues" => "发现问题", "incomplete" => "未完成检查", _ => s };

@@ -90,6 +90,58 @@ public sealed class CommunityReportingTests
     }
 
     [Fact]
+    public void StatisticsExportIncludesGridAndInspectionTypeGroupsWithoutInventedPlaceCounts()
+    {
+        using var env = new V2Environment();
+        using var store = env.Open();
+        var first = env.CreatePoint(store);
+        var grid = store.SaveCommunity(null, new("第二网格", "第二网格"));
+        var second = store.SavePoint(null, new("另一场所", grid.Id, first.TypeId, "青山路15号"));
+        var typeA = store.SaveCommunityRecord("inspection-type", null, new("", "安全排查", Data("""{"items":[]}""")));
+        var typeB = store.SaveCommunityRecord("inspection-type", null, new("", "卫生排查", Data("""{"items":[]}""")));
+        foreach (var p in new[] { first, second })
+            foreach (var type in new[] { typeA, typeB })
+                store.CreateInspection(new(p.Id, Store.Today, "张三", "normal", InspectionTypeId: type.Id));
+        var data = store.GetStatistics(Store.Today, Store.Today, "");
+        Assert.Equal(2, data.Grids.Length);
+        Assert.Equal(2, data.Types.Length);
+        Assert.All(data.Types, x => Assert.Equal(2, x.CheckedPlaces));
+        var report = store.GetReport(new("statistics", From: Store.Today, To: Store.Today));
+        var sections = Assert.IsType<ReportSection[]>(report.Sections);
+        Assert.Equal(["按网格", "按检查类型"], sections.Select(x => x.Title).ToArray());
+        Assert.Equal(data.Grids.Length + 1, sections[0].Rows.Length);
+        Assert.Equal(data.Types.Length, sections[1].Rows.Length);
+        Assert.DoesNotContain("在用场所", sections[1].Headers);
+        Assert.All(sections[1].Rows, row => Assert.Equal("2", row[1]));
+        Assert.Equal(data.Types.Length, report.Rows.Count(row => row[2] == "—"));
+        using var docx = new MemoryStream();
+        WordExporter.WriteCommunityReport(docx, report, store.GetSettings());
+        docx.Position = 0;
+        using (var archive = new ZipArchive(docx, ZipArchiveMode.Read, true))
+        using (var reader = new StreamReader(archive.GetEntry("word/document.xml")!.Open()))
+        {
+            var xml = reader.ReadToEnd();
+            Assert.Contains("按网格", xml);
+            Assert.Contains("按检查类型", xml);
+            Assert.Contains("安全排查", xml);
+            Assert.Contains("卫生排查", xml);
+        }
+        using var xlsx = new MemoryStream();
+        ExcelReport.Write(xlsx, report);
+        xlsx.Position = 0;
+        using (var archive = new ZipArchive(xlsx, ZipArchiveMode.Read, true))
+        using (var reader = new StreamReader(archive.GetEntry("xl/worksheets/sheet1.xml")!.Open()))
+        {
+            var xml = reader.ReadToEnd();
+            Assert.Contains("【按网格】", xml);
+            Assert.Contains("【按检查类型】", xml);
+            Assert.Contains("安全排查", xml);
+            Assert.Contains("卫生排查", xml);
+            Assert.Contains("—", xml);
+        }
+    }
+
+    [Fact]
     public void PhotoDossiersAndProgressSurviveWordExport()
     {
         using var env = new V2Environment(); using var store = env.Open(); var point = env.CreatePoint(store);
