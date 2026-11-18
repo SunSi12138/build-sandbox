@@ -29,6 +29,23 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 11.0.100
+      - name: Validate native photo picker and multi-photo upload page
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          html = Path('android/Resources/Raw/photo-lab.html').read_text()
+          chrome = Path('android/Platforms/Android/PhotoLabChromeClient.cs').read_text()
+          assert '<input id="gallery" type="file" accept="image/*" multiple>' in html
+          assert 'for(var i=0;i<selected.length;i++)' in html
+          assert 'selected[0]' not in html, "Bulk operation must not only send the first photo"
+          assert 'MediaStore.ActionPickImages' in chrome
+          assert 'MediaStore.ExtraPickImagesMax' in chrome
+          assert 'data?.ClipData' in chrome
+          assert 'DisplayActionSheetAsync' not in chrome
+          script = html.split('<script>',1)[1].split('</script>',1)[0]
+          Path('/tmp/photo-lab-script.js').write_text(script)
+          PY
+          node --check /tmp/photo-lab-script.js
       - name: Install MAUI Android workload
         working-directory: android
         run: |
