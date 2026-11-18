@@ -12,7 +12,7 @@ test('removing first, middle or last vertex closes the polygon correctly', () =>
     const reduced = removePolygonVertex(ring, index)
     assert.equal(reduced?.length, 5)
     assert.deepEqual(reduced?.[0], reduced?.at(-1))
-    assert.equal(reduced?.slice(0,-1).some(point => point === ring[index]), false)
+    assert.equal(reduced?.slice(0,-1).some(point => point[0] === ring[index][0] && point[1] === ring[index][1]), false)
   }
   assert.deepEqual(removePolygonVertex(ring, 0)?.[0], [5,0])
 })
