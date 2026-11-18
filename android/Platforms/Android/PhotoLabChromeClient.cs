@@ -4,6 +4,7 @@ using Android.Provider;
 using Android.Webkit;
 using Microsoft.Maui;
 using Microsoft.Maui.Platform;
+using Microsoft.Maui.Handlers;
 using Microsoft.Maui.Storage;
 using Java.Lang;
 using AWebView = Android.Webkit.WebView;
