@@ -22,9 +22,11 @@ test('rejects removal that would leave fewer than three corners or invalid index
   assert.equal(removePolygonVertex(ring, -1), null)
   assert.equal(removePolygonVertex(ring, 5), null)
   assert.equal(removePolygonVertex(ring, 1.5), null)
-  const fourCorners = removePolygonVertex(ring, 1)!
+  const fourCorners = removePolygonVertex(ring, 1)
+  assert(fourCorners)
   assert.equal(polygonVertexCount(fourCorners), 4)
-  const threeCorners = removePolygonVertex(fourCorners, 1)!
+  const threeCorners = removePolygonVertex(fourCorners, 1)
+  assert(threeCorners)
   assert.equal(polygonVertexCount(threeCorners), 3)
   assert.equal(removePolygonVertex(threeCorners, 1), null)
 })
