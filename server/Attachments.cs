@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+#if !ANDROID
 using Microsoft.AspNetCore.Http.Features;
+#endif
 
 namespace StreetEcoTool;
 
@@ -147,6 +149,7 @@ public sealed partial class Store
             else TryDeleteFile(pending);
         }
     }
+#if !ANDROID
     public void MapAttachmentApi(WebApplication app)
     {
         RequestDelegate list = context => Api.Write(context, GetAttachments(Api.Id(context)), AppJsonContext.Default.AttachmentDtoArray);
@@ -173,5 +176,6 @@ public sealed partial class Store
         RequestDelegate delete = context => { Api.RequireDeleteConfirmation(context); DeleteAttachment(Api.Id(context)); context.Response.StatusCode = 204; return Task.CompletedTask; };
         app.MapGet("/api/points/{id}/attachments", list); app.MapPut("/api/points/{id}/attachments", upload);
         app.MapGet("/api/attachments/{id}", download); app.MapPut("/api/attachments/{id}", update); app.MapDelete("/api/attachments/{id}", delete);
-    }
+    }#endif
+
 }
