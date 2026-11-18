@@ -138,9 +138,17 @@ internal sealed class OfflineHttpServer : IAsyncDisposable
             var sep = line.IndexOf(':');
             if (sep > 0) headers[line[..sep].Trim()] = line[(sep + 1)..].Trim();
         }
+        // Reject malformed framing rather than treating invalid Content-Length as an
+        // empty body. The listener is private to loopback, not an HTTP proxy.
+        if (headers.TryGetValue("Host", out var host) &&
+            !(host.StartsWith("127.0.0.1:", StringComparison.Ordinal) ||
+              host.StartsWith("localhost:", StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("仅允许访问本机服务。");
         if (headers.ContainsKey("Transfer-Encoding")) throw new IOException("暂不支持流式请求体。");
-        var length = headers.TryGetValue("Content-Length", out var raw)
-            && int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out var bodySize) ? bodySize : 0;
+        var length = 0;
+        if (headers.TryGetValue("Content-Length", out var raw) &&
+            !int.TryParse(raw, NumberStyles.None, CultureInfo.InvariantCulture, out length))
+            throw new IOException("请求长度无效。");
         if (length < 0 || length > BodyLimit) throw new IOException("请求体超过 26 MB。");
         var bytes = new byte[length];
         if (length > 0) await stream.ReadExactlyAsync(bytes, token);
