@@ -56,10 +56,10 @@ public sealed class ListeningTests : IDisposable
     }
 
     [Fact]
-    public void OnlyLoopbackCanSaveAndOnlyActualInterfaceAddressesAreAccepted()
+    public void OnlyTheHostCanSaveAndOnlyActualInterfaceAddressesAreAccepted()
     {
         var service = new ListeningService(_root, 5180, ["127.0.0.1"], Adapters);
-        Assert.Equal(403, Assert.Throws<ApiException>(() => service.Prepare(new(["0.0.0.0"]), IPAddress.Parse("192.168.1.23"))).StatusCode);
+        Assert.Equal(403, Assert.Throws<ApiException>(() => service.Prepare(new(["0.0.0.0"]), IPAddress.Parse("192.168.1.24"))).StatusCode);
         Assert.Equal(403, Assert.Throws<ApiException>(() => service.Prepare(new(["0.0.0.0"]), null)).StatusCode);
         Assert.Equal(400, Assert.Throws<ApiException>(() => service.Prepare(new(["192.168.1.99"]), IPAddress.IPv6Loopback)).StatusCode);
         Assert.False(File.Exists(Path.Combine(_root, "appsettings.json")));
@@ -89,7 +89,29 @@ public sealed class ListeningTests : IDisposable
         var active = service.GetInfo(IPAddress.Loopback);
         Assert.False(active.Switching);
         Assert.Equal(["http://172.16.12.8:5190"], active.Addresses);
-        Assert.False(service.GetInfo(IPAddress.Parse("172.16.12.8")).CanConfigure);
+        Assert.True(service.GetInfo(IPAddress.Parse("172.16.12.8")).CanConfigure);
+        Assert.False(service.GetInfo(IPAddress.Parse("172.16.12.9")).CanConfigure);
+    }
+
+    [Fact]
+    public void LanOnlyBindingRemainsConfigurableOnHostButNotFromOtherLanDevices()
+    {
+        var service = new ListeningService(_root, 5180, ["127.0.0.1"], Adapters);
+        service.Prepare(new(["172.16.12.8"]), IPAddress.Loopback);
+        service.Applied(service.TakePending());
+        var current = service.GetInfo(IPAddress.Parse("172.16.12.8"));
+        Assert.Equal(["172.16.12.8"], current.Listen);
+        Assert.True(current.CanConfigure);
+        Assert.True(service.GetInfo(IPAddress.Parse("::ffff:172.16.12.8")).CanConfigure);
+        Assert.False(service.GetInfo(IPAddress.Parse("172.16.12.9")).CanConfigure);
+        Assert.False(service.GetInfo(IPAddress.Parse("192.168.1.24")).CanConfigure);
+        Assert.Equal(403, Assert.Throws<ApiException>(() =>
+            service.Prepare(new(["127.0.0.1"]), IPAddress.Parse("172.16.12.9"))).StatusCode);
+
+        var change = service.Prepare(new(["127.0.0.1"]), IPAddress.Parse("172.16.12.8"));
+        Assert.Equal(["127.0.0.1"], change.Listen);
+        service.Applied(service.TakePending());
+        Assert.True(service.GetInfo(IPAddress.Loopback).CanConfigure);
     }
 
     [Fact]
