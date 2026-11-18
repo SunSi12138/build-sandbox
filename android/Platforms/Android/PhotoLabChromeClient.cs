@@ -6,7 +6,6 @@ using Microsoft.Maui;
 using Microsoft.Maui.Platform;
 using Microsoft.Maui.Handlers;
 using Microsoft.Maui.Storage;
-using Java.Lang;
 using AWebView = Android.Webkit.WebView;
 
 namespace StreetEcoTool.Mobile;
@@ -22,7 +21,7 @@ internal sealed class PhotoLabChromeClient(IWebViewHandler handler, Page page) :
 
     public override bool OnShowFileChooser(AWebView webView, IValueCallback callback, FileChooserParams options)
     {
-        Android.Util.Log.Info("PhotoLab", "OnShowFileChooser accept=" + string.Join(",", options.AcceptTypes ?? []));
+        Android.Util.Log.Info("PhotoLab", "OnShowFileChooser invoked");
         _ = MainThread.InvokeOnMainThreadAsync(async () =>
         {
             try
@@ -41,7 +40,7 @@ internal sealed class PhotoLabChromeClient(IWebViewHandler handler, Page page) :
                         activity, activity.PackageName + ".files", new Java.IO.File(path));
                     var capture = new Intent(MediaStore.ActionImageCapture);
                     capture.PutExtra(MediaStore.ExtraOutput, _cameraUri);
-                    capture.SetClipData(ClipData.NewRawUri("photo", _cameraUri));
+                    capture.ClipData = ClipData.NewRawUri("photo", _cameraUri);
                     capture.AddFlags(ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantWriteUriPermission);
                     if (!ChooseFile(callback, capture, "拍照"))
                         throw new InvalidOperationException("系统相机无法启动");
