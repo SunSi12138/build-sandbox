@@ -34,6 +34,18 @@ jobs:
           echo "ANDROID_HOME=${ANDROID_HOME}"
           test -d "${ANDROID_HOME}/cmdline-tools"
           ls -l "${ANDROID_HOME}/cmdline-tools"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build bundled offline Nuxt frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run typecheck
+          npm run generate
+          test -s .output/public/index.html
       - name: Install MAUI Android workload for .NET 11
         working-directory: android
         run: |
