@@ -21,7 +21,7 @@ const exportOpen=ref(false), exporting=ref(false), exportError=ref(''), exportPr
 const exportAbort=shallowRef<AbortController|null>(null)
 const exportScale=ref(2), exportPartitions=ref(2), exportMarkers=ref(true), exportGrids=ref(false), exportAll=ref(false)
 const exportLayerIds=ref<string[]>([]), exportBaseSize=ref<[number,number]>([0,0])
-const exportResolution=computed(()=>[exportBaseSize.value[0]*exportScale.value,exportBaseSize.value[1]*exportScale.value])
+const exportResolution=computed<[number,number]>(()=>[exportBaseSize.value[0]*exportScale.value,exportBaseSize.value[1]*exportScale.value])
 function openExport(){exportAll.value=false;exportMarkers.value=true;exportGrids.value=showGridBoundaries.value;exportLayerIds.value=mapState.value.layers.filter(x=>x.enabled).map(x=>x.id);exportBaseSize.value=canvas.value?.getExportSize()??[0,0];exportError.value='';exportOpen.value=true}
 function toggleExportLayer(id:string,checked:boolean){exportLayerIds.value=checked?[...exportLayerIds.value,id]:exportLayerIds.value.filter(x=>x!==id)}
 async function exportMap(){
