@@ -108,7 +108,27 @@ public sealed class OfflineHomePage : ContentPage
                 return running;
             });
             _server = server;
-            _status.Text = "本地数据库 · " + storage;
+            // A successful APK build does not prove that SQLite and the bundled
+            // Nuxt assets can actually be served on a particular Android device.
+            // Probe them before opening WebView so startup failures are visible.
+            using (var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(8) })
+            {
+                using var health = await probe.GetAsync(new Uri(server.Address!, "api/health"));
+                health.EnsureSuccessStatusCode();
+                using var bootstrap = await probe.GetAsync(new Uri(server.Address!, "api/bootstrap"));
+                bootstrap.EnsureSuccessStatusCode();
+                var json = await bootstrap.Content.ReadAsStringAsync();
+                if (!json.Contains("\"communities\"", StringComparison.Ordinal))
+                    throw new InvalidDataException("本机数据库接口未返回有效数据。");
+                using var home = await probe.GetAsync(server.Address);
+                home.EnsureSuccessStatusCode();
+                if (home.Content.Headers.ContentType?.MediaType?.Equals("text/html", StringComparison.OrdinalIgnoreCase) != true)
+                    throw new InvalidDataException("APK 内前端主页不存在。");
+            }
+#if ANDROID
+            Android.Util.Log.Info("StreetEcoOffline", "READY " + server.Address);
+#endif
+            _status.Text = "本机数据库已就绪 · 完全离线";
             _web.Source = new UrlWebViewSource { Url = server.Address!.ToString() };
         }
         catch (Exception e)
