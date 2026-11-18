@@ -174,7 +174,7 @@ async function exportImage(options: { scale: number; partitions: number; layerId
         exportMap = new OLMap({
           target: host, pixelRatio: 1, controls: [], interactions: [],
           view: new View({ projection: view.getProjection(), center, resolution: resolution / scale, rotation }),
-          layers: [...selectedLayers.map(tileLayer), new VectorLayer({ source, style: featureStyle, zIndex: 1100, declutter: false })],
+          layers: [...selectedLayers.map(tileLayer), new VectorLayer({ source, style: featureStyle, zIndex: 100, declutter: false })],
         })
         const current = exportMap
         await new Promise<void>((resolve, reject) => {
@@ -230,7 +230,7 @@ watch(element, target => {
   map.getView().on('change:rotation', () => { rotation.value = map?.getView().getRotation() ?? 0 })
   map.on('singleclick', event => {
     if (mode.value !== 'view') return
-    const f = map!.forEachFeatureAtPixel(event.pixel, f => f, { hitTolerance: 8 })
+    const f = map!.forEachFeatureAtPixel(event.pixel, f => f.get('record') ? f : undefined, { hitTolerance: 8 })
     const record = f?.get('record') as MapFeature | undefined
     if (record) emit('choose', record)
     emit('coordinate', toLonLat(event.coordinate))
