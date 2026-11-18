@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import Map from 'ol/Map'
+import Overlay from 'ol/Overlay'
 import Feature from 'ol/Feature'
 import View from 'ol/View'
 import Point from 'ol/geom/Point'
@@ -24,19 +25,23 @@ import { Style, Stroke, Fill, Circle as CircleStyle, Text } from 'ol/style'
 import type { Geometry } from 'ol/geom'
 import type { GeoShape } from '~/types/api'
 import { mapColors, type MapRecord } from '~/utils/map'
+import { polygonVertexCount, removePolygonVertex } from '~/utils/polygonVertices'
 import { gcj02ToWgs84, wgs84ToGcj02 } from '~/utils/gcj02'
 import { DEFAULT_TILE_PRELOAD, MAX_TILE_ZOOM, installDeepRasterTiles, makeDeepTilePrefetch } from '~/utils/deepTiles'
 import 'ol/ol.css'
 
-const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[] }>(), { records: () => [], shape: null, mode: 'view', selected: () => [] })
+const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape | null; mode?: 'view' | 'point' | 'polygon' | 'edit'; selected?: string[]; showZoomControls?: boolean }>(), { records: () => [], shape: null, mode: 'view', selected: () => [], showZoomControls: true })
 const emit = defineEmits<{ select: [ids: string[]]; change: [shape: GeoShape]; drawing: [active: boolean] }>()
 const host = ref<HTMLElement>()
 const locateError = ref('')
 const layerRequest = new AbortController()
 const sketchVertices = ref(0)
 const rotation = ref(0)
+const selectedVertex = ref<number | null>(null)
+const vertexCount = ref(0)
+const vertexPopup = ref<HTMLElement>()
 const isRotated = computed(() => Math.abs(Math.sin(rotation.value / 2)) > 0.01)
-let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined
+let map: Map | undefined, draw: Draw | undefined, modify: Modify | undefined, observer: ResizeObserver | undefined, vertexOverlay: Overlay | undefined
 const depthPrefetchers: Array<{ schedule: () => void; dispose: () => void }> = []
 function currentMapExtent() {
   const size = map?.getSize()
@@ -46,6 +51,7 @@ function scheduleDepthPrefetch() {
   depthPrefetchers.forEach(item => item.schedule())
 }
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
+const verticesSource = new VectorSource<Feature<Point>>()
 let reporting = false
 function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(gcj02ToWgs84(shape.coordinates[0]!))) : new Polygon([shape.coordinates.map(c => fromLonLat(gcj02ToWgs84(c)))]) }
 function toShape(feature: Feature<Geometry>): GeoShape {
@@ -62,6 +68,81 @@ function style(feature: Feature<Geometry>, editing = false) {
     text: editing ? undefined : new Text({ text: feature.get('title'), font: '600 13px "Microsoft YaHei",sans-serif', offsetY: -22, overflow: true, fill: new Fill({ color: mapColors.label }), stroke: new Stroke({ color: mapColors.halo, width: 4 }) }),
   })
 }
+function editingPolygon() {
+  const feature = editingSource.getFeatures().find(item => item.getGeometry() instanceof Polygon)
+  const polygon = feature?.getGeometry()
+  return polygon instanceof Polygon ? { feature: feature!, polygon } : null
+}
+function closestVertex(pixel: readonly number[]): number | null {
+  if (props.mode !== 'edit' || !map) return null
+  const edit = editingPolygon()
+  if (!edit) return null
+  const ring = edit.polygon.getCoordinates()[0] ?? []
+  let nearest: number | null = null
+  let squaredDistance = 18 * 18
+  for (let i = 0; i < polygonVertexCount(ring); i++) {
+    const screen = map.getPixelFromCoordinate(ring[i]!)
+    const distance = (screen[0]! - pixel[0]!) ** 2 + (screen[1]! - pixel[1]!) ** 2
+    if (distance <= squaredDistance) { nearest = i; squaredDistance = distance }
+  }
+  return nearest
+}
+function refreshVertices() {
+  verticesSource.clear()
+  vertexCount.value = 0
+  const edit = props.mode === 'edit' ? editingPolygon() : null
+  const ring = edit?.polygon.getCoordinates()[0]
+  if (!ring) { selectedVertex.value = null; vertexOverlay?.setPosition(undefined); return }
+  vertexCount.value = polygonVertexCount(ring)
+  for (let i = 0; i < vertexCount.value; i++)
+    verticesSource.addFeature(new Feature({ geometry: new Point([...ring[i]!]), vertexIndex: i }))
+  if (selectedVertex.value !== null && selectedVertex.value < vertexCount.value)
+    vertexOverlay?.setPosition(ring[selectedVertex.value]!)
+  else { selectedVertex.value = null; vertexOverlay?.setPosition(undefined) }
+}
+function selectVertex(index: number | null) {
+  const ring = editingPolygon()?.polygon.getCoordinates()[0]
+  selectedVertex.value = ring && index !== null && index >= 0 && index < polygonVertexCount(ring) ? index : null
+  vertexOverlay?.setPosition(selectedVertex.value === null ? undefined : ring![selectedVertex.value]!)
+  vertexLayer.changed()
+}
+function deleteSelectedVertex() {
+  const edit = editingPolygon()
+  if (props.mode !== 'edit' || selectedVertex.value === null || !edit) return
+  const next = removePolygonVertex(edit.polygon.getCoordinates()[0] ?? [], selectedVertex.value)
+  if (!next) return
+  // Never delete a vertex by directly mutating props or the saved DB shape.
+  // Only the updated, closed polygon is emitted through the normal editor flow.
+  selectVertex(null)
+  edit.polygon.setCoordinates([next])
+  refreshVertices()
+  report(edit.feature)
+}
+function handleVertexKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Delete' || selectedVertex.value === null || props.mode !== 'edit') return
+  const target = event.target
+  if (target instanceof HTMLElement &&
+    (target.isContentEditable || target.closest('input,textarea,select,[contenteditable],[role="combobox"]'))) return
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  event.preventDefault()
+  deleteSelectedVertex()
+}
+function vertexStyle(feature: Feature<Geometry>) {
+  const active = feature.get('vertexIndex') === selectedVertex.value
+  const point = new Style({
+    image: new CircleStyle({
+      radius: active ? 8 : 7,
+      fill: new Fill({ color: active ? '#dc2626' : '#fff' }),
+      stroke: new Stroke({ color: active ? '#dc2626' : '#099a91', width: 3 }),
+    }),
+    zIndex: active ? 10 : 1,
+  })
+  return active
+    ? [new Style({ image: new CircleStyle({ radius: 16, stroke: new Stroke({ color: '#dc2626', width: 3, lineDash: [4, 4] }) }), zIndex: 9 }), point]
+    : [point]
+}
+const vertexLayer = new VectorLayer({ source: verticesSource, style: feature => vertexStyle(feature as Feature<Geometry>), declutter: false })
+
 function renderRecords() {
   recordsSource.clear()
   for (const record of props.records) {
@@ -74,7 +155,9 @@ function renderRecords() {
 function renderShape() {
   if (reporting) return
   editingSource.clear()
+  selectedVertex.value = null
   if (props.shape) editingSource.addFeature(new Feature(geometry(props.shape)))
+  refreshVertices()
 }
 function report(feature: Feature<Geometry>) {
   reporting = true; emit('change', toShape(feature)); void nextTick(() => { reporting = false })
@@ -84,6 +167,8 @@ function interactions() {
   if (draw) map.removeInteraction(draw)
   if (modify) map.removeInteraction(modify)
   draw = undefined; modify = undefined; sketchVertices.value = 0; emit('drawing', false)
+  selectedVertex.value = null
+  refreshVertices()
   if (props.mode === 'polygon') {
     draw = new Draw({ source: editingSource, type: 'Polygon', stopClick: true })
     draw.on('drawstart', event => {
@@ -94,7 +179,19 @@ function interactions() {
     draw.on('drawend', event => { emit('drawing', false); report(event.feature) })
     map.addInteraction(draw)
   } else if (props.mode === 'edit') {
-    modify = new Modify({ source: editingSource, condition: event => primaryAction(event) && !(event.originalEvent instanceof PointerEvent && event.originalEvent.ctrlKey) }); modify.on('modifyend', event => { const feature = event.features.item(0); if (feature) report(feature) }); map.addInteraction(modify)
+    modify = new Modify({
+      source: editingSource,
+      condition: event => primaryAction(event) && !(event.originalEvent instanceof PointerEvent && event.originalEvent.ctrlKey),
+      // Remove vertices only through the confirmed popup or Delete key: the
+      // native Alt+click shortcut can otherwise create invalid triangles.
+      deleteCondition: () => false,
+    })
+    modify.on('modifyend', event => {
+      refreshVertices()
+      const feature = event.features.item(0)
+      if (feature) report(feature)
+    })
+    map.addInteraction(modify)
   }
 }
 function fitAll() {
@@ -143,9 +240,9 @@ onMounted(() => {
   view.on('change:rotation', () => { rotation.value = view.getRotation() })
   map = new Map({
     target: host.value,
-    layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) })],
+    layers: [recordsLayer, new VectorLayer({ source: editingSource, style: feature => style(feature as Feature<Geometry>, true) }), vertexLayer],
     view,
-    controls: defaultControls({ rotate: false, attribution: false }).extend([new ScaleLine()]),
+    controls: defaultControls({ rotate: false, attribution: false, zoom: props.showZoomControls }).extend([new ScaleLine()]),
     interactions: defaultInteractions().extend([new DragRotate({
       condition: event => event.originalEvent instanceof PointerEvent &&
         event.originalEvent.pointerType === 'mouse' && event.originalEvent.button === 0 &&
@@ -153,6 +250,11 @@ onMounted(() => {
         !event.originalEvent.shiftKey && !event.originalEvent.metaKey,
     })]),
   })
+  if (vertexPopup.value) {
+    vertexOverlay = new Overlay({ element: vertexPopup.value, positioning: 'bottom-center', offset: [0, -22], stopEvent: true })
+    map.addOverlay(vertexOverlay)
+  }
+  document.addEventListener('keydown', handleVertexKeydown)
   map.on('moveend', () => {
     const coordinate = map?.getView().getCenter()
     if (!coordinate) return
@@ -274,22 +376,47 @@ onMounted(() => {
   map.on('singleclick', event => {
     if (props.mode === 'point') {
       const feature = new Feature(new Point(event.coordinate)); editingSource.clear(); editingSource.addFeature(feature); report(feature)
+    } else if (props.mode === 'edit') {
+      selectVertex(closestVertex(event.pixel))
     } else if (props.mode === 'view') {
       const ids: string[] = []
       map!.forEachFeatureAtPixel(event.pixel, feature => { const id = String(feature.getId()); if (!ids.includes(id)) ids.push(id) }, { layerFilter: layer => layer === recordsLayer, hitTolerance: 10 })
       emit('select', ids)
     }
   })
-  map.on('pointermove', event => { if (host.value) host.value.style.cursor = props.mode === 'view' ? (map!.hasFeatureAtPixel(event.pixel, { layerFilter: layer => layer === recordsLayer }) ? 'pointer' : '') : 'crosshair' })
+  map.on('pointermove', event => {
+    if (!host.value) return
+    host.value.style.cursor = props.mode === 'view'
+      ? (map!.hasFeatureAtPixel(event.pixel, { layerFilter: layer => layer === recordsLayer }) ? 'pointer' : '')
+      : props.mode === 'edit' && closestVertex(event.pixel) !== null ? 'pointer' : 'crosshair'
+  })
   renderRecords(); renderShape(); interactions()
   if (props.shape) fitAll()
   observer = new ResizeObserver(() => map?.updateSize()); if (host.value) observer.observe(host.value)
 })
-onBeforeUnmount(() => { layerRequest.abort(); depthPrefetchers.forEach(item => item.dispose()); observer?.disconnect(); map?.setTarget(undefined); map?.dispose() })
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleVertexKeydown)
+  layerRequest.abort(); depthPrefetchers.forEach(item => item.dispose())
+  observer?.disconnect(); map?.setTarget(undefined); map?.dispose()
+})
 </script>
 <template>
-  <div class="simple-map"><div ref="host" class="simple-map-canvas" aria-label="地图，按住 Ctrl 并拖动鼠标可以旋转" title="按住 Ctrl 并拖动鼠标可以旋转地图" /><div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button v-if="isRotated" type="button" class="map-north" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
+  <div class="simple-map" :class="{ 'no-zoom-controls': !showZoomControls }"><div ref="host" class="simple-map-canvas" aria-label="地图，按住 Ctrl 并拖动鼠标可以旋转" title="按住 Ctrl 并拖动鼠标可以旋转地图" />
+    <div ref="vertexPopup" v-show="mode === 'edit' && selectedVertex !== null" class="map-vertex-popup" data-testid="polygon-vertex-popup">
+      <span class="map-vertex-selected">已选中顶点 {{ selectedVertex === null ? '' : selectedVertex + 1 }} / {{ vertexCount }}</span>
+      <button type="button" class="map-vertex-delete" aria-label="删除顶点" :disabled="vertexCount <= 3" @click.stop="deleteSelectedVertex"><span aria-hidden="true">🗑</span> 删除顶点</button>
+      <span class="map-vertex-tip">{{ vertexCount <= 3 ? '至少保留 3 个顶点' : '也可按 Delete 删除' }}</span>
+    </div>
+    <div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button v-if="isRotated" type="button" class="map-north" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
+.map-vertex-popup{display:flex;flex-direction:column;gap:7px;align-items:center;padding:9px 12px;border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 3px 18px var(--border-strong);min-width:158px;pointer-events:auto;white-space:nowrap}
+.map-vertex-selected{font-weight:600;font-size:12px}
+.map-vertex-delete{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:7px;padding:7px 12px;background:var(--surface-2);font-weight:500;cursor:pointer}
+.map-vertex-delete:disabled{opacity:.45;cursor:not-allowed}
+.map-vertex-tip{font-size:11px;color:var(--text-3)}
+.simple-map.no-zoom-controls .map-fit{bottom:48px}
+.simple-map.no-zoom-controls .map-locate{bottom:94px}
+.simple-map.no-zoom-controls .map-north{bottom:140px}
 .simple-map{position:relative;width:100%;height:100%;min-height:220px;background:var(--surface-2);overflow:hidden}.simple-map-canvas{position:absolute;inset:0}.simple-map .ol-zoom{top:auto;left:auto;right:12px;bottom:48px;background:var(--surface);box-shadow:0 2px 10px var(--border);border-radius:8px;padding:3px}.simple-map .ol-control button{background:var(--surface);color:var(--text);font-size:22px;width:32px;height:32px}.simple-map .ol-control button:hover{background:var(--surface-2)}.simple-map .ol-scale-line{bottom:12px;left:12px}.map-north{position:absolute;right:12px;bottom:220px;width:38px;height:38px;border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;font-weight:700;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-locate{position:absolute;right:12px;bottom:174px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:24px;box-shadow:0 2px 10px var(--border);cursor:pointer}.map-location-hint{position:absolute;left:12px;bottom:12px;max-width:calc(100% - 78px);background:var(--surface);padding:6px 9px;border-radius:6px;font-size:12px;z-index:2}.map-fit{position:absolute;right:12px;bottom:128px;width:38px;height:38px;border-radius:8px;background:white;color:var(--text);font-size:26px;box-shadow:0 2px 10px var(--border);cursor:pointer}
 </style>
