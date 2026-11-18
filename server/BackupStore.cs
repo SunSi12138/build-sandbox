@@ -557,6 +557,7 @@ public sealed partial class Store
             await context.Response.WriteAsJsonAsync(result, BackupJsonContext.Default.RestoreResultDto, contentType: null, cancellationToken: context.RequestAborted);
         };
         app.MapPost("/api/backups/restore", restore);
-    }#endif
+    }
+#endif
 
 }
