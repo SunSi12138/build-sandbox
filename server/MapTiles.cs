@@ -317,6 +317,7 @@ public sealed partial class Store
         { return new("error", "无法读取 PMTiles 文件，请检查路径与权限。", false, false); }
     }
 
+#if !ANDROID
     private async Task ServePmtilesArchiveAsync(HttpContext context)
     {
         TileProvider provider;
@@ -336,6 +337,7 @@ public sealed partial class Store
         await Results.File(local, "application/octet-stream", enableRangeProcessing: true).ExecuteAsync(context);
     }
 
+#endif
     private static string? CachedMapTile(string path, TileProvider provider) => TileExtensions(provider).Select(extension => path + extension).Where(File.Exists).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
     private string? GetMapTile(string layer, int z, int x, int y)
     {
@@ -348,6 +350,7 @@ public sealed partial class Store
             z.ToString(CultureInfo.InvariantCulture), x.ToString(CultureInfo.InvariantCulture), row.ToString(CultureInfo.InvariantCulture));
         return CachedMapTile(path, provider);
     }
+#if !ANDROID
     public void MapApi(WebApplication app)
     {
         RequestDelegate settings = context => Api.Write(context, GetMapSettings(), MapConfigJsonContext.Default.MapSettingsDto);
@@ -387,5 +390,6 @@ public sealed partial class Store
             await context.Response.SendFileAsync(file, context.RequestAborted);
         };
         app.MapGet("/api/map/tiles/{layer}/{z:int}/{x:int}/{y:int}", tile);
-    }
+    }#endif
+
 }
