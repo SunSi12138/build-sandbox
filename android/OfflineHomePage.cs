@@ -49,13 +49,14 @@ public sealed class OfflineHomePage : ContentPage
         var refresh = ToolButton("刷新", () => _web.Reload());
         var importTiles = ToolButton("导入 PMTiles", () => _ = ImportPmtilesAsync());
         var importStyle = ToolButton("导入样式 ZIP", () => _ = ImportStyleAsync());
+        var restoreBackup = ToolButton("导入备份", () => _ = ImportBackupAsync());
         var shareBackup = ToolButton("导出备份", () => _ = ShareBackupAsync());
 
         var tools = new HorizontalStackLayout
         {
             Padding = new Thickness(5, 1),
             Spacing = 3,
-            Children = { importTiles, importStyle, shareBackup, refresh }
+            Children = { importTiles, importStyle, restoreBackup, shareBackup, refresh }
         };
         var toolbar = new Grid
         {
@@ -65,7 +66,7 @@ public sealed class OfflineHomePage : ContentPage
             },
             BackgroundColor = Color.FromArgb("#EDF6F0")
         };
-        toolbar.Add(tools, 0, 0);
+        toolbar.Add(new ScrollView { Orientation = ScrollOrientation.Horizontal, Content = tools, HorizontalScrollBarVisibility = ScrollBarVisibility.Never }, 0, 0);
         toolbar.Add(_status, 0, 1);
         _status.Margin = new Thickness(10, 0, 10, 6);
 
@@ -231,6 +232,41 @@ public sealed class OfflineHomePage : ContentPage
             }
         }
         catch (Exception e) { await DisplayAlertAsync("导入失败", e.Message, "确定"); }
+    }
+
+    private async Task ImportBackupAsync()
+    {
+        if (_server is null) return;
+        try
+        {
+            var selected = await FilePicker.Default.PickAsync(new PickOptions
+            {
+                PickerTitle = "选择从电脑 hbtool 导出的完整备份 ZIP"
+            });
+            if (selected is null) return;
+            if (!selected.FileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("请选择完整备份 ZIP。");
+            await using var source = await selected.OpenReadAsync();
+            _status.Text = "正在校验备份 ZIP……";
+            var preview = await _server.Data.PrepareRestoreAsync(source, CancellationToken.None);
+            var confirmed = await DisplayAlertAsync("确认恢复",
+                $"备份时间：{preview.CreatedAt}\n点位：{preview.PointCount}，排查：{preview.InspectionCount}，问题：{preview.IssueCount}\n\n此操作将替换手机当前数据库、照片和附件。恢复前请先导出手机备份。是否继续？",
+                "确认覆盖手机数据", "取消");
+            if (!confirmed)
+            {
+                _status.Text = "已取消备份恢复";
+                return;
+            }
+            _server.Data.Restore(new RestoreRequest(preview.Token, true));
+            _status.Text = "电脑备份已恢复到手机本地数据库";
+            _web.Reload();
+            await DisplayAlertAsync("恢复成功", "SQLite、照片及附件已恢复。手机现在可以离线使用这些数据。地图 PMTiles 和样式文件请另外导入。", "确定");
+        }
+        catch (Exception e)
+        {
+            _status.Text = "备份导入失败";
+            await DisplayAlertAsync("恢复失败", e.Message, "确定");
+        }
     }
 
     private async Task ShareBackupAsync()
