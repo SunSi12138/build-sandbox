@@ -714,7 +714,7 @@ class ApiSmoke:
 
     def test_listening(self) -> None:
         info = self.json("GET", "/api/system")
-        require(info["listen"] == ["127.0.0.1"] and info["canConfigure"], "The default listener must allow configuration only through loopback")
+        require(info["listen"] == ["127.0.0.1"] and info["canConfigure"], "The default listener must permit local configuration")
         require(info["addresses"] == [f"http://localhost:{info['port']}"], "Loopback-only configuration advertised an unreachable LAN address")
         before = self.fingerprint()
         config_path = self.install / "appsettings.json"
@@ -785,16 +785,25 @@ class ApiSmoke:
         require(interfaces, "The native integration host has no eligible IPv4 adapter to verify remote access")
         address = interfaces[0]["address"]
         remote = remote_json(address, "GET", "/api/system")
-        require(not remote["canConfigure"], "A non-loopback connection can edit listening configuration")
-        denied = remote_json(address, "PUT", "/api/system/listen", {"listen": ["127.0.0.1"]}, expected=403)
-        require(denied["message"] == "请在运行程序的电脑上修改监听设置", "Remote listening rejection lost its required explanation")
-        require(json.loads(config_path.read_text(encoding="utf-8"))["listen"] == ["0.0.0.0"], "A rejected remote request changed saved listening addresses")
-
-        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1", address]})
+        require(remote["canConfigure"], "The host's own LAN address must remain configurable")
+        # X-Forwarded-For is deliberately set to loopback by remote_json.
+        # The server must use the real TCP peer, not trust that header.
+        changed = remote_json(address, "PUT", "/api/system/listen", {"listen": ["127.0.0.1", address]})
+        require(changed["ok"], "The host could not configure its own LAN adapter")
         multiple = wait_for_listen(["127.0.0.1", address])
         require(f"http://{address}:{info['port']}" in multiple["addresses"], "Explicit adapter listening did not advertise its actual URL")
-        require(not remote_json(address, "GET", "/api/system")["canConfigure"], "Explicit adapter binding bypassed the loopback check")
-        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]})
+        require(remote_json(address, "GET", "/api/system")["canConfigure"], "Explicit adapter binding incorrectly hid the local host's settings")
+
+        # Regression: when localhost is removed from Kestrel listeners, the
+        # host must be able to restore it through the configured LAN IP.
+        self.json("PUT", "/api/system/listen", {"listen": [address]})
+        self.origin = f"http://{address}:{info['port']}"
+        lan_only = wait_for_listen([address])
+        require(lan_only["canConfigure"], "LAN-only mode hid the listening editor on the host itself")
+        require_closed_listener("127.0.0.1", info["port"])
+        changed_back = self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]})
+        require(changed_back["ok"], "LAN-only mode could not restore loopback from the host's own LAN address")
+        self.origin = f"http://127.0.0.1:{info['port']}"
         wait_for_listen(["127.0.0.1"])
         require_closed_listener(address, info["port"])
         require(self.process.pid == pid and self.fingerprint() == before, "Listener changes modified business data or restarted the process")
@@ -805,13 +814,15 @@ class ApiSmoke:
         saved_config = config_path.read_bytes()
         self.start(listen=[address], host=address)
         adapter_only = self.json("GET", "/api/system")
-        require(adapter_only["listen"] == [address] and not adapter_only["canConfigure"], "--listen did not override the saved default")
+        require(adapter_only["listen"] == [address] and adapter_only["canConfigure"], "--listen did not keep host-local LAN configuration available")
         require(all("localhost" not in url and "127.0.0.1" not in url for url in adapter_only["addresses"]), "Adapter-only listener still advertised localhost")
         require(config_path.read_bytes() == saved_config, "The --listen override unexpectedly rewrote appsettings.json")
         require_closed_listener("127.0.0.1", adapter_only["port"])
         if ipv6_available:
             require_closed_listener("::1", adapter_only["port"])
-        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]}, expected=403)
+        self.json("PUT", "/api/system/listen", {"listen": ["127.0.0.1"]})
+        self.origin = f"http://127.0.0.1:{adapter_only['port']}"
+        wait_for_listen(["127.0.0.1"])
         self.stop()
 
         config_path.write_text(json.dumps({"port": 5180, "listen": ["203.0.113.9"]}), encoding="utf-8")
@@ -1060,7 +1071,7 @@ class ApiSmoke:
             ("temporary points, thumbnails, batch rollback and unified remediation", self.test_version2_workflows),
             ("issue categories, activity CRUD, photos and activity exports", self.test_activities_and_types),
             ("matters, shared tags, point attachments and linked activities", self.test_matters_tags_attachments),
-            ("loopback-only listening, IPv6, live rebinding, remote 403, command override and missing-adapter fallback", self.test_listening),
+            ("host-local LAN listening, IPv6, live rebinding, command override and missing-adapter fallback", self.test_listening),
             ("consistent backup, restore confirmation, invalid ZIP and failed-preservation safety", self.test_backups),
             ("orphan cleanup, future-record reminders, graceful restart and idempotent demo seed", self.test_cleanup_and_restart),
             ("restart recovery before and after restore commit, with old evidence retained", self.test_interrupted_restore),
