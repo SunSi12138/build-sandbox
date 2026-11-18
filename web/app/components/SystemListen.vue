@@ -44,14 +44,11 @@ async function apply() {
   try {
     const response = await $fetch<ListenUpdateResponse>('/api/system/listen', { method: 'PUT', body: { listen: selected.value }, retry: 0 })
     newAddresses.value = response.addresses
-    if (!currentOriginSurvives(response.listen)) {
-      // The current URL will be closed after the response. Give Kestrel time
-      // to finish rebinding, then open the advertised reachable host address.
-      await new Promise(resolve => window.setTimeout(resolve, 1200))
-      if (!disposed) switchToActiveAddress(response.localUrl)
-      return
-    }
-    const deadline = Date.now() + 8000
+    // A custom hostname can resolve to localhost. Probe the current origin
+    // after rebinding before deciding it is unusable; the name alone cannot
+    // reliably tell whether Kestrel still accepts requests at that address.
+    const expectedToSurvive = currentOriginSurvives(response.listen)
+    const deadline = Date.now() + (expectedToSurvive ? 8000 : 2600)
     while (!disposed && Date.now() < deadline) {
       await new Promise(resolve => window.setTimeout(resolve, 400))
       try {
@@ -62,6 +59,10 @@ async function apply() {
           info.value = current; selected.value = [...current.listen]; newAddresses.value = []; toast.add({ title: '已应用', color: 'success', duration: 2000 }); return
         }
       } catch { /* Rebinding briefly interrupts the current HTTP listener. */ }
+    }
+    if (!disposed && !expectedToSurvive) {
+      switchToActiveAddress(response.localUrl)
+      return
     }
     if (!disposed) error.value = '当前地址不可用，请打开下方地址'
   } catch (value) { error.value = errorMessage(value) }
