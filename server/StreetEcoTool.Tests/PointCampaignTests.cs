@@ -61,6 +61,33 @@ public sealed class PointCampaignTests
     }
 
     [Fact]
+    public void TwoEditorsCannotOverwriteChangesToSameCampaign()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var point = environment.CreatePoint(store);
+        var first = store.SaveCampaign(null, Campaign(store, point.Id));
+        Assert.Equal(0, first.Campaign.Revision);
+        var editorA = Campaign(store, point.Id) with {
+            Notes = "窗口甲新增备注", Revision = first.Campaign.Revision
+        };
+        var editorB = Campaign(store, point.Id) with {
+            Outcome = "窗口乙新增成效", Revision = first.Campaign.Revision
+        };
+        var savedA = store.SaveCampaign(first.Campaign.Id, editorA);
+        Assert.Equal(1, savedA.Campaign.Revision);
+        var conflict = Assert.Throws<ApiException>(() => store.SaveCampaign(first.Campaign.Id, editorB));
+        Assert.Equal(409, conflict.StatusCode);
+        Assert.Equal("窗口甲新增备注", store.GetCampaign(first.Campaign.Id).Notes);
+        Assert.Empty(store.GetCampaign(first.Campaign.Id).Outcome);
+        var savedB = store.SaveCampaign(first.Campaign.Id, editorB with { Revision = savedA.Campaign.Revision });
+        Assert.Equal(2, savedB.Campaign.Revision);
+        Assert.Equal("窗口乙新增成效", savedB.Campaign.Outcome);
+        Assert.Equal(2, store.CommunityHistory(first.Campaign.Id).Length);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Fact]
     public void TemporaryCampaignAndPhotosAreOneTransactionAndCanBePromoted()
     {
         using var environment = new V2Environment();

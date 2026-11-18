@@ -58,7 +58,8 @@ public sealed partial class Store
     private const string CampaignSelect = """
         SELECT c.id,c.name,c.type_id,c.type_name,c.community_id,c.community_name,c.location,c.campaign_date,c.end_date,
         c.organizer,c.participants,c.participant_count,c.vehicle_count,c.garbage_tons,c.area_sqm,c.content,c.outcome,c.notes,
-        (SELECT COUNT(*) FROM photos p WHERE p.campaign_id=c.id),c.point_id,c.point_name,pt.temporary,c.extra_values,c.field_snapshot
+        (SELECT COUNT(*) FROM photos p WHERE p.campaign_id=c.id),c.point_id,c.point_name,pt.temporary,c.extra_values,c.field_snapshot,
+        (SELECT COUNT(*) FROM community_history h WHERE h.kind='campaign' AND h.record_id=c.id)
         FROM campaigns c JOIN points pt ON pt.id=c.point_id
         """;
     private const string CampaignWhere = """
@@ -71,7 +72,7 @@ public sealed partial class Store
     private static CampaignDto ReadCampaign(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), NullableString(row, 8), row.GetString(9), row.GetString(10),
         row.IsDBNull(11) ? null : row.GetInt32(11), row.IsDBNull(12) ? null : row.GetInt32(12),
-        row.IsDBNull(13) ? null : row.GetDecimal(13), row.IsDBNull(14) ? null : row.GetDecimal(14), row.GetString(15), row.GetString(16), row.GetString(17), row.GetInt32(18), row.GetString(19), row.GetString(20), row.GetInt32(21) != 0, JsonDocument.Parse(row.GetString(22)).RootElement.Clone(), JsonSerializer.Deserialize(row.GetString(23), CommunityJsonContext.Default.PurposeFieldArray));
+        row.IsDBNull(13) ? null : row.GetDecimal(13), row.IsDBNull(14) ? null : row.GetDecimal(14), row.GetString(15), row.GetString(16), row.GetString(17), row.GetInt32(18), row.GetString(19), row.GetString(20), row.GetInt32(21) != 0, JsonDocument.Parse(row.GetString(22)).RootElement.Clone(), JsonSerializer.Deserialize(row.GetString(23), CommunityJsonContext.Default.PurposeFieldArray), row.GetInt32(24));
 
     private CampaignDto[] ReadCampaigns(string suffix, (string Name, object? Value)[] parameters)
     {
@@ -137,6 +138,7 @@ public sealed partial class Store
         {
             PrepareWrite();
             var existing = id is null ? null : GetCampaign(id);
+            if (existing is not null) CheckRevision(request.Revision, existing.Revision);
             if (existing is not null && (request.NewPoint is not null || request.PointId != existing.PointId))
                 throw new ApiException(400, "不能更换已保存整治的点位。");
             var type = RequireCampaignType(Text(request.TypeId, "整治类型", 100, true));
@@ -175,6 +177,11 @@ public sealed partial class Store
                 AttachPhotos(request.BeforePhotoIds, "before", null, null, transaction, campaignId: actualId);
                 AttachPhotos(request.ProcessPhotoIds, "process", null, null, transaction, campaignId: actualId);
                 AttachPhotos(request.AfterPhotoIds, "after", null, null, transaction, campaignId: actualId);
+                if (existing is not null)
+                    AddCommunityHistory("campaign", actualId,
+                        JsonSerializer.Serialize(existing, AppJsonContext.Default.CampaignDto),
+                        JsonSerializer.Serialize(request, AppJsonContext.Default.CampaignWriteRequest),
+                        "修改整治", transaction);
                 transaction.Commit();
             }
             return GetCampaignDetail(actualId);

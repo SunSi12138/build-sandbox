@@ -212,6 +212,7 @@ async function save() {
   saving.value = true
   error.value = ''
   const body: CampaignWriteRequest = {
+    revision: props.initial?.campaign.revision ?? 0,
     name: state.name,
     extraValues: state.extraValues,
     typeId: state.typeId,

@@ -117,13 +117,14 @@ export interface CampaignWriteRequest {
   endDate?: string | null; organizer?: string | null; participants?: string | null; participantCount?: number | null; vehicleCount?: number | null
   garbageTons?: number | null; areaSqm?: number | null; outcome?: string | null; notes?: string | null
   beforePhotoIds?: string[]; processPhotoIds?: string[]; afterPhotoIds?: string[]
+  revision?: number
 }
 export interface CampaignDto {
   extraValues?: Record<string,string|number>
   fieldSnapshot?: import('./community').PurposeField[]
   id: string; name: string; pointId: string; pointName: string; pointTemporary: boolean; typeId: string; typeName: string; communityId: string; communityName: string; location: string; date: string
   endDate: string | null; organizer: string; participants: string; participantCount: number | null; vehicleCount: number | null
-  garbageTons: number | null; areaSqm: number | null; content: string; outcome: string; notes: string; photoCount: number
+  garbageTons: number | null; areaSqm: number | null; content: string; outcome: string; notes: string; photoCount: number; revision: number
 }
 export interface CampaignDetailDto { campaign: CampaignDto; photos: PhotoDto[] }
 export interface CampaignQuery { pointId?: string; q?: string; communityId?: string; typeId?: string; from?: string; to?: string; page?: number; pageSize?: number }
