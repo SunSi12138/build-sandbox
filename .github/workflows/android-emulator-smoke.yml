@@ -45,11 +45,12 @@ jobs:
           dotnet build StreetEcoTool.Mobile.csproj -t:InstallAndroidDependencies -f net11.0-android \
             -p:AndroidSdkDirectory="$ANDROID_HOME" -p:AcceptAndroidSDKLicenses=true
       - name: Sign x86_64 emulator variant
+        working-directory: android
         run: |
           keytool -genkeypair -v -keystore "$RUNNER_TEMP/emulator.jks" -alias test -keyalg RSA \
             -keysize 2048 -validity 365 -storepass android -keypass android \
             -dname "CN=Android Offline Emulator Test, O=Test, C=CN"
-          dotnet publish android/StreetEcoTool.Mobile.csproj \
+          dotnet publish StreetEcoTool.Mobile.csproj \
             -c Release -f net11.0-android -r android-x64 \
             -p:AndroidPackageFormat=apk \
             -p:AndroidKeyStore=true \
@@ -58,7 +59,7 @@ jobs:
             -p:AndroidSigningKeyAlias=test \
             -p:AndroidSigningKeyPass=android \
             -p:PublishAot=false -p:UseMonoRuntime=false
-          find android/bin/Release -name '*.apk' -type f -print
+          find bin/Release -name '*.apk' -type f -print
       - name: Enable KVM accelerator
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
