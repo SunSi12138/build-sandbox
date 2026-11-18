@@ -124,6 +124,25 @@ function selectVertex(index: number | null) {
   vertexOverlay?.setPosition(selectedVertex.value === null ? undefined : ring![selectedVertex.value]!)
   vertexLayer.changed()
 }
+let vertexPointerStart: [number, number] | null = null
+function vertexPointerDown(event: PointerEvent) {
+  const target = event.target
+  if (props.mode !== 'edit' || event.button !== 0 ||
+    event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+    (target instanceof Element && target.closest('.ol-overlaycontainer-stopevent'))) {
+    vertexPointerStart = null
+    return
+  }
+  vertexPointerStart = [event.clientX, event.clientY]
+}
+function vertexPointerUp(event: PointerEvent) {
+  const start = vertexPointerStart
+  vertexPointerStart = null
+  if (!start || props.mode !== 'edit' || event.button !== 0 || !host.value ||
+    (event.clientX - start[0]) ** 2 + (event.clientY - start[1]) ** 2 > 36) return
+  const bounds = host.value.getBoundingClientRect()
+  selectVertex(closestVertex([event.clientX - bounds.left, event.clientY - bounds.top]))
+}
 function deleteSelectedVertex() {
   const edit = editingPolygon()
   if (props.mode !== 'edit' || selectedVertex.value === null || !edit) return
@@ -273,6 +292,11 @@ onMounted(() => {
     map.addOverlay(vertexOverlay)
   }
   document.addEventListener('keydown', handleVertexKeydown)
+  // Modify consumes the synthetic OpenLayers singleclick when an editable
+  // vertex is hit. Capture the native pointer-up instead, so taps select but
+  // drags keep moving vertices as before.
+  host.value?.addEventListener('pointerdown', vertexPointerDown, true)
+  host.value?.addEventListener('pointerup', vertexPointerUp, true)
   map.on('moveend', () => {
     const coordinate = map?.getView().getCenter()
     if (!coordinate) return
@@ -394,8 +418,6 @@ onMounted(() => {
   map.on('singleclick', event => {
     if (props.mode === 'point') {
       const feature = new Feature(new Point(event.coordinate)); editingSource.clear(); editingSource.addFeature(feature); report(feature)
-    } else if (props.mode === 'edit') {
-      selectVertex(closestVertex(event.pixel))
     } else if (props.mode === 'view') {
       const ids: string[] = []
       map!.forEachFeatureAtPixel(event.pixel, feature => { const id = String(feature.getId()); if (!ids.includes(id)) ids.push(id) }, { layerFilter: layer => layer === recordsLayer, hitTolerance: 10 })
@@ -414,6 +436,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleVertexKeydown)
+  host.value?.removeEventListener('pointerdown', vertexPointerDown, true)
+  host.value?.removeEventListener('pointerup', vertexPointerUp, true)
   if (map) for (const anchor of vertexAnchors) map.removeOverlay(anchor)
   vertexAnchors.length = 0
   layerRequest.abort(); depthPrefetchers.forEach(item => item.dispose())
