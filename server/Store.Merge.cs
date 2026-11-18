@@ -35,7 +35,8 @@ public sealed partial class Store
             var equivalent = sameType && targetFields.Any(x =>
                 x.Id == field.Id && x.Type == field.Type && x.Label == field.Label);
             var sourceHas = HasFieldValue(source.ExtraValues, field.Id, out var sourceValue);
-            var targetHas = equivalent && HasFieldValue(target.ExtraValues, field.Id, out var targetValue);
+            JsonElement targetValue = default;
+            var targetHas = equivalent && HasFieldValue(target.ExtraValues, field.Id, out targetValue);
             fields.Add(new(field.Id, field.Label, field.Type,
                 sourceHas ? field.Type == "image" ? "已附图片" : sourceValue.ToString() : "",
                 targetHas ? field.Type == "image" ? "已附图片" : targetValue.ToString() : "",
