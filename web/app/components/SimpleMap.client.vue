@@ -51,7 +51,7 @@ function scheduleDepthPrefetch() {
   depthPrefetchers.forEach(item => item.schedule())
 }
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
-const verticesSource = new VectorSource<Feature<Point>>()
+const verticesSource = new VectorSource<Feature<Geometry>>()
 let reporting = false
 function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(gcj02ToWgs84(shape.coordinates[0]!))) : new Polygon([shape.coordinates.map(c => fromLonLat(gcj02ToWgs84(c)))]) }
 function toShape(feature: Feature<Geometry>): GeoShape {
@@ -404,7 +404,7 @@ onBeforeUnmount(() => {
   <div class="simple-map" :class="{ 'no-zoom-controls': !showZoomControls }"><div ref="host" class="simple-map-canvas" aria-label="地图，按住 Ctrl 并拖动鼠标可以旋转" title="按住 Ctrl 并拖动鼠标可以旋转地图" />
     <div ref="vertexPopup" v-show="mode === 'edit' && selectedVertex !== null" class="map-vertex-popup" data-testid="polygon-vertex-popup">
       <span class="map-vertex-selected">已选中顶点 {{ selectedVertex === null ? '' : selectedVertex + 1 }} / {{ vertexCount }}</span>
-      <button type="button" class="map-vertex-delete" aria-label="删除顶点" :disabled="vertexCount <= 3" @click.stop="deleteSelectedVertex"><span aria-hidden="true">🗑</span> 删除顶点</button>
+      <button type="button" class="map-vertex-delete" aria-label="删除顶点" :disabled="vertexCount <= 3" @click.stop="deleteSelectedVertex"><UIcon name="i-lucide-trash-2" aria-hidden="true" /> 删除顶点</button>
       <span class="map-vertex-tip">{{ vertexCount <= 3 ? '至少保留 3 个顶点' : '也可按 Delete 删除' }}</span>
     </div>
     <div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button v-if="isRotated" type="button" class="map-north" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
