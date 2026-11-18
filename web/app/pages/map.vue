@@ -5,7 +5,7 @@ import { errorMessage } from '~/utils/format'
 import { gridDescendants } from '~/utils/gridTree'
 const route=useRoute(),router=useRouter()
 const listMode=computed(()=>route.query.view==='list')
-function switchMode(mode:'map'|'list'){if(!mayLeaveUse())return;void router.replace({path:'/map',query:{...route.query,view:mode==='list'?'list':undefined,place:undefined}})}
+function switchMode(mode:'map'|'list'){void router.replace({path:'/map',query:{...route.query,view:mode==='list'?'list':undefined,place:undefined}})}
 const returnTo=computed(()=>selected.value?.kind==='point'?`/map?place=${selected.value.id}`:'/map')
 const { bootstrap, load: loadBootstrap } = useAppData()
 const { purposes, purpose, loadPurposes } = usePurposeCatalog()
@@ -32,10 +32,21 @@ function toggleLayer(layer:MapState['layers'][number],checked:boolean){
 }
 const filter=reactive(useState('community-map-filter',()=>({grid:'all',type:'all',purpose:'all',issues:false})).value)
 const canvas=useTemplateRef('canvas'),usePanel=useTemplateRef('usePanel')
-onBeforeRouteLeave(()=>mayLeaveUse())
-onBeforeRouteUpdate((to,from)=>to.query.place!==from.query.place||to.query.view!==from.query.view?mayLeaveUse():true)
+onBeforeRouteLeave(()=>mayLeaveMap())
+onBeforeRouteUpdate((to,from)=>{
+  if(to.query.view==='list'&&from.query.view!=='list')return mayLeaveMap()
+  return to.query.place!==from.query.place||to.query.view!==from.query.view?mayLeaveUse():true
+})
 const editingTarget=ref<MapFeature|null>(null),sketching=ref(false)
 function mayLeaveUse(){if(usePanel.value?.busy)return false;return !usePanel.value?.dirty||window.confirm('使用情况尚未保存，放弃修改吗？')}
+function mayLeaveMap(){
+  if(!mayLeaveUse())return false
+  if(pending.value||sketching.value||editingTarget.value){
+    if(!window.confirm('地图位置或边界尚未保存，确定放弃草图吗？'))return false
+    cancelGeometry()
+  }
+  return true
+}
 function closeUse(){if(mayLeaveUse()){useOpen.value=false;mobilePane.value='place'}}
 function beginDrawing(){editingTarget.value=null;closePlace()}
 function cancelGeometry(){canvas.value?.cancel();editingTarget.value=null}
@@ -83,7 +94,7 @@ watch([()=>route.query.place, listMode, mapLoaded, mapReady,()=>mapState.value.f
   if(item)void choose(item,true,true,false)
   else if(selected.value)clearPlaceSelection()
 },{immediate:true})
-watch(listMode,mode=>{if(mode)mapReady.value=false})
+watch(listMode,mode=>{if(mode){mapReady.value=false;clearPlaceSelection()}})
 onMounted(()=>{void load();document.addEventListener('visibilitychange',onMapReturn);window.addEventListener('focus',onMapReturn)})
 onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',onMapReturn);window.removeEventListener('focus',onMapReturn)})
 useHead({title:'社区地图'})
