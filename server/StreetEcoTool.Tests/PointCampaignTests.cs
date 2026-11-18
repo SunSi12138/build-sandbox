@@ -167,8 +167,11 @@ public sealed class PointCampaignTests
         if (kind == "unit")
             store.SaveCommunityRecord("unit", null, new(pointId, "临时单元", JsonDocument.Parse("{}").RootElement.Clone()));
         else
-            store.SaveCommunityRecord("plan", null, new("", "临时安排",
-                JsonDocument.Parse($"""{"inspector":"张三","from":"{{Store.Today}}","to":"{{Store.Today}}","typeId":"{{store.ListCommunityRecords("inspection-type")[0].Id}}","pointIds":["{{pointId}}"]}""").RootElement.Clone()));
+        {
+            var body = JsonSerializer.Serialize(new { inspector = "张三", @from = Store.Today, to = Store.Today,
+                typeId = store.ListCommunityRecords("inspection-type")[0].Id, pointIds = new[] { pointId } });
+            store.SaveCommunityRecord("plan", null, new("", "临时安排", JsonDocument.Parse(body).RootElement.Clone()));
+        }
         store.DeleteCampaign(campaign.Campaign.Id);
         Assert.Equal(pointId, store.GetPoint(pointId).Id);
         V2Environment.AssertForeignKeys(store.DatabasePath);
