@@ -8,7 +8,8 @@ const detail = ref<CampaignDetailDto | null>(null), loading = ref(true), error =
 const back = computed(() => { const target = queryText(route.query.returnTo); return target.startsWith('/campaigns?') || target === '/campaigns' ? target : '/campaigns' })
 const toast = useToast()
 const { bootstrap, load: loadBootstrap } = useAppData()
-const campaignFields = computed(() => bootstrap.value?.campaignTypes?.find(t => t.id === detail.value?.campaign.typeId)?.fields ?? [])
+const campaignFields = computed(() => detail.value?.campaign.fieldSnapshot
+  ?? bootstrap.value?.campaignTypes?.find(t => t.id === detail.value?.campaign.typeId)?.fields ?? [])
 onMounted(() => { void loadBootstrap() })
 useHead({ title: () => `${detail.value?.campaign.name ?? '整治详情'} · 社区管理` })
 const menu = computed(() => [[{ label: '编辑', icon: 'i-lucide-pencil', to: `/campaigns/new?edit=${id.value}` }, { label: '删除整治', icon: 'i-lucide-trash-2', color: 'error' as const, onSelect: () => { actionError.value = ''; deleteOpen.value = true } }]])

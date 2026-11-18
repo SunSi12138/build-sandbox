@@ -13,7 +13,8 @@ const route = useRoute(),
 const detail = ref<PointDetailDto | null>(null)
 const photos = computed(() => detail.value?.photos ?? [])
 const { bootstrap, load: loadBootstrap } = useAppData()
-const typeFields = computed(() => bootstrap.value?.pointTypes.find(x=>x.id===detail.value?.point.typeId)?.fields ?? [])
+const typeFields = computed(() => detail.value?.point.fieldSnapshot
+  ?? bootstrap.value?.pointTypes.find(x=>x.id===detail.value?.point.typeId)?.fields ?? [])
 onMounted(() => { void loadBootstrap() })
 const loading = ref(true),
   error = ref(''),

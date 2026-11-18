@@ -10,7 +10,7 @@ public sealed partial class Store : IDisposable
     private bool _dailySnapshotsEnabled;
     private SqliteConnection _db = null!;
     private bool _disposed;
-    public const int SchemaVersion = 6;
+    public const int SchemaVersion = 7;
     public const int DatabaseApplicationId = 1397048143;
     public string RootDir { get; }
     public string DataDir { get; }
@@ -77,7 +77,7 @@ public sealed partial class Store : IDisposable
                 notes TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
                 longitude REAL CHECK(longitude IS NULL OR longitude BETWEEN -180 AND 180),
                 latitude REAL CHECK(latitude IS NULL OR latitude BETWEEN -90 AND 90),
-                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1)), color TEXT NOT NULL DEFAULT '#087f70', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values))
+                temporary INTEGER NOT NULL DEFAULT 0 CHECK(temporary IN (0,1)), color TEXT NOT NULL DEFAULT '#087f70', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values)), field_snapshot TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(field_snapshot))
             );
             CREATE TABLE inspections (
                 id TEXT PRIMARY KEY, point_id TEXT NOT NULL REFERENCES points(id) ON DELETE RESTRICT,
@@ -90,7 +90,7 @@ public sealed partial class Store : IDisposable
                 inspection_type_id TEXT NOT NULL DEFAULT '', inspection_type_name TEXT NOT NULL DEFAULT '',
                 use_id TEXT NOT NULL DEFAULT '', use_name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
                 incomplete_reason TEXT NOT NULL DEFAULT '', checklist TEXT NOT NULL DEFAULT '[]', submission_key TEXT UNIQUE,
-                voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1)), void_reason TEXT NOT NULL DEFAULT '', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values))
+                voided INTEGER NOT NULL DEFAULT 0 CHECK(voided IN(0,1)), void_reason TEXT NOT NULL DEFAULT '', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values)), field_snapshot TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(field_snapshot))
             );
             CREATE TABLE issues (
                 id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL REFERENCES inspections(id) ON DELETE RESTRICT,
@@ -116,7 +116,7 @@ public sealed partial class Store : IDisposable
                     vehicle_count INTEGER CHECK(vehicle_count IS NULL OR vehicle_count >= 0),
                     garbage_tons REAL CHECK(garbage_tons IS NULL OR garbage_tons >= 0),
                     area_sqm REAL CHECK(area_sqm IS NULL OR area_sqm >= 0),
-                    content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values)),
+                    content TEXT NOT NULL, outcome TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '', extra_values TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra_values)), field_snapshot TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(field_snapshot)),
                     CHECK(end_date IS NULL OR end_date >= campaign_date)
                 );
             CREATE TABLE photos (
@@ -150,7 +150,7 @@ public sealed partial class Store : IDisposable
             CREATE INDEX ix_campaigns_point_date ON campaigns(point_id,campaign_date);
             CREATE INDEX ix_points_temporary ON points(temporary,disabled);
             PRAGMA application_id=1397048143;
-            PRAGMA user_version=6;
+            PRAGMA user_version=7;
             """, transaction)) create.ExecuteNonQuery();
         using (var settings = Command("INSERT INTO settings(id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality) VALUES(1,$street,$unit,$inspector,$template,$quality);", transaction,
             ("$street", ""), ("$unit", ""), ("$inspector", ""),

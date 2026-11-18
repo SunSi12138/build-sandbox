@@ -62,7 +62,8 @@ const communities = computed(() =>
 const types = computed(() =>
   (bootstrap.value?.campaignTypes ?? []).map((item) => ({ label: item.name, value: item.id })),
 )
-const extraFields = computed(() => bootstrap.value?.campaignTypes?.find(x=>x.id===state.typeId)?.fields ?? [])
+const extraFields = computed(() => (props.initial && state.typeId === props.initial.campaign.typeId
+  ? props.initial.campaign.fieldSnapshot : bootstrap.value?.campaignTypes?.find(x=>x.id===state.typeId)?.fields) ?? [])
 const extraPhotoIds = computed<string[]>({
   get: () => state.beforePhotos.map(x => x.id),
   set: ids => { state.beforePhotos = ids.map(id => state.beforePhotos.find(x=>x.id===id)??{ id, width: 1, height: 1 }) },

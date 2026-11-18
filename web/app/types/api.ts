@@ -25,6 +25,7 @@ export interface PointWriteRequest {
 }
 export interface PointDto {
   extraValues: Record<string, string | number> | null
+  fieldSnapshot?: import('./community').PurposeField[]
   color: string
   revision: number
   id: string; name: string; communityId: string; communityName: string; typeId: string; typeName: string
@@ -44,6 +45,7 @@ export interface IssueUpdateRequest { revision?: number; description: string; re
 export interface InspectionDto {
   voided: boolean; voidReason: string
   extraValues?: Record<string,string|number>
+  fieldSnapshot?: import('./community').PurposeField[]
   revision: number
   inspectionTypeId?: string; inspectionTypeName?: string; useId?: string; useName?: string; createdAt?: string; incompleteReason?: string; checklist?: { name: string; result: string; notes: string }[]
   id: string; pointId: string; pointName: string; communityId: string; communityName: string; communityTitle: string
@@ -118,6 +120,7 @@ export interface CampaignWriteRequest {
 }
 export interface CampaignDto {
   extraValues?: Record<string,string|number>
+  fieldSnapshot?: import('./community').PurposeField[]
   id: string; name: string; pointId: string; pointName: string; pointTemporary: boolean; typeId: string; typeName: string; communityId: string; communityName: string; location: string; date: string
   endDate: string | null; organizer: string; participants: string; participantCount: number | null; vehicleCount: number | null
   garbageTons: number | null; areaSqm: number | null; content: string; outcome: string; notes: string; photoCount: number

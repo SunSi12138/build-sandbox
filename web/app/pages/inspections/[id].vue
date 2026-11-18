@@ -27,7 +27,8 @@ const detail = ref<InspectionDetailDto | null>(null),
   error = ref('')
 const id = computed(() => queryText(route.params.id))
 const inspectionTypes=ref<import('~/types/community').CommunityRecord<{fields?:import('~/types/community').PurposeField[]}>[]>([])
-const extraFields=computed(()=>inspectionTypes.value.find(x=>x.id===detail.value?.inspection.inspectionTypeId)?.data.fields??[])
+const extraFields=computed(()=>detail.value?.inspection.fieldSnapshot
+  ?? inspectionTypes.value.find(x=>x.id===detail.value?.inspection.inspectionTypeId)?.data.fields??[])
 onMounted(async()=>{try{inspectionTypes.value=await $fetch('/api/records/inspection-type')}catch{}})
 const editPhotoIds=ref<string[]>([])
 const editPhotoBusy=ref(false),editPhotoFailed=ref(false)

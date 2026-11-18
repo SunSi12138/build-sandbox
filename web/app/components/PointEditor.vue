@@ -19,7 +19,8 @@ const usesBusy = computed(() => inlineUses.value.some(x => x.busy))
 const usesFailed = computed(() => inlineUses.value.some(x => x.failed))
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
-const extraFields = computed(() => bootstrap.value?.pointTypes.find(t => t.id === state.typeId)?.fields ?? [])
+const extraFields = computed(() => (props.point && state.typeId === props.point.typeId
+  ? props.point.fieldSnapshot : bootstrap.value?.pointTypes.find(t => t.id === state.typeId)?.fields) ?? [])
 const extraPhotoIds = ref<string[]>([])
 const initialSnapshot=ref('')
 function snapshot(){return JSON.stringify({state,shape:mapShape.value,uses:inlineUses.value.map(x=>({name:x.name,data:x.data}))})}

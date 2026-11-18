@@ -13,7 +13,7 @@ public sealed partial class Store
         p.longitude,p.latitude,p.temporary,
         (SELECT ph.id FROM photos ph WHERE ph.point_id=p.id ORDER BY ph.uploaded_at,ph.rowid LIMIT 1),
         (SELECT COUNT(*) FROM photos ph WHERE ph.point_id=p.id),
-        (SELECT COUNT(*) FROM community_history h WHERE h.kind='point' AND h.record_id=p.id),p.color,p.extra_values
+        (SELECT COUNT(*) FROM community_history h WHERE h.kind='point' AND h.record_id=p.id),p.color,p.extra_values,p.field_snapshot
         FROM points p JOIN communities c ON c.id=p.community_id JOIN point_types t ON t.id=p.type_id
         """;
     private const string PointWhere = """
@@ -28,7 +28,7 @@ public sealed partial class Store
     private static PointDto ReadPoint(SqliteDataReader row) => new(row.GetString(0), row.GetString(1), row.GetString(2), row.GetString(3),
         row.GetString(4), row.GetString(5), row.GetString(6), row.GetString(7), row.GetString(8), row.GetString(9), row.GetString(10),
         row.GetInt32(11) != 0, NullableString(row, 12), row.GetInt32(13), row.IsDBNull(14) ? null : row.GetDouble(14),
-        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), row.GetInt32(19), row.GetString(20), ReadPointExtra(row.GetString(21)));
+        row.IsDBNull(15) ? null : row.GetDouble(15), row.GetInt32(16) != 0, NullableString(row, 17), row.GetInt32(18), row.GetInt32(19), row.GetString(20), ReadPointExtra(row.GetString(21)), JsonSerializer.Deserialize(row.GetString(22), CommunityJsonContext.Default.PurposeFieldArray));
 
     private static JsonElement? ReadPointExtra(string value) =>
         value == "{}" ? null : JsonDocument.Parse(value).RootElement.Clone();
@@ -156,15 +156,21 @@ public sealed partial class Store
             (longitude, latitude) = ValidateCoordinates(request.Shape.Coordinates[0][0], request.Shape.Coordinates[0][1]);
         }
         var actualId = id ?? NewId();
+        // Keep historical definitions unless the user explicitly changes type.
+        var fieldSnapshot = existing is not null && existing.TypeId == type.Id
+            ? existing.FieldSnapshot ?? [] : type.Fields ?? [];
+        var extra = NormalizeFieldValues(fieldSnapshot,
+            request.ExtraValues ?? (existing is not null && existing.TypeId == type.Id ? existing.ExtraValues : null),
+            request.PhotoIds).GetRawText();
         (string Name, object? Value)[] parameters = [("$id", actualId), ("$name", name), ("$community", community.Id), ("$type", type.Id),
             ("$address", Text(request.Address, "详细地址", 1000, true)), ("$contact", Text(request.Contact, "联系人", 100)),
             ("$phone", Text(request.Phone, "电话", 100)), ("$frequency", temporary ? "irregular" : request.Frequency),
             ("$notes", Text(request.Notes, "备注", 8000)), ("$disabled", request.Disabled ? 1 : 0),
             ("$longitude", longitude), ("$latitude", latitude), ("$temporary", temporary ? 1 : 0), ("$color",MapColor(request.Color)),
-            ("$extra", NormalizeFieldValues(type.Fields ?? [], request.ExtraValues, request.PhotoIds).GetRawText())];
+            ("$extra", extra), ("$snapshot", JsonSerializer.Serialize(fieldSnapshot, CommunityJsonContext.Default.PurposeFieldArray))];
         using (var command = Command(id is null
-            ? "INSERT INTO points(id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,color,extra_values) VALUES($id,$name,$community,$type,$address,$contact,$phone,$frequency,$notes,$disabled,$longitude,$latitude,$temporary,$color,$extra);"
-            : "UPDATE points SET name=$name,community_id=$community,type_id=$type,address=$address,contact=$contact,phone=$phone,frequency=$frequency,notes=$notes,disabled=$disabled,longitude=$longitude,latitude=$latitude,temporary=$temporary,color=$color,extra_values=$extra WHERE id=$id;", transaction, parameters))
+            ? "INSERT INTO points(id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,color,extra_values,field_snapshot) VALUES($id,$name,$community,$type,$address,$contact,$phone,$frequency,$notes,$disabled,$longitude,$latitude,$temporary,$color,$extra,$snapshot);"
+            : "UPDATE points SET name=$name,community_id=$community,type_id=$type,address=$address,contact=$contact,phone=$phone,frequency=$frequency,notes=$notes,disabled=$disabled,longitude=$longitude,latitude=$latitude,temporary=$temporary,color=$color,extra_values=$extra,field_snapshot=$snapshot WHERE id=$id;", transaction, parameters))
             RequireChanged(command.ExecuteNonQuery(), "点位");
         AttachPhotos(request.PhotoIds, "point", null, null, transaction, pointId: actualId);
         if (request.Shape is not null)
