@@ -77,7 +77,10 @@ public sealed class WordStoreTests
         foreach (var notice in new[] { false, true })
         {
             var file = fixture.Store.ExportInspectionWord(detail.Inspection.Id, notice);
-            Assert.Equal(new[] { "1000x800", "1200x800", "1600x800" }, MediaDimensions(file.FilePath));
+            Assert.Equal(notice
+                ? new[] { "1000x800", "1200x800", "1600x800" }
+                : new[] { "1000x800", "1200x800", "1600x800", "500x700", "800x1200" },
+                MediaDimensions(file.FilePath));
             var text = DocumentText(file.FilePath);
             Assert.Contains(fixture.Point.Name, text);
             Assert.Contains(fixture.Community.Name, text);
