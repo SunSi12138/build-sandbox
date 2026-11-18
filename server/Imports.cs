@@ -9,7 +9,7 @@ using System.Xml.Linq;
 
 namespace StreetEcoTool;
 
-public sealed record ImportRow(int Row, string SourceKey, string Kind, string Name, string Grid, string Type, string Address, string Contact, string Phone, string Notes, GeoShape? Shape, string Error = "", string Warning = "", bool Duplicate = false);
+public sealed record ImportRow(int Row, string SourceKey, string Kind, string Name, string Grid, string Type, string Address, string Contact, string Phone, string Notes, GeoShape? Shape, string Error = "", string Warning = "", bool Duplicate = false, JsonElement? ExtraValues = null);
 public sealed record ImportPreview(ImportRow[] Rows, string FileName);
 public sealed record ImportApply(ImportRow[] Rows);
 public sealed record ImportResult(int Added, int Skipped);
@@ -37,6 +37,8 @@ public sealed partial class Store
         var result = new List<ImportRow>();
         lock (_gate)
         {
+            var availableTypes = kind == "point" ? GetPointTypes() : [];
+            var defaultType = availableTypes.FirstOrDefault(x => x.Name == "永久建筑") ?? availableTypes.FirstOrDefault();
             for (var i = headerIndex + 1; i < cells.Length; i++)
             {
                 var row = cells[i];
@@ -44,8 +46,16 @@ public sealed partial class Store
                 var title = Cell(row, "名称", "Name", "场所名称", "网格名称");
                 var grid = Cell(row, "网格", "所属网格", "社区");
                 var type = Cell(row, "场所形态", "场所类型", "类型");
-                if (type.Length == 0) type = "其他";
+                if (type.Length == 0 && kind == "point") type = defaultType?.Name ?? "";
                 var warning = ""; var error = ""; GeoShape? shape = null;
+                if (kind == "point" && availableTypes.All(x => x.Name != type))
+                    warning = "场所形态未在当前字典中找到，请在预览选择有效类型";
+                else if (kind == "point")
+                {
+                    var selectedType = availableTypes.First(x => x.Name == type);
+                    if (selectedType.Fields?.Any(x => x.Required) == true)
+                        warning = "此类型有必填扩展字段，请在预览逐项补充；必填图片暂不支持批量导入";
+                }
                 try
                 {
                     var raw = Cell(row, "Coordinates", "区域坐标");
@@ -124,7 +134,8 @@ public sealed partial class Store
                     var gridName = Text(row.Grid, "所属网格", 200, true);
                     var grid = communities.FirstOrDefault(x => x.Name == gridName) ?? throw new ApiException(400, $"第{row.Row}行的网格“{gridName}”不存在，请先添加或导入网格。");
                     var type = pointTypes.FirstOrDefault(x => x.Name == row.Type.Trim()) ?? throw new ApiException(400, $"第{row.Row}行的场所类型“{row.Type}”不存在，请在设置中添加。");
-                    id = SavePointCore(null, new(name, grid.Id, type.Id, row.Address, row.Contact, row.Phone, Notes: row.Notes, Shape: row.Shape), transaction);
+                    id = SavePointCore(null, new(name, grid.Id, type.Id, row.Address, row.Contact, row.Phone, Notes: row.Notes,
+                        Shape: row.Shape, ExtraValues: row.ExtraValues), transaction);
                 }
                 using var imported = Command("INSERT INTO imported_rows(source_key,record_id,kind) VALUES($key,$id,$kind);", transaction, ("$key", row.SourceKey), ("$id", id), ("$kind", row.Kind)); imported.ExecuteNonQuery();
                 added++;
