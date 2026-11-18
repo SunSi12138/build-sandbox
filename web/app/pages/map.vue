@@ -9,7 +9,7 @@ function switchMode(mode:'map'|'list'){if(!mayLeaveUse())return;void router.repl
 const returnTo=computed(()=>selected.value?.kind==='point'?`/map?place=${selected.value.id}`:'/map')
 const { bootstrap, load: loadBootstrap } = useAppData()
 const { purposes, purpose, loadPurposes } = usePurposeCatalog()
-const mapState=ref<MapState>({layers:[],features:[]}),error=ref(''),query=ref(''),loading=ref(false)
+const mapState=ref<MapState>({layers:[],features:[]}),error=ref(''),query=ref(''),loading=ref(false),mapLoaded=ref(false),mapReady=ref(false)
 const selected=ref<MapFeature|null>(null),detail=ref<PointDetailDto|null>(null),uses=ref<CommunityRecord<UseData>[]>([])
 const useId=ref(''),useOpen=ref(false),inspectionId=ref(''),mobilePane=ref('place'),showEnded=ref(false)
 const pending=ref<GeoShape|null>(null),saving=ref(false),editor=ref(false),editingPoint=ref<PointDto|null>(null),filterOpen=ref(false),layerOpen=ref(false),searchResults=ref(false),gridEditor=ref(false),showGridBoundaries=ref(false)
@@ -27,6 +27,7 @@ async function toggleLayer(layer:MapState['layers'][number],checked:boolean){con
 const filter=reactive(useState('community-map-filter',()=>({grid:'all',type:'all',purpose:'all',issues:false})).value)
 const canvas=useTemplateRef('canvas'),usePanel=useTemplateRef('usePanel')
 onBeforeRouteLeave(()=>mayLeaveUse())
+onBeforeRouteUpdate((to,from)=>to.query.place!==from.query.place||to.query.view!==from.query.view?mayLeaveUse():true)
 const editingTarget=ref<MapFeature|null>(null),sketching=ref(false)
 function mayLeaveUse(){if(usePanel.value?.busy)return false;return !usePanel.value?.dirty||window.confirm('使用情况尚未保存，放弃修改吗？')}
 function closeUse(){if(mayLeaveUse()){useOpen.value=false;mobilePane.value='place'}}
@@ -45,9 +46,10 @@ const exportFeatures=computed(()=>exportAll.value?mapState.value.features:filter
 const exportPointCount=computed(()=>exportFeatures.value.filter(x=>x.kind==='point'&&!x.disabled).length)
 const focusPadding=computed(()=>typeof window!=='undefined'&&window.innerWidth>=1100?[90,60,60,Math.min(window.innerWidth*.42,430)]:[Math.min(190,window.innerHeight*.23),25,Math.round(window.innerHeight*.54),25])
 let selectionSequence=0
-async function load(){loading.value=true;try{await Promise.all([loadBootstrap(),loadPurposes()]);mapState.value=await $fetch('/api/map')}catch(e){error.value=errorMessage(e)}finally{loading.value=false}}
-async function choose(item:MapFeature,focus=true,confirmed=false){if(!confirmed&&!mayLeaveUse())return;void router.replace({query:{...route.query,place:item.kind==='point'?item.id:undefined}});const request=++selectionSequence;searchResults.value=false;filterOpen.value=false;selected.value=item;detail.value=null;uses.value=[];useOpen.value=false;inspectionId.value='';mobilePane.value='place';error.value='';if(focus)canvas.value?.focus(item.shape);if(item.kind!=='point')return;try{const [place,records]=await Promise.all([$fetch<PointDetailDto>(`/api/points/${item.id}`),$fetch<CommunityRecord<UseData>[]>('/api/records/use',{query:{parentId:item.id,all:true}})]);if(request!==selectionSequence)return;detail.value=place;uses.value=records;const active=records.filter(x=>!x.archived&&x.data.state!=='已结束');if(active.length===1){useId.value=active[0]!.id;useOpen.value=true}}catch(e){if(request===selectionSequence)error.value=errorMessage(e)}}
-function closePlace(){if(!mayLeaveUse())return;void router.replace({query:{...route.query,place:undefined}});++selectionSequence;selected.value=null;detail.value=null;useOpen.value=false;inspectionId.value=''}
+async function load(){loading.value=true;try{await Promise.all([loadBootstrap(),loadPurposes()]);mapState.value=await $fetch('/api/map');mapLoaded.value=true}catch(e){error.value=errorMessage(e)}finally{loading.value=false}}
+async function choose(item:MapFeature,focus=true,confirmed=false,updateRoute=true){if(!confirmed&&!mayLeaveUse())return;if(updateRoute)void router.replace({query:{...route.query,place:item.kind==='point'?item.id:undefined}});const request=++selectionSequence;searchResults.value=false;filterOpen.value=false;selected.value=item;detail.value=null;uses.value=[];useOpen.value=false;inspectionId.value='';mobilePane.value='place';error.value='';if(focus)canvas.value?.focus(item.shape);if(item.kind!=='point')return;try{const [place,records]=await Promise.all([$fetch<PointDetailDto>(`/api/points/${item.id}`),$fetch<CommunityRecord<UseData>[]>('/api/records/use',{query:{parentId:item.id,all:true}})]);if(request!==selectionSequence)return;detail.value=place;uses.value=records;const active=records.filter(x=>!x.archived&&x.data.state!=='已结束');if(active.length===1){useId.value=active[0]!.id;useOpen.value=true}}catch(e){if(request===selectionSequence)error.value=errorMessage(e)}}
+function clearPlaceSelection(){++selectionSequence;selected.value=null;detail.value=null;uses.value=[];useOpen.value=false;inspectionId.value=''}
+function closePlace(){if(!mayLeaveUse())return;void router.replace({query:{...route.query,place:undefined}});clearPlaceSelection()}
 function openUse(record:CommunityRecord<UseData>|null){if(!mayLeaveUse())return;useId.value=record?.id??'';useOpen.value=true;mobilePane.value='use'}
 async function useSaved(record:CommunityRecord<UseData>){if(!selected.value)return;const feature=selected.value;await load();await choose(mapState.value.features.find(x=>x.id===feature.id&&x.kind==='point')??feature,false);useId.value=record.id;useOpen.value=true;mobilePane.value='use'}
 async function refreshed(){if(!selected.value)return;const feature=selected.value;const check=inspectionId.value;await load();await choose(mapState.value.features.find(x=>x.id===feature.id)??feature,false);inspectionId.value=check;mobilePane.value='inspection'}
@@ -63,14 +65,27 @@ function openFilters(){filterOpen.value=!filterOpen.value;if(filterOpen.value){l
 function openLayers(){layerOpen.value=!layerOpen.value;if(layerOpen.value)filterOpen.value=false}
 function selectPurpose(id:string){filter.purpose=id;void refreshMapFeatures()}
 function onMapReturn(){if(document.visibilityState==='visible')void refreshMapFeatures()}
-onMounted(()=>{void load().then(()=>{const item=mapState.value.features.find(x=>x.kind==='point'&&x.id===route.query.place);if(item)void choose(item)});document.addEventListener('visibilitychange',onMapReturn);window.addEventListener('focus',onMapReturn)})
+// Keep URL navigation and user selection separate. The route watcher also handles
+// same-path list links, browser Back/Forward, and direct links during map loading.
+watch([()=>route.query.place, listMode, mapLoaded, mapReady,()=>mapState.value.features],()=>{
+  if(listMode.value)return
+  const placeId=typeof route.query.place==='string'?route.query.place:''
+  if(!placeId){if(selected.value)clearPlaceSelection();return}
+  if(!mapLoaded.value||!mapReady.value)return
+  if(selected.value?.kind==='point'&&selected.value.id===placeId)return
+  const item=mapState.value.features.find(x=>x.kind==='point'&&x.id===placeId)
+  if(item)void choose(item,true,true,false)
+  else if(selected.value)clearPlaceSelection()
+},{immediate:true})
+watch(listMode,mode=>{if(mode)mapReady.value=false})
+onMounted(()=>{void load();document.addEventListener('visibilitychange',onMapReturn);window.addEventListener('focus',onMapReturn)})
 onBeforeUnmount(()=>{document.removeEventListener('visibilitychange',onMapReturn);window.removeEventListener('focus',onMapReturn)})
 useHead({title:'社区地图'})
 </script>
 <template>
   <PointsList v-if="listMode" embedded @view-map="switchMode('map')" />
   <div v-else class="community-map" :class="{'panes-open':selected&&!pending}" data-testid="map-workspace">
-    <OfflineMap ref="canvas" v-model="pending" :features="filtered" :layers="mapState.layers" :selected-id="selected?.id" :focus-padding="focusPadding" immersive :high-definition="highDefinition" :load-depth="loadDepth" :export-features="exportFeatures" height="100%" @choose="choose" @edit="editFeature" @begin="beginDrawing" @sketching="sketching=$event" :editable="!usePanel?.dirty && !usePanel?.busy" />
+    <OfflineMap ref="canvas" v-model="pending" :features="filtered" :layers="mapState.layers" :selected-id="selected?.id" :focus-padding="focusPadding" immersive :high-definition="highDefinition" :load-depth="loadDepth" :export-features="exportFeatures" height="100%" @choose="choose" @edit="editFeature" @begin="beginDrawing" @sketching="sketching=$event" :editable="!usePanel?.dirty && !usePanel?.busy" @ready="mapReady=true" />
     <div class="map-search floating"><div class="flex gap-2"><UInput v-model="query" @update:model-value="searchResults=true" placeholder="搜索场所、店名或用途" icon="i-lucide-search" class="min-w-0 flex-1" /><UButton icon="i-lucide-list-filter" aria-label="筛选地图" color="neutral" :variant="filterOpen?'solid':'outline'" @click="openFilters" /><UButton icon="i-lucide-layers" aria-label="图层显示" color="neutral" :variant="layerOpen?'solid':'outline'" @click="openLayers" /><UButton icon="i-lucide-list" aria-label="列表模式" color="neutral" variant="outline" @click="switchMode('list')" /></div><div v-if="filterOpen" class="space-y-3 mt-3"><div class="flex gap-1 flex-wrap"><UButton v-for="item in types" :key="item.value" :label="item.label" size="sm" :variant="filter.type===item.value?'solid':'ghost'" @click="filter.type=item.value" /></div><div class="flex gap-1 flex-wrap"><UButton v-for="item in purposeOptions" :key="item.value" :label="item.label" size="sm" :variant="filter.purpose===item.value?'solid':'ghost'" @click="selectPurpose(item.value)" /></div><UButton label="仅有未完成问题" size="sm" :variant="filter.issues?'solid':'outline'" @click="filter.issues=!filter.issues" /><div class="flex justify-between text-sm text-muted"><span>{{ matches.length }} 个场所</span><button @click="Object.assign(filter,{type:'all',purpose:'all',issues:false});query=''">清空筛选</button></div></div><div v-if="layerOpen" class="space-y-2 mt-3"><USwitch v-model="showGridBoundaries" label="网格边界" size="sm" /><USwitch v-for="layer in mapState.layers" :key="layer.id" :model-value="layer.enabled" :label="layer.name" size="sm" @update:model-value="value=>toggleLayer(layer,!!value)" /><UFormField label="加载深度"><USelect v-model="loadDepth" :items="[{label:'0',value:0},{label:'1',value:1},{label:'2',value:2},{label:'3',value:3},{label:'4',value:4}]" class="w-full" /></UFormField><UButton label="导出地图" icon="i-lucide-download" variant="outline" @click="openExport" /></div><div v-if="query && searchResults" class="map-search-results"><button v-for="item in matches.slice(0,20)" :key="item.id" @click="choose(item)">{{ item.name }}</button><p v-if="!matches.length" class="p-2 text-muted">没有匹配场所</p></div></div>
     <div class="grid-toolbar floating"><GridTreeSelect v-model="filter.grid" allow-all placeholder="选择地图网格" @update:model-value="gridChanged" /></div>
     <UAlert v-if="error" :description="error" color="error" class="map-error" closable @update:open="value=>{if(!value)error=''}" />
