@@ -91,6 +91,33 @@ public sealed class StoreV2Tests
     }
 
     [Fact]
+    public void InspectionEditKeepsAlreadyLinkedPhotosAndRejectsOtherOwners()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var point = environment.CreatePoint(store);
+        var site = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "site");
+        var foreign = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "site");
+        var original = store.CreateInspection(new(point.Id, Store.Today, "张三", "normal", PhotoIds: [site.Id]));
+        var other = store.CreateInspection(new(point.Id, Store.Today, "李四", "normal", PhotoIds: [foreign.Id]));
+        var updated = store.UpdateInspection(original.Inspection.Id,
+            new(Store.Today, "张三", Notes: "只修改备注", Revision: original.Inspection.Revision, PhotoIds: [site.Id]));
+        Assert.Equal("只修改备注", updated.Inspection.Notes);
+        Assert.Equal(site.Id, Assert.Single(updated.Photos).Id);
+        Assert.Equal(1L, V2Environment.Number(store.DatabasePath, $"SELECT COUNT(*) FROM photos WHERE inspection_id='{original.Inspection.Id}';"));
+        var added = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "site");
+        var appended = store.UpdateInspection(original.Inspection.Id,
+            new(Store.Today, "张三", Notes: "新增现场照", Revision: updated.Inspection.Revision, PhotoIds: [site.Id, added.Id]));
+        Assert.Equal(2, appended.Photos.Length);
+        var conflict = Assert.Throws<ApiException>(() => store.UpdateInspection(original.Inspection.Id,
+            new(Store.Today, "张三", Notes: "抢占其他检查照片", Revision: appended.Inspection.Revision, PhotoIds: [foreign.Id])));
+        Assert.Equal(409, conflict.StatusCode);
+        Assert.Equal("新增现场照", store.GetInspection(original.Inspection.Id).Notes);
+        Assert.Equal(foreign.Id, Assert.Single(store.GetInspectionDetail(other.Inspection.Id).Photos).Id);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Fact]
     public void RemovingTheFinalTemporaryInspectionAlsoRemovesItsPointAndEveryPhoto()
     {
         using var environment = new V2Environment();

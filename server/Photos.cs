@@ -225,10 +225,17 @@ public sealed partial class Store
 
         foreach (var id in photoIds)
         {
-            if (pointId is not null || campaignId is not null)
+            if (pointId is not null || campaignId is not null || inspectionId is not null)
             {
-                using var already = Command("SELECT COUNT(*) FROM photos WHERE id=$id AND phase=$phase AND (($point IS NOT NULL AND point_id=$point) OR ($campaign IS NOT NULL AND campaign_id=$campaign));", tx,
-                    ("$id", id), ("$phase", phase), ("$point", pointId), ("$campaign", campaignId));
+                // Reposting an existing photo from this same owner is idempotent.
+                // A photo attached to an issue, another inspection, or a draft
+                // remains protected by the unbound-only validation below.
+                using var already = Command("""
+                    SELECT COUNT(*) FROM photos WHERE id=$id AND phase=$phase
+                    AND (($point IS NOT NULL AND point_id=$point)
+                      OR ($campaign IS NOT NULL AND campaign_id=$campaign)
+                      OR ($inspection IS NOT NULL AND inspection_id=$inspection AND issue_id IS NULL AND action_id IS NULL));
+                    """, tx, ("$id", id), ("$phase", phase), ("$point", pointId), ("$campaign", campaignId), ("$inspection", inspectionId));
                 if (Convert.ToInt32(already.ExecuteScalar()) > 0) continue;
             }
             string path;

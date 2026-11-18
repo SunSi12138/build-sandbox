@@ -180,7 +180,7 @@ function openEdit() {
     inspector: detail.value.inspection.inspector,
     noticeNumber: detail.value.inspection.noticeNumber,
     notes: detail.value.inspection.notes,
-    extraValues: structuredClone(detail.value.inspection.extraValues??{}),
+    extraValues: { ...(detail.value.inspection.extraValues ?? {}) },
   })
   editPhotoIds.value=detail.value.photos.filter(photo=>photo.phase==='site' && photo.inspectionId).map(photo=>photo.id)
   editError.value = ''
