@@ -258,6 +258,7 @@ public sealed partial class Store
             await context.Response.SendFileAsync(document.FilePath, context.RequestAborted);
         }
         finally { TryDeleteFile(document.FilePath); }
-    }#endif
+    }
+#endif
 
 }
