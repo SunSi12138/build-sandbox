@@ -2,6 +2,7 @@
 import OLMap from 'ol/Map'
 import View from 'ol/View'
 import { unByKey } from 'ol/Observable'
+import type { EventsKey } from 'ol/events'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
@@ -185,7 +186,7 @@ async function exportImage(options: {
   const view = liveMap.getView()
   if (view.getAnimating() || view.getInteracting()) {
     await new Promise<void>((resolve, reject) => {
-      let key: ReturnType<typeof liveMap.once> | undefined
+      let key: EventsKey | undefined
       const cleanup = () => { if(key)unByKey(key);window.clearTimeout(timeout);options.signal?.removeEventListener('abort',cancel) }
       const cancel = () => { cleanup();reject(new Error('已取消地图导出')) }
       const timeout = window.setTimeout(() => {cleanup();reject(new Error('地图仍在移动，请停止拖动后重试导出'))}, 10000)
@@ -255,7 +256,7 @@ async function exportImage(options: {
         exportView.setCenter(mapCenterForPixel((x+widthPart/2)/scale,(y+heightPart/2)/scale))
         const activeMap=exportMap
         await new Promise<void>((resolve,reject)=>{
-          let key: ReturnType<typeof activeMap.once> | undefined
+          let key: EventsKey | undefined
           const cleanup=()=>{if(key)unByKey(key);window.clearTimeout(timeout);options.signal?.removeEventListener('abort',cancel)}
           const cancel=()=>{cleanup();reject(new Error('已取消地图导出'))}
           const timeout=window.setTimeout(()=>{cleanup();reject(new Error('地图渲染超时'))},30000)
