@@ -104,7 +104,7 @@ internal static class MobileApi
                 ("points", "GET") => Ok(store.ListPoints(new PointQuery(
                     Q(r, "q"), Q(r, "communityId"), Q(r, "typeId"), Q(r, "disabled") ?? "false",
                     r.Number("page", 1), r.Number("pageSize", 30), r.Flag("recent"), r.Flag("missed"),
-                    Q(r, "temporary") ?? "false", Tags(r), r.Flag("map"))),
+                    Q(r, "temporary") ?? "false", Tags(r), r.Flag("map")))),
                 ("points", "POST") => Ok(store.SavePoint(null, Body<PointWriteRequest>(r)), 201),
                 ("inspections", "GET") => Ok(store.ListInspections(Inspections(r))),
                 ("inspections", "POST") => Ok(store.CreateInspection(Body<InspectionCreateRequest>(r)), 201),
