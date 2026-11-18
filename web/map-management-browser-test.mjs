@@ -284,6 +284,11 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       assert.equal(await page.locator('#main-map-layer .ol-zoom').count(), 0,
         'map mode should hide OpenLayers zoom controls')
       assert(await page.locator('#main-map-layer .map-fit').isVisible(), 'fit and locate controls should stay visible')
+      await go('/points?view=map&q=no-such-record-for-map-empty-state')
+      await page.waitForFunction(() => document.querySelector('.record-map-shell')?.getAttribute('aria-busy') === 'false')
+      assert.match(await page.locator('.record-map-summary').textContent(), /已标记\s*0\s*条/)
+      assert.equal(await page.getByText('暂无匹配记录', { exact: true }).count(), 0,
+        'zero-result map must not repeat the count with a centered empty-state')
 
       await go('/points')
       await page.getByTestId('point-create').click()
@@ -293,8 +298,10 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await picker.getByRole('button', { name: '画区域', exact: true }).click()
       const canvas = picker.locator('.simple-map-canvas')
       await canvas.locator('.ol-viewport').waitFor()
-      assert.equal(await picker.locator('.ol-zoom').count(), 1,
-        'the location editor must retain zoom buttons')
+      assert.equal(await picker.locator('.ol-zoom').count(), 0,
+        'the location editor must also hide the zoom buttons')
+      assert(await picker.getByRole('button', { name: '查看全部位置' }).isVisible(),
+        'removing zoom buttons must not hide fit-to-content')
       const bounds = await canvas.boundingBox()
       assert(bounds && bounds.width > 300 && bounds.height > 250)
       const polygon = [[0.34, 0.3], [0.61, 0.28], [0.75, 0.52], [0.53, 0.76], [0.28, 0.59]]
