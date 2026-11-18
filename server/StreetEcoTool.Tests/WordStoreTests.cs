@@ -77,7 +77,7 @@ public sealed class WordStoreTests
         foreach (var notice in new[] { false, true })
         {
             var file = fixture.Store.ExportInspectionWord(detail.Inspection.Id, notice);
-            Assert.Equal(new[] { "1000x800", "1200x800", "1600x800", "500x700", "800x1200" }, MediaDimensions(file.FilePath));
+            Assert.Equal(new[] { "1000x800", "1200x800", "1600x800" }, MediaDimensions(file.FilePath));
             var text = DocumentText(file.FilePath);
             Assert.Contains(fixture.Point.Name, text);
             Assert.Contains(fixture.Community.Name, text);
@@ -119,9 +119,9 @@ public sealed class WordStoreTests
         using var input = archive.GetEntry("word/document.xml")!.Open();
         var xml = XDocument.Load(input);
         XNamespace w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-        var table = xml.Descendants(w + "tbl").Single(t => t.Element(w + "tblGrid")?.Elements().Count() == 9);
+        var table = xml.Descendants(w + "tbl").Single(t => t.Element(w + "tblGrid")?.Elements().Count() == 10);
         var rows = table.Elements(w + "tr").Skip(1).SkipLast(1).ToArray();
-        var text = string.Join("\n", Enumerable.Range(0, 9).Select(column => string.Concat(rows.SelectMany(row => row.Elements(w + "tc").ElementAt(column).Descendants(w + "t")).Select(t => t.Value))))
+        var text = string.Join("\n", Enumerable.Range(0, 10).Select(column => string.Concat(rows.SelectMany(row => row.Elements(w + "tc").ElementAt(column).Descendants(w + "t")).Select(t => t.Value))))
             + string.Concat(table.Elements(w + "tr").Last().Descendants(w + "t").Select(t => t.Value));
         Assert.Contains("待整改", text);
         Assert.Contains("历次反馈", text);
