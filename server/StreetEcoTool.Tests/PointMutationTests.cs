@@ -1,4 +1,6 @@
 using Xunit;
+using System.IO.Compression;
+using System.Text.Json;
 
 namespace StreetEcoTool.Tests;
 
@@ -37,6 +39,40 @@ public sealed class PointMutationTests
         Assert.Equal(2, store.GetPoint(point.Id).PhotoCount);
         Assert.Equal(a.Id, store.GetPoint(point.Id).CoverPhotoId);
         Assert.Equal(new[] { a.Id, b.Id }, store.GetPointDetail(point.Id).Photos!.Select(photo => photo.Id));
+    }
+
+    [Fact]
+    public void PointPhotoRemovalIsTransactionalAndCannotLeaveDanglingFieldImages()
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var type = store.GetPointTypes()[0];
+        store.SavePointType(type.Id, new(type.Name, [new("license", "许可证", "image", false)]));
+        var point = environment.CreatePoint(store);
+        var gallery = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
+        var license = store.UploadPhoto(WordExporterTests.Jpeg(120, 80), "point");
+        using var fieldJson = JsonDocument.Parse(JsonSerializer.Serialize(new { license = license.Id }));
+        var extra = fieldJson.RootElement.Clone();
+        var original = store.SavePoint(point.Id, new(point.Name, point.CommunityId, point.TypeId, point.Address,
+            ExtraValues: extra, PhotoIds: [gallery.Id, license.Id], Revision: point.Revision));
+        Assert.Equal(2, original.PhotoCount);
+        // Closing the editor without sending a save leaves the saved picture intact.
+        using (var beforeCancel = store.OpenPhoto(gallery.Id)) Assert.True(beforeCancel.Length > 0);
+        Assert.Equal(409, Assert.Throws<ApiException>(() => store.DeletePhoto(license.Id)).StatusCode);
+        var removeGallery = new PointWriteRequest(original.Name, original.CommunityId, original.TypeId,
+            original.Address, ExtraValues: extra, PhotoIds: [license.Id], Revision: original.Revision);
+        Assert.Equal(409, Assert.Throws<ApiException>(() => store.SavePoint(point.Id,
+            removeGallery with { Revision = point.Revision })).StatusCode);
+        using (var afterFailedSave = store.OpenPhoto(gallery.Id)) Assert.True(afterFailedSave.Length > 0);
+        Assert.Equal(2, store.GetPoint(point.Id).PhotoCount);
+        var saved = store.SavePoint(point.Id, removeGallery);
+        Assert.Equal(1, saved.PhotoCount);
+        Assert.Equal(license.Id, Assert.Single(store.GetPointDetail(point.Id).Photos!).Id);
+        Assert.Equal(404, Assert.Throws<ApiException>(() => store.OpenPhoto(gallery.Id)).StatusCode);
+        Assert.Equal(license.Id, saved.ExtraValues!.Value.GetProperty("license").GetString());
+        using (var docx = ZipFile.OpenRead(store.ExportPlaceWord(point.Id).FilePath))
+            Assert.Single(docx.Entries.Where(entry => entry.FullName.StartsWith("word/media/", StringComparison.Ordinal)));
+        V2Environment.AssertForeignKeys(store.DatabasePath);
     }
 
     [Fact]

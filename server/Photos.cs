@@ -127,6 +127,14 @@ public sealed partial class Store
             PrepareWrite();
             using var linked = Command("SELECT COUNT(*) FROM record_photos WHERE photo_id=$id;", null, ("$id", id));
             if (Convert.ToInt32(linked.ExecuteScalar()) > 0) throw new ApiException(409, "这张照片已存入资料，请在相应记录中移除后保存。");
+            using var fields = Command("""
+                SELECT (SELECT COUNT(*) FROM points p,json_each(p.extra_values) v WHERE v.value=$id)
+                     + (SELECT COUNT(*) FROM inspections n,json_each(n.extra_values) v WHERE v.value=$id)
+                     + (SELECT COUNT(*) FROM campaigns c,json_each(c.extra_values) v WHERE v.value=$id)
+                     + (SELECT COUNT(*) FROM community_records r,json_each(r.body,'$.values') v WHERE r.kind='use' AND v.value=$id);
+                """, null, ("$id", id));
+            if (Convert.ToInt32(fields.ExecuteScalar()) > 0)
+                throw new ApiException(409, "照片仍被自定义字段引用，请先编辑对应记录并保存。");
             DeletePhotoCore(id);
         }
     }
@@ -213,10 +221,12 @@ public sealed partial class Store
         }
         if (photoIds is null || photoIds.Length == 0) return;
         var existingPointPhotos = 0;
+        var existingPointFieldPhotos = 0;
         if (pointId is not null)
         {
             using var initial = Command("SELECT COUNT(*) FROM photos WHERE point_id=$id;", tx, ("$id", pointId));
             existingPointPhotos = Convert.ToInt32(initial.ExecuteScalar());
+            existingPointFieldPhotos = CountPointFieldPhotos(pointId, tx);
         }
         if (photoIds.Length > 100) throw new ApiException(400, "每次最多关联 100 张照片。");
         var uniqueIds = new HashSet<string>(StringComparer.Ordinal);
@@ -260,9 +270,21 @@ public sealed partial class Store
         {
             using var count = Command("SELECT COUNT(*) FROM photos WHERE phase=$phase AND (($point IS NOT NULL AND point_id=$point) OR ($campaign IS NOT NULL AND campaign_id=$campaign));", tx,
                 ("$phase", phase), ("$point", pointId), ("$campaign", campaignId));
-            var maximum = pointId is not null ? Math.Max(9, existingPointPhotos) : 20;
-            if (Convert.ToInt32(count.ExecuteScalar()) > maximum) throw new ApiException(400, $"该阶段照片最多 {maximum} 张。");
+            var maximum = pointId is not null ? Math.Max(9, existingPointPhotos - existingPointFieldPhotos) : 20;
+            var current = Convert.ToInt32(count.ExecuteScalar()) - (pointId is null ? 0 : CountPointFieldPhotos(pointId, tx));
+            if (current > maximum) throw new ApiException(400, $"该阶段普通照片最多 {maximum} 张。");
         }
+    }
+
+    // Named image fields do not count toward the nine-photo gallery limit.
+    private int CountPointFieldPhotos(string pointId, SqliteTransaction transaction)
+    {
+        using var command = Command("""
+            SELECT COUNT(DISTINCT p.id) FROM photos p
+            JOIN json_each((SELECT extra_values FROM points WHERE id=$point)) v ON v.value=p.id
+            WHERE p.point_id=$point;
+            """, transaction, ("$point", pointId));
+        return Convert.ToInt32(command.ExecuteScalar());
     }
 
     private PhotoDto[] ReadPhotos(string? inspectionId = null, string? issueId = null, string? actionId = null, bool includeIssuePhotos = false, string? pointId = null, string? campaignId = null)

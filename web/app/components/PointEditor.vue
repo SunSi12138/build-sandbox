@@ -20,7 +20,7 @@ const usesFailed = computed(() => inlineUses.value.some(x => x.failed))
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(item => ({ label: item.name, value: item.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(item => ({ label: item.name, value: item.id })))
 const extraFields = computed(() => bootstrap.value?.pointTypes.find(t => t.id === state.typeId)?.fields ?? [])
-const extraPhotoIds = computed<string[]>({ get: () => state.photos.map(item => item.id), set: ids => { state.photos = ids.map(id => state.photos.find(p => p.id === id) ?? { id, width: 1, height: 1 }) } })
+const extraPhotoIds = ref<string[]>([])
 const initialSnapshot=ref('')
 function snapshot(){return JSON.stringify({state,shape:mapShape.value,uses:inlineUses.value.map(x=>({name:x.name,data:x.data}))})}
 function mayClose(){return !saving.value&&!photosBusy.value&&!extraPhotosBusy.value&&!usesBusy.value&&(loading.value||snapshot()===initialSnapshot.value||window.confirm('场所资料尚未保存，放弃修改吗？'))}
@@ -30,17 +30,24 @@ watch(open, async value => {
   overlayForm.value = value
   if (!value) return
   error.value = ''; loading.value = true
-  inlineUses.value = []; photosFailed.value = false
+  inlineUses.value = []; photosFailed.value = false; extraPhotoIds.value = []
   const point = props.point
   revision.value = point?.revision
   mapShape.value = props.initialShape ?? null; shapeRevision.value = 0
-  Object.assign(state, point ? { ...point, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : { ...defaults(), coordinates: props.initialCoordinates ?? '' })
+  Object.assign(state, point ? { ...point, extraValues: { ...(point.extraValues ?? {}) }, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : { ...defaults(), coordinates: props.initialCoordinates ?? '' })
   try {
     await load()
     if (!point) state.typeId=bootstrap.value?.pointTypes.find(x=>x.name==='永久建筑')?.id??''
     if (!point && communities.value.length === 1) state.communityId = communities.value[0]!.value
     if (point) { const map = await $fetch<MapState>('/api/map'); const feature = map.features.find(x => x.kind === 'point' && x.id === point.id); mapShape.value = feature?.shape ?? null; shapeRevision.value = feature?.revision ?? 0 }
-    if (point) state.photos = (await $fetch<PointDetailDto>(`/api/points/${point.id}`)).photos?.map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
+    if (point) {
+     const fieldIds = new Set(extraFields.value.filter(field => field.type === 'image')
+       .map(field => String(state.extraValues[field.id] ?? '')).filter(Boolean))
+     extraPhotoIds.value = [...fieldIds]
+     state.photos = (await $fetch<PointDetailDto>(`/api/points/${point.id}`)).photos
+       ?.filter(photo => !fieldIds.has(photo.id))
+       .map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
+   }
   } catch (value) { error.value = errorMessage(value) }
   finally { loading.value = false; initialSnapshot.value=snapshot() }
 })
@@ -59,7 +66,7 @@ async function save() {
   if (inlineUses.value.some(x => !x.name.trim() || !x.data.position.trim() || !x.data.purposeId)) { error.value = '请补全每个用途位置、用途和使用名称，或移除空白项'; return }
   saving.value = true; error.value = ''
   const { longitude, latitude } = parseCoordinates(state.coordinates)
-  const body: PointWriteRequest = { extraValues: state.extraValues, color: state.color, name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: state.photos.map(photo => photo.id) }
+  const body: PointWriteRequest = { extraValues: state.extraValues, color: state.color, name: state.name, communityId: state.communityId, typeId: state.typeId, address: state.address, longitude, latitude, contact: state.contact, phone: state.phone, frequency: props.point?.temporary ? 'irregular' : state.frequency, notes: state.notes, disabled: state.disabled, temporary: props.point?.temporary ?? false, photoIds: [...new Set([...state.photos.map(photo => photo.id), ...extraPhotoIds.value])] }
   body.shape = mapShape.value; body.shapeRevision = shapeRevision.value; body.revision = revision.value
   try { const point = await $fetch<PointDto>(props.point ? `/api/points/${props.point.id}` : '/api/place-dossiers', { method: props.point ? 'PUT' : 'POST', body: props.point ? body : { point: body, uses: inlineUses.value.map(x => ({ name: x.name, parentId: '', data: x.data })) }, retry: 0 }); emit('saved', point); open.value = false }
   catch (value) { error.value = errorMessage(value) }
@@ -83,7 +90,7 @@ onBeforeUnmount(() => { overlayForm.value = false })
         <UFormField label="电话" name="phone"><UInput v-model="state.phone" type="tel" maxlength="100" class="w-full" /></UFormField>
         <details class="field-full" :open="state.frequency!=='irregular'"><summary class="cursor-pointer text-sm text-muted">整体巡查周期</summary><UFormField label="周期" name="frequency" class="mt-3"><USelect v-model="state.frequency" :items="frequencyOptions" :disabled="point?.temporary" class="w-full" /></UFormField></details>
         <UFormField label="备注" name="notes" class="field-full"><UTextarea v-model="state.notes" :rows="3" maxlength="8000" class="w-full" /></UFormField>
-        <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" phase="point" :max="9" :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" @failed="photosFailed=$event" /></UFormField>
+        <UFormField label="现场图片" class="field-full"><PhotoUploader v-model="state.photos" phase="point" :max="9" deferred-removal :quality="bootstrap?.settings.jpegQuality" :disabled="saving || loading" @busy="photosBusy = $event" @failed="photosFailed=$event" /></UFormField>
         <section v-if="!point" class="field-full space-y-4 border-t border-default pt-4"><div class="flex items-center justify-between"><h3 class="font-semibold">使用情况</h3><UButton label="添加使用情况" icon="i-lucide-plus" variant="outline" :disabled="saving" @click="inlineUses.push({key:++nextUseKey,name:'',data:emptyUse(),busy:false,failed:false})" /></div><div v-for="(entry,index) in inlineUses" :key="entry.key" class="rounded-lg border border-default p-3 space-y-3"><div class="flex justify-between items-center"><strong>用途位置 {{ index+1 }}</strong><UButton label="移除" size="sm" color="neutral" variant="ghost" :disabled="saving || entry.busy" @click="inlineUses.splice(index,1)" /></div><UseFields v-model="entry.data" v-model:name="entry.name" :disabled="saving" @busy="entry.busy=$event" @failed="entry.failed=$event" /></div></section>
         <UFormField v-if="point" label="状态" name="disabled" class="field-full"><div class="check-row"><UCheckbox v-model="state.disabled" label="停用" /></div></UFormField>
       </UForm>

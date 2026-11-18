@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
         <UButton type="button" icon="i-lucide-x" color="neutral" variant="ghost" :disabled="disabled || deleting" aria-label="移除未上传照片" @click="askRemove({ kind: 'pending', job })" />
       </div><p v-if="failedCount" class="text-xs text-error">{{ failedCount }} 张未完成，请重试或移除</p>
     </div>
-    <UModal v-model:open="removeOpen" :title="deferredRemoval ? '移除这张照片？' : '删除照片？'" :description="deferredRemoval ? '保存记录后生效，原有历史照片会保留' : '删除后无法恢复'" :dismissible="!deleting" :close="!deleting">
+    <UModal v-model:open="removeOpen" :title="deferredRemoval ? '移除这张照片？' : '删除照片？'" :description="deferredRemoval ? '先从当前表单移除；保存前不会删除已保存的照片' : '删除后无法恢复'" :dismissible="!deleting" :close="!deleting">
       <template #body><UAlert v-if="deleteError" :description="deleteError" color="error" variant="subtle" /></template>
       <template #footer><UButton type="button" color="neutral" variant="outline" :disabled="deleting" @click="removeOpen = false">取消</UButton><UButton type="button" color="error" :loading="deleting" @click="confirmRemove">删除</UButton></template>
     </UModal>

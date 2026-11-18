@@ -91,12 +91,14 @@ public sealed partial class Store
         {
             PrepareWrite();
             if (id is null && request.Temporary) throw new ApiException(400, "临时点位请随排查或整治一起保存。");
-            string actualId;
-            using (var transaction = _db.BeginTransaction())
-            {
-                actualId = SavePointCore(id, request, transaction);
-                transaction.Commit();
-            }
+            // Apply photo removals and point metadata as a single transaction.
+            // An aborted edit or failed validation leaves existing files intact.
+            var keep = request.PhotoIds?.ToHashSet(StringComparer.Ordinal);
+            string[] removed = id is null || keep is null ? [] :
+                ReadPhotos(pointId: id).Where(photo => !keep.Contains(photo.Id)).Select(photo => photo.Id).ToArray();
+            string actualId = "";
+            ExecuteWithPhotoDeletion(removed, transaction =>
+                actualId = SavePointCore(id, request, transaction));
             return GetPoint(actualId);
         }
     }
