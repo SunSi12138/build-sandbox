@@ -8,7 +8,8 @@
     "typecheck": "nuxt typecheck",
     "test:coordinates": "node --experimental-strip-types --test coordinate-conversion.test.mjs",
     "postinstall": "nuxt prepare",
-    "test:depth": "node --experimental-strip-types --test deep-tiles.test.mjs"
+    "test:depth": "node --experimental-strip-types --test deep-tiles.test.mjs",
+    "test:polygon": "node --experimental-strip-types --test polygon-vertices.test.mjs"
   },
   "dependencies": {
     "@iconify-json/lucide": "1.2.142",
