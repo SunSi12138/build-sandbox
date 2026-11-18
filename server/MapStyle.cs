@@ -15,6 +15,7 @@ public sealed partial class Store
         return (provider, MapCacheDirectory(provider.StyleDirectory));
     }
 
+#if !ANDROID
     private async Task ServeMapStyleJsonAsync(HttpContext context)
     {
         var id = Api.Id(context);
@@ -140,5 +141,6 @@ public sealed partial class Store
         };
         context.Response.Headers.CacheControl = "no-store";
         await context.Response.SendFileAsync(path, context.RequestAborted);
-    }
+    }#endif
+
 }
