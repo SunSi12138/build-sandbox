@@ -71,7 +71,7 @@ public sealed class PointMutationTests
         Assert.Equal(404, Assert.Throws<ApiException>(() => store.OpenPhoto(gallery.Id)).StatusCode);
         Assert.Equal(license.Id, saved.ExtraValues!.Value.GetProperty("license").GetString());
         using (var docx = ZipFile.OpenRead(store.ExportPlaceWord(point.Id).FilePath))
-            Assert.Single(docx.Entries.Where(entry => entry.FullName.StartsWith("word/media/", StringComparison.Ordinal)));
+            Assert.Single(docx.Entries, entry => entry.FullName.StartsWith("word/media/", StringComparison.Ordinal));
         V2Environment.AssertForeignKeys(store.DatabasePath);
     }
 
