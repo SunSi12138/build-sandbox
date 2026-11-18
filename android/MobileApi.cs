@@ -133,15 +133,15 @@ internal static class MobileApi
         if (segments.Length == 3 && area == "points" && segments[2] == "batch-delete" && method == "POST")
             return Delete(r, () => store.DeletePoints(Body<PointBulkDeleteRequest>(r).Ids));
         if (segments.Length == 3 && area == "backups" && segments[2] == "download" && method == "GET")
-        {
-            var file = store.CreateBackupZip();
-            try { return new OfflineResponse(200, "application/zip", File.ReadAllBytes(file)); }
-            finally { File.Delete(file); }
-        }
+            // Backups may exceed available heap memory. Use the native Share sheet
+            // instead of buffering a multi-gigabyte ZIP into one HTTP response.
+            return OfflineResponse.Text("请使用 APP 顶部的「导出备份」。", 501);
         if (segments.Length == 3 && area == "photos" && method == "DELETE")
             return Delete(r, () => store.DeletePhoto(segments[2]));
         if (segments.Length == 3 && area == "photos" && method == "PUT")
             return OfflineResponse.Text("Not found", 404);
+        if (segments.Length == 3 && area == "exports" && method == "GET")
+            return ExportWord(store, r, segments[2]);
 
         if (segments.Length < 3) return OfflineResponse.Text("API not found", 404);
         var id = segments[2];
@@ -176,6 +176,9 @@ internal static class MobileApi
                 ("matters", "GET") => Ok(store.GetMatterDetail(id)),
                 ("matters", "PUT") => Ok(store.SaveMatter(id, Body<MatterWriteRequest>(r))),
                 ("matters", "DELETE") => Delete(r, () => store.DeleteMatter(id)),
+                ("attachments", "GET") => GetAttachment(store, id, r),
+                ("attachments", "PUT") => Ok(store.UpdateAttachment(id, Body<AttachmentUpdateRequest>(r))),
+                ("attachments", "DELETE") => Delete(r, () => store.DeleteAttachment(id)),
                 _ => OfflineResponse.Text("API not found", 404)
             };
         }
@@ -183,6 +186,11 @@ internal static class MobileApi
         if (segments.Length == 4)
         {
             var action = segments[3];
+            if (area == "photos" && action == "thumb" && method == "PUT")
+            {
+                store.UploadThumbnail(id, r.Body);
+                return OfflineResponse.Empty();
+            }
             if (action == "tags" && method == "PUT" && area is "points" or "inspections" or "activities" or "matters")
             {
                 var kind = area == "activities" ? "activity" : area[..^1];
@@ -218,12 +226,73 @@ internal static class MobileApi
                 _ => OfflineResponse.Text("API not found", 404)
             };
         }
-        if (segments.Length == 5 && area == "photos" && segments[3] == "thumb" && method == "PUT")
-        {
-            store.UploadThumbnail(id, r.Body);
-            return OfflineResponse.Empty();
-        }
+        if (segments.Length == 5 && segments[3] == "export" && method == "GET" &&
+            area is "inspections" or "activities")
+            return ExportRecordWord(store, area, id, segments[4]);
         return OfflineResponse.Text("API not found", 404);
+    }
+
+    private static OfflineResponse GetAttachment(Store store, string id, OfflineRequest request)
+    {
+        var metadata = store.GetAttachment(id);
+        using var file = store.OpenAttachment(id);
+        using var buffer = new MemoryStream();
+        file.CopyTo(buffer);
+        var disposition = request.Query("preview") == "true" && metadata.CanPreview ? "inline" : "attachment";
+        return new OfflineResponse(200, metadata.ContentType, buffer.ToArray(),
+            new Dictionary<string, string>
+            {
+                ["Content-Disposition"] = disposition + "; filename*=UTF-8''" + Uri.EscapeDataString(metadata.Name),
+                ["X-Content-Type-Options"] = "nosniff"
+            });
+    }
+
+    private static OfflineResponse DownloadWord(WordDownload document)
+    {
+        try
+        {
+            return new OfflineResponse(200, "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                File.ReadAllBytes(document.FilePath),
+                new Dictionary<string, string> {
+                    ["Content-Disposition"] = "attachment; filename*=UTF-8''" + Uri.EscapeDataString(document.FileName)
+                });
+        }
+        finally
+        {
+            try { File.Delete(document.FilePath); } catch (IOException) { }
+        }
+    }
+
+    private static OfflineResponse ExportRecordWord(Store store, string area, string id, string kind) =>
+        (area, kind) switch
+        {
+            ("inspections", "record") => DownloadWord(store.ExportInspectionWord(id, false)),
+            ("inspections", "notice") => DownloadWord(store.ExportInspectionWord(id, true)),
+            ("inspections", "rectification") => DownloadWord(store.ExportRectificationWord(id)),
+            ("activities", "record") => DownloadWord(store.ExportActivityWord(id)),
+            _ => OfflineResponse.Text("Word export not found", 404)
+        };
+
+    private static OfflineResponse ExportWord(Store store, OfflineRequest request, string kind)
+    {
+        var from = request.Query("from") ?? "";
+        var to = request.Query("to") ?? "";
+        var community = request.Query("communityId");
+        var points = request.QueryValues("pointId");
+        var includePhotos = request.Flag("photos");
+        var current = request.Query("scope") == "current";
+        return kind switch
+        {
+            "activity-ledger" => DownloadWord(store.ExportActivityLedgerWord(from, to, community,
+                request.Query("typeId"), includePhotos, points, current ? Activities(request) : null)),
+            "rectification-ledger" => DownloadWord(store.ExportLedgerWord(from, to, community,
+                includePhotos, points, current ? Inspections(request) : null)),
+            "inspection-ledger" => DownloadWord(store.ExportInspectionLedgerWord(from, to, community,
+                points, current ? Inspections(request) : null)),
+            "remediation-ledger" => DownloadWord(store.ExportCampaignLedgerWord(from, to, community,
+                request.Query("remediationTypeId"), includePhotos, points)),
+            _ => OfflineResponse.Text("Word export not found", 404)
+        };
     }
 
     private static OfflineResponse MapApi(Store store, OfflineRequest r, string[] segments)
