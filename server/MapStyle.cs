@@ -141,6 +141,7 @@ public sealed partial class Store
         };
         context.Response.Headers.CacheControl = "no-store";
         await context.Response.SendFileAsync(path, context.RequestAborted);
-    }#endif
+    }
+#endif
 
 }
