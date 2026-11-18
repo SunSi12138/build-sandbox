@@ -1,0 +1,84 @@
+name: MAUI WebView Photo Upload Lab (CoreCLR ARM64)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [maui-webview-photo-lab]
+    paths:
+      - "android/**"
+      - ".github/workflows/android-photo-lab.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: photo-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Build independent photo chooser test APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+      - name: Install MAUI Android workload
+        working-directory: android
+        run: |
+          dotnet --info
+          dotnet workload install maui-android
+      - name: Install Android dependencies
+        working-directory: android
+        run: |
+          dotnet build StreetEcoTool.Mobile.csproj -t:InstallAndroidDependencies -f net11.0-android \
+            -p:AndroidSdkDirectory="$ANDROID_HOME" -p:AcceptAndroidSDKLicenses=true
+      - name: Generate temporary experiment signing key
+        run: |
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/photolab.jks" -alias photolab \
+            -keyalg RSA -keysize 2048 -validity 3650 -storepass android -keypass android \
+            -dname "CN=Photo Lab Test, O=Experiment, C=CN"
+      - name: Publish signed MAUI CoreCLR ARM64 APK
+        working-directory: android
+        run: |
+          dotnet publish StreetEcoTool.Mobile.csproj -c Release -f net11.0-android -r android-arm64 \
+            -p:AndroidPackageFormat=apk -p:PublishAot=false -p:UseMonoRuntime=false \
+            -p:AndroidKeyStore=true \
+            -p:AndroidSigningKeyStore="$RUNNER_TEMP/photolab.jks" \
+            -p:AndroidSigningStorePass=android \
+            -p:AndroidSigningKeyAlias=photolab \
+            -p:AndroidSigningKeyPass=android
+      - name: Verify isolated test app and CoreCLR runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk="$(find android/bin/Release -name '*-Signed.apk' -type f | head -n 1)"
+          test -n "$apk"
+          unzip -l "$apk" > dist/apk-file-list.txt
+          grep -q 'lib/arm64-v8a/libcoreclr.so' dist/apk-file-list.txt
+          grep -q 'lib/arm64-v8a/libclrjit.so' dist/apk-file-list.txt
+          grep -q 'photo-lab.html' dist/apk-file-list.txt
+          if grep -q 'libmonosgen-2.0.so' dist/apk-file-list.txt; then
+            echo "::error::Mono runtime present"
+            exit 1
+          fi
+          cp "$apk" dist/MAUI-WebView-Photo-Lab-arm64.apk
+          sha256sum dist/MAUI-WebView-Photo-Lab-arm64.apk > dist/MAUI-WebView-Photo-Lab-arm64.apk.sha256
+          cp android/PHOTO-LAB.md dist/PHOTO-LAB.md
+          ls -lh dist/*.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: maui-webview-photo-lab-arm64
+          path: |
+            dist/MAUI-WebView-Photo-Lab-arm64.apk
+            dist/MAUI-WebView-Photo-Lab-arm64.apk.sha256
+            dist/PHOTO-LAB.md
+          retention-days: 30
+          if-no-files-found: error
