@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import OLMap from 'ol/Map'
 import View from 'ol/View'
+import { unByKey } from 'ol/Observable'
 import Feature from 'ol/Feature'
 import Point from 'ol/geom/Point'
 import Polygon from 'ol/geom/Polygon'
@@ -170,9 +171,35 @@ async function exportImage(options: { scale: number; partitions: number; layerId
   result.width = resultWidth; result.height = resultHeight
   const context = result.getContext('2d')
   if (!context) throw new Error('无法创建地图导出画布')
-  const view = map.getView()
+  const liveMap = map
+  const view = liveMap.getView()
+  if (view.getAnimating() || view.getInteracting()) {
+    // Exporting in the middle of Ctrl-rotation mixes view transforms between
+    // partitions. Wait for the same settled frame to seed every partition.
+    await new Promise<void>((resolve, reject) => {
+      let key: ReturnType<typeof liveMap.once> | undefined
+      const timeout = window.setTimeout(() => { if (key) unByKey(key); reject(new Error('地图仍在移动，请停止拖动后重试导出')) }, 10000)
+      key = liveMap.once('moveend', () => { window.clearTimeout(timeout); resolve() })
+    })
+  }
+  liveMap.renderSync()
   const resolution = view.getResolution(), rotation = view.getRotation()
   if (!resolution) throw new Error('地图分辨率不可用')
+  // Freeze the actual OpenLayers pixel-to-coordinate affine transform once.
+  // Sampling basis pixels avoids drift when the display is rotated, the
+  // browser resizes, or animation completes between partition renders.
+  const midX = width / 2, midY = height / 2
+  const origin = liveMap.getCoordinateFromPixel([midX, midY])
+  const unitX = liveMap.getCoordinateFromPixel([midX + 1, midY])
+  const unitY = liveMap.getCoordinateFromPixel([midX, midY + 1])
+  if (!origin || !unitX || !unitY) throw new Error('地图变换不可用')
+  const mapCenterForPixel = (x: number, y: number): [number, number] => {
+    const dx = x - midX, dy = y - midY
+    return [
+      origin[0]! + dx * (unitX[0]! - origin[0]!) + dy * (unitY[0]! - origin[0]!),
+      origin[1]! + dx * (unitX[1]! - origin[1]!) + dy * (unitY[1]! - origin[1]!),
+    ]
+  }
   const selectedLayers = props.layers.filter(x => options.layerIds.includes(x.id)).sort((a, b) => a.sortOrder - b.sortOrder)
   const tileLoads = new Map(selectedLayers.map(layer => [layer.id, { success: 0, error: 0, requested: 0 }]))
   const selectedFeatures = (props.exportFeatures ?? props.features).filter(x => !x.disabled && (x.kind === 'grid' ? options.grids : options.markers))
@@ -181,9 +208,9 @@ async function exportImage(options: { scale: number; partitions: number; layerId
       const x = Math.round(resultWidth * column / partitions), y = Math.round(resultHeight * row / partitions)
       const nextX = Math.round(resultWidth * (column + 1) / partitions), nextY = Math.round(resultHeight * (row + 1) / partitions)
       const widthPart = nextX - x, heightPart = nextY - y, bleed = 64
-      // Convert each partition center through the live rotated map's pixel transform.
-      const center = map.getCoordinateFromPixel([(x + widthPart / 2) / scale, (y + heightPart / 2) / scale])
-      if (!center) throw new Error('地图坐标转换失败')
+      // Each partition center derives from the *same* frozen viewport and
+      // integer output pixel grid, not a potentially moving live map.
+      const center = mapCenterForPixel((x + widthPart / 2) / scale, (y + heightPart / 2) / scale)
       const host = document.createElement('div')
       host.style.cssText = `position:fixed;left:-100000px;top:0;width:${widthPart + 2 * bleed}px;height:${heightPart + 2 * bleed}px;pointer-events:none`
       document.body.appendChild(host)
