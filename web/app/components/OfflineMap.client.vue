@@ -174,6 +174,7 @@ async function exportImage(options: { scale: number; partitions: number; layerId
   const resolution = view.getResolution(), rotation = view.getRotation()
   if (!resolution) throw new Error('地图分辨率不可用')
   const selectedLayers = props.layers.filter(x => options.layerIds.includes(x.id)).sort((a, b) => a.sortOrder - b.sortOrder)
+  const tileLoads = new Map(selectedLayers.map(layer => [layer.id, { success: 0, error: 0, requested: 0 }]))
   const selectedFeatures = (props.exportFeatures ?? props.features).filter(x => !x.disabled && (x.kind === 'grid' ? options.grids : options.markers))
   for (let row = 0; row < partitions; row++) {
     for (let column = 0; column < partitions; column++) {
@@ -190,10 +191,19 @@ async function exportImage(options: { scale: number; partitions: number; layerId
       try {
         const source = new VectorSource<Feature<Geometry>>()
         source.addFeatures(selectedFeatures.map(item => new Feature({ geometry: geometry(item.shape), record: item })))
+        const exportTiles = selectedLayers.map(item => {
+          const layer = tileLayer(item)
+          const stats = tileLoads.get(item.id)!
+          const tileSource = layer.getSource()
+          tileSource?.on('tileloadstart', () => { stats.requested++ })
+          tileSource?.on('tileloadend', () => { stats.success++ })
+          tileSource?.on('tileloaderror', () => { stats.error++ })
+          return layer
+        })
         exportMap = new OLMap({
           target: host, pixelRatio: 1, controls: [], interactions: [],
           view: new View({ projection: view.getProjection(), center, resolution: resolution / scale, rotation }),
-          layers: [...selectedLayers.map(tileLayer), new VectorLayer({ source, style: featureStyle, zIndex: 100, declutter: false })],
+          layers: [...exportTiles, new VectorLayer({ source, style: featureStyle, zIndex: 100, declutter: false })],
         })
         const current = exportMap
         await new Promise<void>((resolve, reject) => {
@@ -212,6 +222,16 @@ async function exportImage(options: { scale: number; partitions: number; layerId
       }
     }
   }
+  // rendercomplete is not proof that tiles loaded successfully. Explicitly
+  // identify empty coverage, failed requests, and partial layers before save.
+  const missing = selectedLayers.flatMap(item => {
+    const stats = tileLoads.get(item.id)!
+    if(stats.success===0)return [`${item.name}：未成功加载瓦片（请求 ${stats.requested}，失败 ${stats.error}）`]
+    if(stats.error>0)return [`${item.name}：部分瓦片缺失（成功 ${stats.success}，失败 ${stats.error}）`]
+    return []
+  })
+  if(missing.length&&!window.confirm(`底图不完整：\\n${missing.join('\\n')}\\n是否仍导出已成功渲染的部分？`))
+    throw new Error('已取消缺失底图的导出，请检查图层目录或覆盖范围')
   const blob = await new Promise<Blob>((resolve, reject) => result.toBlob(value => value ? resolve(value) : reject(new Error('地图图片生成失败')), 'image/png'))
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
