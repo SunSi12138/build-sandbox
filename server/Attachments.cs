@@ -176,6 +176,7 @@ public sealed partial class Store
         RequestDelegate delete = context => { Api.RequireDeleteConfirmation(context); DeleteAttachment(Api.Id(context)); context.Response.StatusCode = 204; return Task.CompletedTask; };
         app.MapGet("/api/points/{id}/attachments", list); app.MapPut("/api/points/{id}/attachments", upload);
         app.MapGet("/api/attachments/{id}", download); app.MapPut("/api/attachments/{id}", update); app.MapDelete("/api/attachments/{id}", delete);
-    }#endif
+    }
+#endif
 
 }
