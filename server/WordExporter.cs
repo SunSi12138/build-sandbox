@@ -104,7 +104,11 @@ public static class WordExporter
         WriteCustomFields(document, detail.Inspection.FieldSnapshot, detail.Inspection.ExtraValues, namedPhotos);
         document.Section("发现问题");
         if (detail.Inspection.Result == "incomplete") document.Paragraph("本次未完成检查：" + detail.Inspection.IncompleteReason);
-        if (detail.Issues.Length == 0 && detail.Inspection.Result != "incomplete") document.Paragraph(detail.Inspection.Result == "normal" ? "本次检查未发现问题。" : "原登记问题均已作废。");
+        if (detail.Issues.Length == 0)
+        {
+            if (detail.Inspection.Result != "incomplete")
+                document.Paragraph(detail.Inspection.Result == "normal" ? "本次检查未发现问题。" : "原登记问题均已作废。");
+        }
         else WriteIssues(document, detail.Issues);
         if (!string.IsNullOrWhiteSpace(detail.Inspection.Notes))
         {
@@ -198,6 +202,9 @@ public static class WordExporter
         var completed = detail.Issues.Select(issue => issue.ClosedDate ?? issue.ReviewDate ?? "").Order(StringComparer.Ordinal).Last();
         WriteInspectionInfo(document, detail.Inspection, completed);
         document.Paragraph("一、整改情况", "Heading1");
+        var sharedSite = photos.Where(photo => photo.Photo.InspectionId == detail.Inspection.Id
+            && photo.Photo.IssueId is null && photo.Photo.Phase == "site").ToArray();
+        document.Gallery(sharedSite.Select(photo => (photo, "")).ToArray(), "本次检查共同现场照片");
         for (var index = 0; index < detail.Issues.Length; index++)
         {
             var issue = detail.Issues[index];
@@ -214,7 +221,7 @@ public static class WordExporter
                 values.Add(["办理过程", string.Join("\n", actions.Select(action => $"{action.Date}　{ActionName(action.Kind)}：{action.Notes}"))]);
             var context = PhotoContext(issue, index + 1);
             document.Table(null, values, [20, 80], labelColumn: true, context: context);
-            WriteIssuePhotoTables(document, IssuePhotos(photos, issue), context, actions);
+            WriteIssuePhotoTables(document, photos.Where(photo => photo.Photo.IssueId == issue.Id).ToArray(), context, actions);
         }
         var reviewed = detail.Issues.Select(issue => issue.ReviewDate ?? issue.ClosedDate ?? "").Order(StringComparer.Ordinal).Last();
         WriteSignature(document, settings, reviewed);
@@ -275,15 +282,28 @@ public static class WordExporter
             [5, 9, 13, 9, 22, 9, 8, 13, 12, 16], centeredColumns: [0, 1, 5, 6], repeatColumns: [1, 2, 3],
             summary: $"共 {ledger.Issues.Length} 条，已闭环 {closed}，待复查 {feedback}，待整改 {pending}，其中逾期 {overdue}");
         if (!ledger.IncludePhotos) return;
-        var attachments = ledger.Issues.Select((issue, index) => (Issue: issue, Index: index, Photos: IssuePhotos(ledger.Photos, issue)))
-            .Where(item => item.Photos.Length > 0).ToArray();
-        if (attachments.Length == 0) return;
-        document.Paragraph("附：照片", "Heading1", pageBreak: true);
-        foreach (var item in attachments)
+        var printedShared = new HashSet<string>(StringComparer.Ordinal);
+        var appendixStarted = false;
+        foreach (var (issue, index) in ledger.Issues.Select((issue, index) => (issue, index)))
         {
-            document.Paragraph($"（{ChineseNumber(item.Index + 1)}）问题 {item.Index + 1}　{item.Issue.PointName}", "Heading2");
-            var actions = ledger.History?.FirstOrDefault(history => history.IssueId == item.Issue.Id)?.Actions ?? [];
-            WriteIssuePhotoTables(document, item.Photos, PhotoContext(item.Issue, item.Index + 1), actions);
+            var shared = SortPhotos(ledger.Photos.Where(photo => photo.Photo.InspectionId == issue.InspectionId
+                && photo.Photo.IssueId is null && photo.Photo.Phase == "site"));
+            var own = SortPhotos(ledger.Photos.Where(photo => photo.Photo.IssueId == issue.Id));
+            var showShared = shared.Length > 0 && printedShared.Add(issue.InspectionId);
+            if (!showShared && own.Length == 0) continue;
+            if (!appendixStarted)
+            {
+                document.Paragraph("附：照片", "Heading1", pageBreak: true);
+                appendixStarted = true;
+            }
+            document.Paragraph($"（{ChineseNumber(index + 1)}）问题 {index + 1}　{issue.PointName}", "Heading2");
+            if (showShared) document.Gallery(shared.Select(photo => (photo, "")).ToArray(),
+                issue.PointName + " · " + issue.InspectionDate + " · 共同现场照片");
+            if (own.Length > 0)
+            {
+                var actions = ledger.History?.FirstOrDefault(history => history.IssueId == issue.Id)?.Actions ?? [];
+                WriteIssuePhotoTables(document, own, PhotoContext(issue, index + 1), actions);
+            }
         }
     }
 

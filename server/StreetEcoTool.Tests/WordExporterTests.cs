@@ -310,7 +310,7 @@ public sealed class WordExporterTests
     }
 
     [Fact]
-    public void LedgerPhotoAppendixUsesSharedSitePhotosPerIssueAndIncludesFeedbackAndReview()
+    public void LedgerPhotoAppendixPrintsSharedSitePhotosOnceAndIncludesFeedbackAndReview()
     {
         using var files = new TemporaryFiles();
         var issues = Inspection().Issues;
@@ -320,11 +320,42 @@ public sealed class WordExporterTests
         ValidatePackage(package);
         Assert.Equal(3, package.Media.Length); // Shared photo has one media part even though displayed twice.
         var document = package.Xml("word/document.xml");
-        Assert.Equal(4, document.Descendants(W + "drawing").Count());
+        Assert.Equal(3, document.Descendants(W + "drawing").Count());
         Assert.Contains("整改前", Text(document));
         Assert.Contains("整改后", Text(document));
         Assert.Contains("复查", Text(document));
         Assert.Single(document.Descendants(W + "pageBreakBefore"));
+    }
+
+    [Fact]
+    public void RectificationAndLedgerPlaceCommonPhotosOnceWithThreeDistinctIssuePhotos()
+    {
+        using var files = new TemporaryFiles();
+        var closed = ClosedInspection();
+        var third = closed.Issues[1] with { Id = "issue-third" };
+        var issues = new[] { closed.Issues[0], closed.Issues[1], third };
+        var detail = closed with { Issues = issues };
+        WordPhoto[] photos = [
+            files.Photo('a', "site", 640, 480, null, closed.Inspection.Id),
+            files.Photo('b', "site", 640, 480, issues[0].Id),
+            files.Photo('c', "site", 640, 480, issues[1].Id),
+            files.Photo('d', "site", 640, 480, issues[2].Id)
+        ];
+        using var rectification = new Package(Render(stream => WordExporter.WriteRectificationRecord(stream, detail, Settings(), photos)));
+        ValidatePackage(rectification);
+        Assert.Equal(4, rectification.Xml("word/document.xml").Descendants(W + "drawing").Count());
+        using var ledger = new Package(Render(stream => WordExporter.WriteLedger(stream,
+            new("2026-10-01", "2026-10-31", "全部社区", issues, photos, true), Settings())));
+        ValidatePackage(ledger);
+        Assert.Equal(4, ledger.Xml("word/document.xml").Descendants(W + "drawing").Count());
+
+        var incomplete = closed with {
+            Inspection = closed.Inspection with { Result = "incomplete", IncompleteReason = "现场未开放" },
+            Issues = []
+        };
+        using var noIssue = new Package(Render(stream => WordExporter.WriteRecord(stream, incomplete, Settings(), [])));
+        ValidatePackage(noIssue);
+        Assert.Single(noIssue.Xml("word/document.xml").Descendants(W + "tbl"));
     }
 
     [Fact]
