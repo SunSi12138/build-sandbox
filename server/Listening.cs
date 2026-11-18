@@ -62,15 +62,16 @@ internal sealed class ListeningService
             var missing = _saved.Where(ip => ip is not "127.0.0.1" and not "0.0.0.0" && !adapters.Any(n => n.Address == ip)).ToArray();
             return new SystemInfoResponse(Port, LocalUrl(_current, Port), AccessAddresses(_current, Port, adapters),
                 DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture), "2.0.0", [.. _current], adapters,
-                IsLoopback(remoteAddress), missing, _switching, _lastError);
+                IsLocalMachine(remoteAddress, adapters), missing, _switching, _lastError);
         }
     }
 
     internal ListenResponse Prepare(ListenRequest request, IPAddress? remoteAddress)
     {
-        if (!IsLoopback(remoteAddress)) throw new ApiException(403, "请在运行程序的电脑上修改监听设置");
-        var selected = Normalize(request.Listen);
         var adapters = _interfaces();
+        if (!IsLocalMachine(remoteAddress, adapters))
+            throw new ApiException(403, "请在运行程序的电脑上修改监听设置");
+        var selected = Normalize(request.Listen);
         if (selected.Any(ip => ip is not "127.0.0.1" and not "0.0.0.0" && !adapters.Any(n => n.Address == ip)))
             throw new ApiException(400, "监听地址必须属于本机网卡");
         lock (_gate)
@@ -108,6 +109,20 @@ internal sealed class ListeningService
 
     internal static bool IsLoopback(IPAddress? address) => address is not null &&
         (IPAddress.IsLoopback(address) || address.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(address.MapToIPv4()));
+
+    // A browser on the host can reach the app through its own NIC address
+    // when loopback was intentionally excluded from the listening set.
+    // Never extend this permission to a different LAN client's address.
+    internal bool CanConfigure(IPAddress? remoteAddress) => IsLocalMachine(remoteAddress, _interfaces());
+
+    internal static bool IsLocalMachine(IPAddress? remoteAddress, NetworkInterfaceDto[] adapters)
+    {
+        if (IsLoopback(remoteAddress)) return true;
+        if (remoteAddress is null) return false;
+        var address = remoteAddress.IsIPv4MappedToIPv6 ? remoteAddress.MapToIPv4() : remoteAddress;
+        return address.AddressFamily == AddressFamily.InterNetwork &&
+            adapters.Any(adapter => adapter.Address == address.ToString());
+    }
 
     internal static string[] Normalize(string[]? addresses)
     {
