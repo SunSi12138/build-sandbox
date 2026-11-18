@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { MapLayer } from '~/types/community'
 import { errorMessage } from '~/utils/format'
+import { clientId } from '~/utils/clientId'
 const layers = ref<MapLayer[]>([]), busy = ref(false), error = ref('')
 const editorOpen = ref(false), deleting = ref<MapLayer | null>(null)
 const draft = ref<MapLayer | null>(null)
 const newLayer = (): MapLayer => ({
-  id: 'layer-' + crypto.randomUUID().slice(0, 12), name: '', folder: '', scheme: 'xyz',
+  id: clientId('layer-'), name: '', folder: '', scheme: 'xyz',
   enabled: true, isDefault: false, opacity: 1, minZoom: 0, maxZoom: 20,
   sortOrder: 0, annotation: false, tileType: 'raster', styleJson: '',
   urlTemplate: '', apiKey: '', subdomains: '', updateCache: false, mapKey: '', cacheVersion: 0,

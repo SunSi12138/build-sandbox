@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { PurposeField } from '~/types/community'
+import { clientId } from '~/utils/clientId'
 const fields = defineModel<PurposeField[]>({ required: true })
 defineProps<{ disabled?: boolean }>()
 function addField() {
-  fields.value.push({ id: 'field-' + crypto.randomUUID().slice(0, 12), label: '', type: 'text', required: false, multiline: false })
+  fields.value.push({ id: clientId('field-'), label: '', type: 'text', required: false, multiline: false })
 }
 function move(index: number, offset: number) {
   const target = index + offset
