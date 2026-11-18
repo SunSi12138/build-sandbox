@@ -4,7 +4,9 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text.Json.Serialization;
+#if !ANDROID
 using Microsoft.AspNetCore.Http.Features;
+#endif
 using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
@@ -520,6 +522,7 @@ public sealed partial class Store
     private static void TryDeleteFile(string path) { try { File.Delete(path); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
     private static void TryDeleteDirectory(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
 
+#if !ANDROID
     public void MapBackupApi(WebApplication app)
     {
         RequestDelegate overview = context => context.Response.WriteAsJsonAsync(GetBackups(), BackupJsonContext.Default.BackupOverviewDto, contentType: null, cancellationToken: context.RequestAborted);
@@ -554,5 +557,6 @@ public sealed partial class Store
             await context.Response.WriteAsJsonAsync(result, BackupJsonContext.Default.RestoreResultDto, contentType: null, cancellationToken: context.RequestAborted);
         };
         app.MapPost("/api/backups/restore", restore);
-    }
+    }#endif
+
 }
