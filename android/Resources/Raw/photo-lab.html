@@ -12,7 +12,10 @@ h1{font-size:21px;margin:8px 0}p{line-height:1.55}.muted{font-size:13px;color:#5
 button{appearance:none;border:1px solid #0b6c56;background:#0b6c56;color:white;padding:12px;border-radius:9px;font-size:15px;min-height:43px}
 button.secondary{background:white;color:#0b6c56}button:disabled{opacity:.45}
 input[type=file]{position:absolute;left:-9999px;width:1px;height:1px}
-#preview{max-height:260px;max-width:100%;border-radius:8px;object-fit:contain;display:none;margin:10px 0}
+.preview-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(85px,1fr));gap:8px;margin:10px 0}
+.preview-grid figure{margin:0;min-width:0}
+.preview-grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:7px;background:#edf4ef}
+.preview-grid figcaption{font-size:10px;color:#46584e;overflow-wrap:anywhere;max-height:40px;overflow:hidden}
 pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#14271f;color:#b3efc9;padding:12px;border-radius:9px;min-height:120px;font-size:12px}
 #uploadResult{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 .ok{color:#08724d}.error{color:#b91c1c}
@@ -23,21 +26,21 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#14271f;color:#b3efc9
 <div class="card">
 <h2 style="font-size:17px">1. 文件来源</h2>
 <div class="actions">
-<button id="choose" type="button">从相册选择</button>
-<button id="camera" type="button" class="secondary">拍照（capture）</button>
+<button id="choose" type="button">系统相册 · 多选照片</button>
+<button id="camera" type="button" class="secondary">系统相机拍照</button>
 </div>
 <input id="gallery" type="file" accept="image/*" multiple>
 <input id="captured" type="file" accept="image/*" capture="environment">
-<p id="pickStatus" class="muted">尚未选择文件</p>
-<img id="preview" alt="已选择照片预览">
+<p id="pickStatus" class="muted">尚未选择文件（最多 10 张）</p>
+<div id="previewGrid" class="preview-grid" aria-label="已选择的照片"></div>
 </div>
 <div class="card">
 <h2 style="font-size:17px">2. 图片处理与上传</h2>
 <div class="actions">
-<button type="button" id="upload" disabled>直接上传原图片</button>
-<button type="button" id="normalize" class="secondary" disabled>Canvas 转 JPEG 再上传</button>
+<button type="button" id="upload" disabled>批量直接上传原图</button>
+<button type="button" id="normalize" class="secondary" disabled>批量转 JPEG 并上传</button>
 </div>
-<p class="muted">直接上传用于隔离 HTTP 问题；Canvas 转 JPEG 用于测试 Android WebView 图片解码能力。两种方式都上传到本机 127.0.0.1。</p>
+<p class="muted">逐张上传选中的全部照片，并显示每张结果和成功数量。直接上传用于排查 HTTP；Canvas 转 JPEG 用于排查 WebView 解码。仅连接手机本机 127.0.0.1。</p>
 <div id="uploadResult" role="status"></div>
 </div>
 <div class="card">
@@ -50,88 +53,156 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#14271f;color:#b3efc9
 'use strict';
 var logEl=document.getElementById('log');
 var selected=[];
-var previewUrl=null;
-function log(stage, value){
+var previewUrls=[];
+var busy=false;
+var maxPhotos=10;
+var actionIds=['choose','camera','upload','normalize'];
+function log(stage,value){
  var text=new Date().toLocaleTimeString()+' | '+stage+(value?' | '+value:'');
  logEl.textContent+=text+'\n';
  logEl.scrollTop=logEl.scrollHeight;
  console.info('[PhotoLab] '+text);
 }
-function msg(s, bad){var el=document.getElementById('uploadResult');el.className=bad?'error':'ok';el.textContent=s;}
-function loadPreview(file){
- if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=null;}
- if(!file){document.getElementById('preview').style.display='none';return;}
- previewUrl=URL.createObjectURL(file);
- var image=document.getElementById('preview');
- image.src=previewUrl;image.style.display='block';
- image.onerror=function(){log('预览失败','Blob URL 无法解码');};
- image.onload=function(){log('预览成功',image.naturalWidth+' x '+image.naturalHeight);};
+function msg(s,bad){var el=document.getElementById('uploadResult');el.className=bad?'error':'ok';el.textContent=s;}
+function setBusy(value){
+ busy=value;
+ actionIds.forEach(function(id){
+  document.getElementById(id).disabled=value || ((id==='upload'||id==='normalize')&&!selected.length);
+ });
+}
+function showPreviews(){
+ previewUrls.forEach(function(url){URL.revokeObjectURL(url);});
+ previewUrls=[];
+ var root=document.getElementById('previewGrid');
+ root.textContent='';
+ selected.forEach(function(file,index){
+  var figure=document.createElement('figure');
+  var img=document.createElement('img');
+  var caption=document.createElement('figcaption');
+  img.alt='照片 '+(index+1);
+  img.src=URL.createObjectURL(file);
+  previewUrls.push(img.src);
+  img.onload=function(){log('预览 '+(index+1)+' 成功',img.naturalWidth+'x'+img.naturalHeight);};
+  img.onerror=function(){log('预览 '+(index+1)+' 失败','格式可能不支持');};
+  caption.textContent=(index+1)+'. '+file.name+' ('+(file.size/1048576).toFixed(1)+' MB)';
+  figure.append(img,caption);
+  root.appendChild(figure);
+ });
 }
 function picked(e){
- selected=Array.from(e.target.files||[]);
+ if(busy)return;
+ var incoming=Array.from(e.target.files||[]);
  e.target.value='';
- document.getElementById('pickStatus').textContent=selected.length+' 个文件';
- document.getElementById('upload').disabled=selected.length===0;
- document.getElementById('normalize').disabled=selected.length===0;
+ selected=incoming.slice(0,maxPhotos);
+ if(incoming.length>maxPhotos) log('数量限制','本测试一次最多选取 '+maxPhotos+' 张，其他文件未进入上传队列');
+ document.getElementById('pickStatus').textContent='已选择 '+selected.length+' 张照片（最多 '+maxPhotos+' 张）';
+ document.getElementById('upload').disabled=!selected.length;
+ document.getElementById('normalize').disabled=!selected.length;
  selected.forEach(function(f,i){log('文件选择回调 '+(i+1),f.name+' | '+f.type+' | '+f.size+' bytes');});
- loadPreview(selected[0]);
- if(!selected.length)log('用户取消选择或未收到文件');
+ showPreviews();
+ if(!selected.length)log('取消选择或没有收到文件');
+ else msg('已选择 '+selected.length+' 张；点击批量上传测试',false);
 }
 document.getElementById('gallery').addEventListener('change',picked);
 document.getElementById('captured').addEventListener('change',picked);
-document.getElementById('choose').onclick=function(){log('请求相册文件选择器');document.getElementById('gallery').click();};
-document.getElementById('camera').onclick=function(){log('请求拍照 capture=environment');document.getElementById('captured').click();};
+document.getElementById('choose').onclick=function(){
+ if(busy)return;
+ log('打开 Android 原生照片选择器','input multiple=true');
+ document.getElementById('gallery').click();
+};
+document.getElementById('camera').onclick=function(){
+ if(busy)return;
+ log('打开系统相机','input capture=environment');
+ document.getElementById('captured').click();
+};
 document.getElementById('clear').onclick=function(){logEl.textContent='';};
 document.getElementById('copy').onclick=async function(){
  try{await navigator.clipboard.writeText(logEl.textContent);log('日志已复制');}
  catch(e){log('复制失败',String(e));}
 };
-async function upload(blob,label){
- msg('开始上传：'+label,false);
- log('发送 PUT /api/upload',blob.type+' | '+blob.size+' bytes');
- var xhr=new XMLHttpRequest();
- xhr.open('PUT','/api/upload');
- xhr.setRequestHeader('Content-Type',blob.type||'application/octet-stream');
- xhr.timeout=90000;
- xhr.upload.onprogress=function(e){if(e.lengthComputable)log('上传进度',Math.round(100*e.loaded/e.total)+'%');};
- xhr.onload=function(){
-  log('HTTP响应',xhr.status+' | '+xhr.responseText.slice(0,500));
-  try{
+function upload(blob,label){
+ return new Promise(function(resolve){
+  log('发送 PUT /api/upload',label+' | '+blob.type+' | '+blob.size+' bytes');
+  var xhr=new XMLHttpRequest();
+  xhr.open('PUT','/api/upload');
+  xhr.setRequestHeader('Content-Type',blob.type||'application/octet-stream');
+  xhr.timeout=90000;
+  var progress=-1;
+  xhr.upload.onprogress=function(e){
+   if(!e.lengthComputable)return;
+   var percentage=Math.round(100*e.loaded/e.total);
+   if(percentage>=progress+25 || percentage===100){
+    progress=percentage;
+    log('上传进度',label+' : '+percentage+'%');
+   }
+  };
+  xhr.onload=function(){
+   log('HTTP 响应',label+' : '+xhr.status+' | '+xhr.responseText.slice(0,300));
+   try{
     var data=JSON.parse(xhr.responseText);
-    if(xhr.status===200&&data.ok)msg('上传成功：'+data.bytes+' bytes; SHA256='+data.sha256,false);
-    else msg('上传失败：HTTP '+xhr.status+' '+(data.error||xhr.responseText),true);
-  }catch(e){msg('服务器没有返回 JSON：'+String(e),true);}
- };
- xhr.onerror=function(){log('XHR error','网络或本地服务异常');msg('XHR error：无法连接到 127.0.0.1 本机服务',true);};
- xhr.ontimeout=function(){log('XHR timeout');msg('请求超时',true);};
- xhr.onabort=function(){log('XHR abort');msg('已取消',true);};
- xhr.send(blob);
+    var ok=xhr.status===200&&data.ok===true;
+    resolve({ok:ok,detail:ok?data.bytes+' bytes, sha256='+data.sha256:'HTTP '+xhr.status+' '+(data.error||xhr.responseText)});
+   }catch(e){resolve({ok:false,detail:'非 JSON 响应：'+String(e)});}
+  };
+  xhr.onerror=function(){log('XHR error',label);resolve({ok:false,detail:'XHR error，本地服务连接失败'});};
+  xhr.ontimeout=function(){log('XHR timeout',label);resolve({ok:false,detail:'请求超时'});};
+  xhr.onabort=function(){log('XHR abort',label);resolve({ok:false,detail:'请求取消'});};
+  try{xhr.send(blob);}
+  catch(e){log('XHR send 失败',String(e));resolve({ok:false,detail:String(e)});}
+ });
 }
-document.getElementById('upload').onclick=function(){
- if(!selected.length)return;
- upload(selected[0],'原始文件');
-};
-document.getElementById('normalize').onclick=async function(){
- if(!selected.length)return;
+async function jpeg(file){
+ log('createImageBitmap 开始',file.name);
  var bmp=null,canvas=null;
  try{
-  log('createImageBitmap 开始');
-  bmp=await createImageBitmap(selected[0]);
+  bmp=await createImageBitmap(file);
   log('解码成功',bmp.width+' x '+bmp.height);
   var scale=Math.min(1,1600/Math.max(bmp.width,bmp.height));
   canvas=document.createElement('canvas');
   canvas.width=Math.max(1,Math.round(bmp.width*scale));
   canvas.height=Math.max(1,Math.round(bmp.height*scale));
-  var ctx=canvas.getContext('2d');if(!ctx)throw Error('canvas 2d unavailable');
+  var ctx=canvas.getContext('2d');
+  if(!ctx)throw Error('Canvas 2D 不可用');
   ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
-  var blob=await new Promise(function(resolve,reject){canvas.toBlob(function(v){v?resolve(v):reject(Error('canvas.toBlob failed'));},'image/jpeg',0.75);});
-  log('JPEG 转换成功',blob.size+' bytes');
-  upload(blob,'Canvas JPEG');
- }catch(e){log('图片压缩失败',String(e));msg('图片处理失败：'+String(e),true);}
- finally{if(bmp)bmp.close();if(canvas){canvas.width=1;canvas.height=1;}}
-};
+  var blob=await new Promise(function(resolve,reject){
+   canvas.toBlob(function(v){v?resolve(v):reject(Error('canvas.toBlob failed'));},'image/jpeg',0.75);
+  });
+  log('JPEG 转换成功',file.name+' : '+blob.size+' bytes');
+  return blob;
+ }finally{
+  if(bmp)bmp.close();
+  if(canvas){canvas.width=1;canvas.height=1;}
+ }
+}
+async function uploadAll(convert){
+ if(busy||!selected.length)return;
+ setBusy(true);
+ var results=[];
+ try{
+  for(var i=0;i<selected.length;i++){
+   var file=selected[i],label='['+(i+1)+'/'+selected.length+'] '+file.name;
+   msg('处理中：'+label,false);
+   try{
+    var blob=convert?await jpeg(file):file;
+    var result=await upload(blob,label);
+    results.push({label:label,ok:result.ok,detail:result.detail});
+    log(result.ok?'上传成功':'上传失败',label+' : '+result.detail);
+   }catch(e){
+    results.push({label:label,ok:false,detail:'图片处理异常：'+String(e)});
+    log('图片处理失败',label+' : '+String(e));
+   }
+  }
+  var success=results.filter(function(x){return x.ok;}).length;
+  msg('已处理 '+results.length+' 张；成功 '+success+' 张，失败 '+(results.length-success)+' 张\n'+
+    results.map(function(r){return (r.ok?'✓ ':'× ')+r.label+' — '+r.detail;}).join('\n'),success!==results.length);
+  log('批量上传完成',success+'/'+results.length+' 成功，模式='+(convert?'JPEG':'原图'));
+ }finally{setBusy(false);}
+}
+document.getElementById('upload').onclick=function(){void uploadAll(false);};
+document.getElementById('normalize').onclick=function(){void uploadAll(true);};
+window.addEventListener('pagehide',function(){previewUrls.forEach(URL.revokeObjectURL);});
 log('页面已加载',location.origin);
-fetch('/api/status').then(function(r){return r.json()}).then(function(v){log('本地HTTP服务',JSON.stringify(v));}).catch(function(e){log('本地服务自检失败',String(e));});
+fetch('/api/status').then(function(r){return r.json();}).then(function(v){log('本地HTTP服务',JSON.stringify(v));}).catch(function(e){log('本地服务自检失败',String(e));});
 window.addEventListener('error',function(e){log('JavaScript Error',e.message);});
 window.addEventListener('unhandledrejection',function(e){log('Unhandled Promise',String(e.reason));});
 })();
