@@ -158,8 +158,12 @@ function composite(target: HTMLCanvasElement, host: HTMLElement) {
   context.setTransform(1, 0, 0, 1, 0, 0)
   context.globalAlpha = 1
 }
-async function exportImage(options: { scale: number; partitions: number; layerIds: string[]; markers: boolean; grids: boolean }) {
+async function exportImage(options: {
+  scale: number; partitions: number; layerIds: string[]; markers: boolean; grids: boolean
+  signal?: AbortSignal; onProgress?: (done: number, total: number) => void
+}) {
   if (!map) throw new Error('地图尚未加载')
+  const liveMap = map
   const [width, height] = getExportSize()
   const scale = options.scale, partitions = options.partitions
   if (!Number.isInteger(scale) || scale < 1 || scale > 8 || !Number.isInteger(partitions) || partitions < 1 || partitions > 8)
@@ -167,27 +171,33 @@ async function exportImage(options: { scale: number; partitions: number; layerId
   const resultWidth = Math.round(width * scale), resultHeight = Math.round(height * scale)
   if (!width || !height || resultWidth * resultHeight > 100_000_000 || resultWidth > 32767 || resultHeight > 32767)
     throw new Error('导出分辨率过大')
-  const result = document.createElement('canvas')
-  result.width = resultWidth; result.height = resultHeight
-  const context = result.getContext('2d')
-  if (!context) throw new Error('无法创建地图导出画布')
-  const liveMap = map
+  const bleed = 64
+  // Two offscreen buffers (OpenLayers and compositing), plus the final canvas;
+  // reject oversize jobs before allocating hundreds of megabytes on phones.
+  const partWidth = Math.ceil(resultWidth / partitions) + 2 * bleed
+  const partHeight = Math.ceil(resultHeight / partitions) + 2 * bleed
+  const peakBytes = 4 * (resultWidth * resultHeight + partWidth * partHeight * 3)
+  const maxBytes = window.innerWidth < 768 ? 160 * 1024 * 1024 : 700 * 1024 * 1024
+  if (peakBytes > maxBytes) throw new Error('预计导出内存约 ' + Math.ceil(peakBytes / 1048576) + ' MiB，超过当前设备的安全限额，请调低倍率或增加分区')
+  const checkCanceled = () => { if (options.signal?.aborted) throw new Error('已取消地图导出') }
+  checkCanceled()
+
   const view = liveMap.getView()
   if (view.getAnimating() || view.getInteracting()) {
-    // Exporting in the middle of Ctrl-rotation mixes view transforms between
-    // partitions. Wait for the same settled frame to seed every partition.
     await new Promise<void>((resolve, reject) => {
       let key: ReturnType<typeof liveMap.once> | undefined
-      const timeout = window.setTimeout(() => { if (key) unByKey(key); reject(new Error('地图仍在移动，请停止拖动后重试导出')) }, 10000)
-      key = liveMap.once('moveend', () => { window.clearTimeout(timeout); resolve() })
+      const cleanup = () => { if(key)unByKey(key);window.clearTimeout(timeout);options.signal?.removeEventListener('abort',cancel) }
+      const cancel = () => { cleanup();reject(new Error('已取消地图导出')) }
+      const timeout = window.setTimeout(() => {cleanup();reject(new Error('地图仍在移动，请停止拖动后重试导出'))}, 10000)
+      key = liveMap.once('moveend', () => {cleanup();resolve()})
+      options.signal?.addEventListener('abort',cancel,{once:true})
+      if(options.signal?.aborted)cancel()
     })
   }
+  checkCanceled()
   liveMap.renderSync()
   const resolution = view.getResolution(), rotation = view.getRotation()
   if (!resolution) throw new Error('地图分辨率不可用')
-  // Freeze the actual OpenLayers pixel-to-coordinate affine transform once.
-  // Sampling basis pixels avoids drift when the display is rotated, the
-  // browser resizes, or animation completes between partition renders.
   const midX = width / 2, midY = height / 2
   const origin = liveMap.getCoordinateFromPixel([midX, midY])
   const unitX = liveMap.getCoordinateFromPixel([midX + 1, midY])
@@ -203,68 +213,88 @@ async function exportImage(options: { scale: number; partitions: number; layerId
   const selectedLayers = props.layers.filter(x => options.layerIds.includes(x.id)).sort((a, b) => a.sortOrder - b.sortOrder)
   const tileLoads = new Map(selectedLayers.map(layer => [layer.id, { success: 0, error: 0, requested: 0 }]))
   const selectedFeatures = (props.exportFeatures ?? props.features).filter(x => !x.disabled && (x.kind === 'grid' ? options.grids : options.markers))
-  for (let row = 0; row < partitions; row++) {
-    for (let column = 0; column < partitions; column++) {
-      const x = Math.round(resultWidth * column / partitions), y = Math.round(resultHeight * row / partitions)
-      const nextX = Math.round(resultWidth * (column + 1) / partitions), nextY = Math.round(resultHeight * (row + 1) / partitions)
-      const widthPart = nextX - x, heightPart = nextY - y, bleed = 64
-      // Each partition center derives from the *same* frozen viewport and
-      // integer output pixel grid, not a potentially moving live map.
-      const center = mapCenterForPixel((x + widthPart / 2) / scale, (y + heightPart / 2) / scale)
-      const host = document.createElement('div')
-      host.style.cssText = `position:fixed;left:-100000px;top:0;width:${widthPart + 2 * bleed}px;height:${heightPart + 2 * bleed}px;pointer-events:none`
-      document.body.appendChild(host)
-      let exportMap: OLMap | undefined
-      try {
-        const source = new VectorSource<Feature<Geometry>>()
-        source.addFeatures(selectedFeatures.map(item => new Feature({ geometry: geometry(item.shape), record: item })))
-        const exportTiles = selectedLayers.map(item => {
-          const layer = tileLayer(item)
-          const stats = tileLoads.get(item.id)!
-          const tileSource = layer.getSource()
-          tileSource?.on('tileloadstart', () => { stats.requested++ })
-          tileSource?.on('tileloadend', () => { stats.success++ })
-          tileSource?.on('tileloaderror', () => { stats.error++ })
-          return layer
+  const total = partitions * partitions
+  options.onProgress?.(0, total)
+  const result = document.createElement('canvas')
+  result.width = resultWidth;result.height = resultHeight
+  const context = result.getContext('2d')
+  if (!context) throw new Error('无法创建地图导出画布')
+  const part = document.createElement('canvas')
+  const host = document.createElement('div')
+  host.style.cssText = 'position:fixed;left:-100000px;top:0;pointer-events:none'
+  document.body.appendChild(host)
+  let exportMap: OLMap | undefined
+  let finished = 0
+  try {
+    // Reuse one map and the same tile sources/feature index for all N² pieces.
+    const featureSource = new VectorSource<Feature<Geometry>>()
+    featureSource.addFeatures(selectedFeatures.map(item => new Feature({geometry:geometry(item.shape),record:item})))
+    const exportTiles = selectedLayers.map(item => {
+      const layer = tileLayer(item)
+      const stats = tileLoads.get(item.id)!
+      const tileSource = layer.getSource()
+      tileSource?.on('tileloadstart', () => {stats.requested++})
+      tileSource?.on('tileloadend', () => {stats.success++})
+      tileSource?.on('tileloaderror', () => {stats.error++})
+      return layer
+    })
+    const exportView = new View({projection:view.getProjection(),center:mapCenterForPixel(0,0),resolution:resolution/scale,rotation})
+    exportMap = new OLMap({
+      target:host,pixelRatio:1,controls:[],interactions:[],view:exportView,
+      layers:[...exportTiles,new VectorLayer({source:featureSource,style:featureStyle,zIndex:100,declutter:false})],
+    })
+    for(let row=0;row<partitions;row++){
+      for(let column=0;column<partitions;column++){
+        checkCanceled()
+        const x=Math.round(resultWidth*column/partitions),y=Math.round(resultHeight*row/partitions)
+        const nextX=Math.round(resultWidth*(column+1)/partitions),nextY=Math.round(resultHeight*(row+1)/partitions)
+        const widthPart=nextX-x,heightPart=nextY-y
+        host.style.width=(widthPart+2*bleed)+'px'
+        host.style.height=(heightPart+2*bleed)+'px'
+        exportMap.updateSize()
+        exportView.setCenter(mapCenterForPixel((x+widthPart/2)/scale,(y+heightPart/2)/scale))
+        const activeMap=exportMap
+        await new Promise<void>((resolve,reject)=>{
+          let key: ReturnType<typeof activeMap.once> | undefined
+          const cleanup=()=>{if(key)unByKey(key);window.clearTimeout(timeout);options.signal?.removeEventListener('abort',cancel)}
+          const cancel=()=>{cleanup();reject(new Error('已取消地图导出'))}
+          const timeout=window.setTimeout(()=>{cleanup();reject(new Error('地图渲染超时'))},30000)
+          key=activeMap.once('rendercomplete',()=>{cleanup();resolve()})
+          options.signal?.addEventListener('abort',cancel,{once:true})
+          if(options.signal?.aborted){cancel();return}
+          activeMap.renderSync()
         })
-        exportMap = new OLMap({
-          target: host, pixelRatio: 1, controls: [], interactions: [],
-          view: new View({ projection: view.getProjection(), center, resolution: resolution / scale, rotation }),
-          layers: [...exportTiles, new VectorLayer({ source, style: featureStyle, zIndex: 100, declutter: false })],
-        })
-        const current = exportMap
-        await new Promise<void>((resolve, reject) => {
-          const timeout = window.setTimeout(() => reject(new Error('地图渲染超时')), 30000)
-          current.once('rendercomplete', () => { window.clearTimeout(timeout); resolve() })
-          current.renderSync()
-        })
-        const part = document.createElement('canvas')
-        part.width = widthPart + bleed * 2; part.height = heightPart + bleed * 2
-        composite(part, host)
-        context.drawImage(part, bleed, bleed, widthPart, heightPart, x, y, widthPart, heightPart)
-      } finally {
-        exportMap?.setTarget(undefined)
-        exportMap?.dispose()
-        host.remove()
+        checkCanceled()
+        part.width=widthPart+2*bleed;part.height=heightPart+2*bleed
+        composite(part,host)
+        context.drawImage(part,bleed,bleed,widthPart,heightPart,x,y,widthPart,heightPart)
+        options.onProgress?.(++finished,total)
+        // Allow UI progress and cancellation to be processed between partitions.
+        await new Promise<void>(resolve=>window.setTimeout(resolve,0))
       }
     }
+  } finally {
+    exportMap?.setTarget(undefined)
+    exportMap?.dispose()
+    host.remove()
+    part.width=0;part.height=0
   }
-  // rendercomplete is not proof that tiles loaded successfully. Explicitly
-  // identify empty coverage, failed requests, and partial layers before save.
-  const missing = selectedLayers.flatMap(item => {
-    const stats = tileLoads.get(item.id)!
-    if(stats.success===0)return [`${item.name}：未成功加载瓦片（请求 ${stats.requested}，失败 ${stats.error}）`]
-    if(stats.error>0)return [`${item.name}：部分瓦片缺失（成功 ${stats.success}，失败 ${stats.error}）`]
+  checkCanceled()
+  const missing=selectedLayers.flatMap(item=>{
+    const stats=tileLoads.get(item.id)!
+    if(stats.success===0)return [item.name+'：未成功加载瓦片（请求 '+stats.requested+'，失败 '+stats.error+'）']
+    if(stats.error>0)return [item.name+'：部分瓦片缺失（成功 '+stats.success+'，失败 '+stats.error+'）']
     return []
   })
-  if(missing.length&&!window.confirm(`底图不完整：\\n${missing.join('\\n')}\\n是否仍导出已成功渲染的部分？`))
+  if(missing.length&&!window.confirm('底图不完整：\n'+missing.join('\n')+'\n是否仍导出已成功渲染的部分？'))
     throw new Error('已取消缺失底图的导出，请检查图层目录或覆盖范围')
-  const blob = await new Promise<Blob>((resolve, reject) => result.toBlob(value => value ? resolve(value) : reject(new Error('地图图片生成失败')), 'image/png'))
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
+  checkCanceled()
+  const blob=await new Promise<Blob>((resolve,reject)=>result.toBlob(value=>value?resolve(value):reject(new Error('地图图片生成失败')),'image/png'))
+  const url=URL.createObjectURL(blob)
+  const anchor=document.createElement('a')
   try {
-    anchor.href = url; anchor.download = '社区地图.png'; document.body.appendChild(anchor); anchor.click()
-  } finally { anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000) }
+    anchor.href=url;anchor.download='社区地图.png';document.body.appendChild(anchor);anchor.click()
+  } finally {anchor.remove();window.setTimeout(()=>URL.revokeObjectURL(url),1000);result.width=0;result.height=0}
 }
 function bounds() { if (!map) return; const ext = map.getView().calculateExtent(map.getSize()); const sw = toLonLat([ext[0]!,ext[1]!]), ne = toLonLat([ext[2]!,ext[3]!]); return { west: Math.max(-180,sw[0]!), south: Math.max(-85,sw[1]!), east: Math.min(180,ne[0]!), north: Math.min(85,ne[1]!), zoom: Math.round(map.getView().getZoom() ?? 16) } }
 

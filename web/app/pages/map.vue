@@ -17,13 +17,28 @@ const pending=ref<GeoShape|null>(null),saving=ref(false),editor=ref(false),editi
 const editingGrid=ref<CommunityDto|null>(null)
 const highDefinition=useState('map-high-definition',()=>false)
 const loadDepth=useState<number>('community-map-depth',()=>0)
-const exportOpen=ref(false), exporting=ref(false), exportError=ref('')
+const exportOpen=ref(false), exporting=ref(false), exportError=ref(''), exportProgress=ref(0),exportTotal=ref(0)
+const exportAbort=shallowRef<AbortController|null>(null)
 const exportScale=ref(2), exportPartitions=ref(2), exportMarkers=ref(true), exportGrids=ref(false), exportAll=ref(false)
 const exportLayerIds=ref<string[]>([]), exportBaseSize=ref<[number,number]>([0,0])
 const exportResolution=computed(()=>[exportBaseSize.value[0]*exportScale.value,exportBaseSize.value[1]*exportScale.value])
 function openExport(){exportAll.value=false;exportMarkers.value=true;exportGrids.value=showGridBoundaries.value;exportLayerIds.value=mapState.value.layers.filter(x=>x.enabled).map(x=>x.id);exportBaseSize.value=canvas.value?.getExportSize()??[0,0];exportError.value='';exportOpen.value=true}
 function toggleExportLayer(id:string,checked:boolean){exportLayerIds.value=checked?[...exportLayerIds.value,id]:exportLayerIds.value.filter(x=>x!==id)}
-async function exportMap(){if(exporting.value)return;exporting.value=true;exportError.value='';try{await canvas.value?.exportImage({scale:Number(exportScale.value),partitions:Number(exportPartitions.value),layerIds:exportLayerIds.value,markers:exportMarkers.value,grids:exportGrids.value});exportOpen.value=false}catch(e){exportError.value=errorMessage(e)}finally{exporting.value=false}}
+async function exportMap(){
+  if(exporting.value)return
+  const controller=new AbortController();exportAbort.value=controller;exporting.value=true;exportError.value=''
+  exportProgress.value=0;exportTotal.value=Number(exportPartitions.value)**2
+  try{
+    await canvas.value?.exportImage({
+      scale:Number(exportScale.value),partitions:Number(exportPartitions.value),
+      layerIds:exportLayerIds.value,markers:exportMarkers.value,grids:exportGrids.value,
+      signal:controller.signal,onProgress:(done,total)=>{exportProgress.value=done;exportTotal.value=total},
+    })
+    exportOpen.value=false
+  }catch(e){exportError.value=errorMessage(e)}
+  finally{exporting.value=false;exportAbort.value=null}
+}
+function cancelExport(){if(exporting.value)exportAbort.value?.abort();else exportOpen.value=false}
 function toggleLayer(layer:MapState['layers'][number],checked:boolean){
   // Visibility in the map workspace is a per-client preference, not a
   // configuration edit that could overwrite someone else's path or style.
@@ -132,12 +147,12 @@ useHead({title:'社区地图'})
     <UModal v-model:open="exportOpen" title="导出地图" :dismissible="!exporting" :close="!exporting">
       <template #body><div class="space-y-3">
         <div class="field-grid"><UFormField label="倍率"><UInput v-model.number="exportScale" type="number" min="1" max="8" step="1" class="w-full" :disabled="exporting" /></UFormField><UFormField label="分区"><UInput v-model.number="exportPartitions" type="number" min="1" max="8" step="1" class="w-full" :disabled="exporting" /></UFormField></div>
-        <p>分辨率：{{ exportResolution[0] }} × {{ exportResolution[1] }}</p>
+        <p>分辨率：{{ exportResolution[0] }} × {{ exportResolution[1] }}；预计主画布内存约 {{ Math.ceil(exportResolution[0]*exportResolution[1]*4/1048576) }} MiB</p><p v-if="exporting" role="status">已完成 {{ exportProgress }} / {{ exportTotal }} 个分区</p>
         <div class="space-y-2"><UCheckbox v-for="layer in mapState.layers" :key="layer.id" :model-value="exportLayerIds.includes(layer.id)" :label="layer.name" :disabled="exporting" @update:model-value="value=>toggleExportLayer(layer.id,!!value)" /></div>
         <div class="space-y-2"><UCheckbox v-model="exportAll" label="全部场所（忽略当前筛选）" :disabled="exporting" /><p data-testid="map-export-count" class="text-sm text-muted">将导出 {{ exportPointCount }} 个场所{{ exportAll?'（全部）':'（当前筛选）' }}</p></div><div class="flex flex-wrap gap-4"><UCheckbox v-model="exportMarkers" label="场所标记" :disabled="exporting" /><UCheckbox v-model="exportGrids" label="网格区域" :disabled="exporting" /></div>
         <UAlert v-if="exportError" :description="exportError" color="error" />
       </div></template>
-      <template #footer><UButton label="取消" color="neutral" variant="outline" :disabled="exporting" @click="exportOpen=false" /><UButton label="导出 PNG" :loading="exporting" @click="exportMap" /></template>
+      <template #footer><UButton :label="exporting?'取消导出':'取消'" color="neutral" variant="outline" @click="cancelExport" /><UButton label="导出 PNG" :loading="exporting" :disabled="exporting" @click="exportMap" /></template>
     </UModal>
   </div>
 </template>
