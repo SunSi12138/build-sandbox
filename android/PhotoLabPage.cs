@@ -40,7 +40,7 @@ public sealed class PhotoLabPage : ContentPage
 
         _mode = new Button
         {
-            Text = "增强选择器（拍照 / 相册）",
+            Text = "系统照片选择器（可多选）",
             FontSize = 12,
             Padding = new Thickness(10, 4),
             BackgroundColor = Color.FromArgb("#0b6c56"),
@@ -108,8 +108,8 @@ public sealed class PhotoLabPage : ContentPage
                 : new MauiWebChromeClient(handler));
         }
 #endif
-        _mode.Text = _enhanced ? "增强选择器（拍照 / 相册）" : "MAUI 默认选择器（仅文件）";
-        _status.Text = (_enhanced ? "增强" : "默认") + "文件选择器已启用；点击下方选择图片后直接上传或转 JPEG。";
+        _mode.Text = _enhanced ? "系统照片选择器（可多选）" : "MAUI 默认文件选择器";
+        _status.Text = (_enhanced ? "Android 系统照片选择器（支持多选）" : "MAUI 默认文件选择器") + "已启用；从下方选择照片后可批量上传。";
     }
 
     protected override async void OnAppearing()
@@ -127,7 +127,7 @@ public sealed class PhotoLabPage : ContentPage
             response.EnsureSuccessStatusCode();
             _web.Source = new UrlWebViewSource { Url = server.Origin!.ToString() };
             _status.Text = "本机上传服务已就绪 · " + server.Origin + " · " +
-                           (_enhanced ? "增强" : "默认") + "选择器";
+                           (_enhanced ? "系统照片" : "MAUI 默认") + "选择器";
 #if ANDROID
             Android.Util.Log.Info("PhotoLab", "READY " + server.Origin);
 #endif
