@@ -91,8 +91,22 @@ const photosFailed = computed(() => temporaryPhotoFailed.value || scopePhotosFai
 const uploadsBusy = computed(() => temporaryPhotoBusy.value || scopePhotosBusy.value || overallPhotosBusy.value || Object.values(issuePhotosBusy).some(Boolean))
 const photoCount = computed(() => draft.photos.length + draft.issues.reduce((count, issue) => count + issue.photos.length, 0))
 const formDisabled = computed(() => saving.value || initializing.value)
-const hasDraft = computed(() => Boolean(draft.pointMode === 'temporary' || Object.values(draft.newPoint).some(Boolean) || draft.pointId || draft.notes || draft.noticeNumber || draft.photos.length || draft.issues.length
-  || draft.inspector !== (bootstrap.value?.settings.defaultInspector ?? '') || draft.date !== today.value))
+// Empty arrays/objects are truthy. Only meaningful business values make a
+// draft worth recovering; merely switching to the temporary-place tab does not.
+const hasValues = (fields: Record<string, string | number>) =>
+  Object.values(fields).some(value => value !== '' && value !== null && value !== undefined)
+const hasNewPointContent = computed(() =>
+  (['name','communityId','typeId','address','contact','phone','coordinates'] as const)
+    .some(field => draft.newPoint[field].trim().length > 0)
+  || hasValues(draft.newPoint.extraValues) || draft.newPoint.photoIds.length > 0 || !!draft.tempShape)
+const hasScopeContent = computed(() =>
+  !!draft.scope.inspectionTypeId || !!draft.scope.useId || !!draft.scope.incompleteReason.trim()
+  || hasValues(draft.scope.extraValues) || draft.scope.extraPhotoIds.length > 0
+  || draft.scope.checklist.some(item => item.result !== 'unchecked' || !!item.notes.trim()))
+const hasDraft = computed(() => Boolean(hasNewPointContent.value || hasScopeContent.value
+  || draft.pointId || draft.notes || draft.noticeNumber || draft.photos.length || draft.issues.length
+  || draft.result !== 'normal' || draft.inspector !== (bootstrap.value?.settings.defaultInspector ?? '')
+  || draft.date !== today.value))
 const draftSavedTime = computed(() => {
   if (lastSavedAt.value === null) return ''
   const date = new Date(lastSavedAt.value)
