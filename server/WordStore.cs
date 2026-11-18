@@ -206,6 +206,7 @@ public sealed partial class Store
         catch { TryDeleteFile(path); throw; }
     }
 
+#if !ANDROID
     public void MapWordApi(WebApplication app)
     {
         RequestDelegate record = async context => await SendWordAsync(context, ExportInspectionWord(Api.Id(context), false));
@@ -257,5 +258,6 @@ public sealed partial class Store
             await context.Response.SendFileAsync(document.FilePath, context.RequestAborted);
         }
         finally { TryDeleteFile(document.FilePath); }
-    }
+    }#endif
+
 }
