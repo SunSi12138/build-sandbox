@@ -1,60 +1,58 @@
-# 环保排查 Android / .NET 11 CoreCLR 实验版
+# 环保排查 Android 独立离线实验版（.NET 11 CoreCLR）
 
-此目录位于独立分支 `maui-android-net11-coreclr`；未修改 `hbtool` 生产分支。
+此实验仅在分支 `maui-android-net11-coreclr` 上开发，原 `hbtool` 不受影响。该版本不再需要 Windows/Linux 服务：应用内启动**仅监听 127.0.0.1 的轻量 HTTP 服务**，系统 Android WebView 展示打包在 APK 中的 Nuxt 前端。手机内部存储保存与电脑版**相同架构与 SchemaVersion 6**的 SQLite 数据库。
 
-## 技术范围
+## 重要状态
 
-- .NET SDK **11.0.100**、`net11.0-android`、.NET MAUI 11.0.10。
-- Android **ARM64**（REDMI K90 Pro Max / 澎湃 OS 4 等）。
-- **CoreCLR**，明确 `UseMonoRuntime=false`、`PublishAot=false`。
-- Android 原生 WebView 显示现有 Nuxt SPA；先连接电脑/服务器运行的 `hbtool`。
-- 不在手机内启动 Kestrel/ASP.NET Core；**不是独立离线后端**，不会在手机中创建 SQLite 数据库或直接读取手机内部 PMTiles。
-- 该实验 APK 并不替代 Windows/Linux 端程序；保留原有数据库和地图文件不变。
+- 实现：.NET SDK 11.0.100、MAUI 11、ARM64/CoreCLR（禁止 Mono）；共享服务器 SQLite Store 域逻辑、离线 API、打包前端、Android 文件选择器。
+- 支持：手机本地数据的点位、排查、活动、事项等主要 REST API；本地 PMTiles v3、XYZ/TMS 瓦片、PBF 的字体和 Sprite；数据库与照片附件的完整备份恢复；备份导出。
+- **限制：** Android 全部功能（尤其相机上传、图片缩略图、附件与 Word 文件下载）仍需真机验证和补齐；当前以**实验版**发布，不表示已经完成 REDMI 真机验收。
+- 不访问电脑，不需要网络服务或 Wi-Fi。任何外部站点跳转在 WebView 内被阻止。应用的本机 HTTP 服务不对局域网开放。
+- 手机数据存于 Android 应用沙箱，卸载应用会清除本地数据库、导入的 PMTiles 和样式文件。**卸载前务必导出备份；PMTiles 和样式 ZIP 也应另外留存**。
+
+## APK 安装（REDMI K90 Pro Max / 澎湃 OS 4）
+
+1. 打开 [GitHub Actions 的 Android .NET 11 CoreCLR MAUI APK 工作流](https://github.com/SunSi12138/build-sandbox/actions/workflows/android-coreclr.yml)，选择该实验分支的**最新成功**运行。
+2. 下载 `android-coreclr-arm64` Artifact ZIP，解压并得到 `StreetEcoTool-Mobile-net11-arm64.apk`。
+3. 在红米手机文件管理器中打开 APK；按系统提示允许文件管理器安装未知应用，并完成安装。
+4. 首次启动，应用会在私有存储中创建数据库，然后自动展示打包的页面。**不填写电脑 IP、不启动桌面端、不连接 Wi-Fi**。
+5. 不同 CI 运行使用临时测试签名。更新版本时可能需要卸载旧测试 APK；这样会清除手机私有数据，必须先备份。
+
+## 导入既有电脑数据
+
+1. 在电脑端 `hbtool` 的「备份」页**导出完整备份 ZIP**（不是直接复制 SQLite WAL 文件）。
+2. 将备份 ZIP 通过 USB、手机文件管理器等复制到手机。
+3. 在 Android 顶部工具条点「导入备份」，选中 ZIP，核对数量、时间后确认。
+4. 应用使用原数据库的备份恢复验证逻辑，将数据库、照片、附件恢复到 Android 沙箱；原来的电脑数据库完全不变。
+5. 地图文件通常未包含在完整数据备份中；**PMTiles 和样式需要单独导入**。
+
+## 在手机上离线使用 PMTiles / PBF
+
+1. 把 `vector_label.pmtiles` 或影像 `.pmtiles` 文件复制到手机（U 盘 OTG、USB、文件管理器均可）。
+2. 在 APP 顶部点 **「导入 PMTiles」**，选择 `.pmtiles`；应用会校验 PMTiles v3 文件头，将整个文件复制到应用私有 `tiles` 目录，并自动创建一个本地图层。
+3. 矢量 PMTiles 需要对应样式：把电脑版样式目录（包含 `style.json`、`font/`、`sprite/`）压缩成 ZIP，允许 ZIP 顶部带一层目录 `A/`。
+4. 在 APP 点 **「导入样式 ZIP」**，选 ZIP，并选择刚导入的矢量图层。应用会安全解压到自己的 `tiles/styles/...`，将图层关联到这个样式。
+5. 回到「地图图层设置」，按需启用图层、调整上下顺序。原来卫星图与透明地名标注可叠加；如果矢量样式含有背景、面填充，仍会遮住卫星底图。
+6. 所有瓦片、字体、精灵文件均由 APP 本机私有存储提供，不需要联网，WebView 请求地址为 `127.0.0.1` 的随机端口。
+
+其他本地 XYZ/TMS 瓦片目录可通过后续 Android 目录选择器或备份导入增强。**这份实验 APK 目前主要提供 PMTiles 文件和样式 ZIP 的导入入口。**
+
+## 本地数据目录（不是手机外部可见目录）
+
+- SQLite：`FileSystem.AppDataDirectory/data/app.db`
+- 图片：`FileSystem.AppDataDirectory/photos`
+- 附件：`FileSystem.AppDataDirectory/attachments`
+- 地图：`FileSystem.AppDataDirectory/tiles`
+- 备份/暂存：`FileSystem.AppDataDirectory/backup`、`temp`
+
+不要尝试用 Windows 路径 `F:\\环保排查\\style\\A` 访问手机内容。手机路径在私有沙箱中，应用通过「导入样式 ZIP」自动设置相对目录。
 
 ## 构建 APK
 
-GitHub Actions：`.github/workflows/android-coreclr.yml`。运行并在 Artifacts 下载 `android-coreclr-arm64`，其中是 `StreetEcoTool-Mobile-net11-arm64.apk`。
-SDK、Android 工作负载、JDK21 和 Android SDK 均在 CI 中安装；APK 使用每次运行临时生成的测试签名，**不同 CI 构建不能直接覆盖安装**，更新实验版前先卸载旧版。卸载会删除手机内存储的“服务器地址”，但**不会删除电脑端数据库、图片和 PMTiles**。
+项目：`android/StreetEcoTool.Mobile.csproj`，目标 `net11.0-android` / `android-arm64`，明确 `UseMonoRuntime=false` 和 `PublishAot=false`。
 
-本地编译（已安装 .NET 11、JDK21、MAUI Android 工作负载及 Android SDK）：
+GitHub Actions 会首先用 Node 24 从 `web` 生成 Nuxt 静态页面，然后用 .NET 11、JDK 21、MAUI Android 工作负载编译、签名 ARM64 APK，检查 `libcoreclr.so` / `libclrjit.so` 是否存在，同时排除 Mono。只有工作流成功才代表此构建已完成**编译和 APK 包装检查**；不能替代手机真机启动、相机、地图大文件导入及完整业务流程测试。
 
-```bash
-cd android
-dotnet workload install maui-android
-dotnet publish StreetEcoTool.Mobile.csproj -c Release -f net11.0-android -r android-arm64 -p:AndroidPackageFormat=apk
-```
+## 技术细节
 
-## 在澎湃 OS 4 上安装
-
-1. 手机下载 `StreetEcoTool-Mobile-net11-arm64.apk`。
-2. 用「文件管理」打开安装包，按系统提示允许该文件管理器「安装未知应用」（设置位置因系统版本略有不同），确认安装。
-3. 让手机和 Windows/Linux 后端电脑位于同一个可信 Wi-Fi；避免公共 Wi-Fi 与访客隔离网络。
-4. 电脑启动原版 `StreetEcoTool-win-x64.exe`，在首页监听地址设置中启用 **所有网卡（0.0.0.0）**，确认 Windows 防火墙仅在可信**专用网络**允许程序端口（默认 5180）。
-5. 在电脑命令行运行 `ipconfig` 找到无线/有线网卡 IPv4 地址，例如 `192.168.1.20`。注意 **127.0.0.1 是设备自己，手机不能用这个地址访问电脑**。
-6. 启动 Android APK，输入 `192.168.1.20:5180`，点击「连接现有应用」。手机保存地址，以后可在顶部「设置地址」修改。
-7. 成功后在 WebView 看到与电脑端相同的页面、点位、地图、文档和其他数据。首次加载需要局域网连通；离开网络将无法使用本实验 APK。
-
-如果连接不上：用手机浏览器先访问 `http://192.168.1.20:5180/api/system`。无法访问一般是电脑没开启局域网监听、防火墙阻挡、手机和电脑不同子网，或 Wi-Fi 客户端隔离。
-
-**安全提醒：** 原后端为局域网服务，不提供互联网级的鉴权/HTTPS。仅在可信局域网内使用，不做端口映射到公网。
-
-## 现有 PMTiles/PBF 怎么使用
-
-**使用电脑端已有文件**（保持零数据库迁移）：
-
-1. 在运行后端的电脑，把文件放在地图缓存根目录下，例如 `F:\\环保排查\\tiles\\vector_label.pmtiles`。
-2. 把矢量样式放在电脑的 `F:\\环保排查\\style\\A\\`，其中有 `style.json`、`font/`、`sprite/`。如果仅希望覆盖卫星影像的文字，不要在样式中启用不透明背景/填充图层。
-3. 在**电脑端或 Android WebView 里的地图图层设置**中选择 PMTiles，文件路径填写 `vector_label.pmtiles`（相对于服务端 `tiles` 根目录），样式目录填写 `F:\\环保排查\\style\\A`。
-4. 启用底层卫星影像和上层透明标注图层，在 Android WebView 中打开地图。瓦片及字体/精灵由**电脑端的本地服务**提供，手机通过 Wi-Fi 读取。
-5. 普通栅格加载深度可选 0–3；矢量 PMTiles 使用保持比例的渲染及更高层级预取。
-6. **不支持手机直接选取一个 PMTiles 文件用于完全离线查看。** 如果把 `vector_label.pmtiles` 复制到手机「下载」目录，本实验版不会自动识别；这是后续 Android 本地后端/导入器的工作。
-
-## 为什么没有把 Windows EXE 直接嵌入 APK？
-
-原工程的后端是 `net10.0` 的 ASP.NET Core WebApplication + Kestrel + SQLite（Windows/Linux NativeAOT），使用 `AppContext.BaseDirectory/data` 保存数据库，并依赖目录、文件权限、图片与备份。仅将目标框架切换为 `net11.0-android` 不会使上述服务和存储路径直接可用：Android 应用只能在沙箱内持久化文件，服务端运行环境、Web 服务依赖及文件导入需要单独移植和验证。本实验版以无数据库迁移的局域网 WebView 客户端先验证 CoreCLR/MAUI/系统 WebView 的兼容性。
-
-## 测试清单
-
-- 编译出**签名可安装**的 arm64 APK。
-- 检查 APK 包内有 `lib/arm64-v8a/libcoreclr.so`，而不是 Mono runtime。
-- APK 在手机上手工验证：连接电脑 IPv4、WebView 地图/PMTiles、筛选与地图缩放、相机拍照与附件的 Android WebView 适配。CI 不等于已在 REDMI K90 Pro Max 真机实测。
+旧 ASP.NET Core 的 `Microsoft.AspNetCore.App` Android Runtime Pack 并不是默认提供的组件，因此实验版使用由 `TcpListener` 实现的 loopback-only HTTP 传输，而不是将 Kestrel 的 Linux 二进制打包进 Android。业务模型、SQLite 表结构与多数 Store 方法直接引用原项目源代码；不引入独立的 Android 数据库版本。若设备上运行失败，应保留异常信息并在实验分支修复，而不是在主分支更改数据格式。
