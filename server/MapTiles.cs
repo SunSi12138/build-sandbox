@@ -390,6 +390,7 @@ public sealed partial class Store
             await context.Response.SendFileAsync(file, context.RequestAborted);
         };
         app.MapGet("/api/map/tiles/{layer}/{z:int}/{x:int}/{y:int}", tile);
-    }#endif
+    }
+#endif
 
 }
