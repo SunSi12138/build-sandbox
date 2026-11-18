@@ -302,21 +302,36 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       for (const point of polygon) await page.mouse.click(...screen(point))
       await picker.getByRole('button', { name: '完成区域' }).click()
       await picker.getByRole('button', { name: '调整位置', exact: true }).waitFor()
+      // The map may recenter when it switches from drawing to editing. Use
+      // noninteractive OpenLayers anchors to click the actual vertex pixels.
+      await picker.getByRole('button', { name: '查看全部位置' }).click()
+      await page.waitForTimeout(300)
+      async function clickVertex(index) {
+        const anchor = picker.locator('[data-testid="polygon-vertex-anchor"][data-vertex-index="' + index + '"]')
+        await anchor.waitFor({ state: 'attached' })
+        const point = await anchor.boundingBox(), frame = await canvas.boundingBox()
+        assert(point && frame, 'expected a projected polygon vertex')
+        const x = point.x + point.width / 2, y = point.y + point.height / 2
+        assert(x > frame.x + 15 && x < frame.x + frame.width - 15 &&
+          y > frame.y + 15 && y < frame.y + frame.height - 15,
+          'vertex ' + index + ' must be inside the map viewport before clicking')
+        await page.mouse.click(x, y)
+      }
       const popup = picker.getByTestId('polygon-vertex-popup')
-      await page.mouse.click(...screen(polygon[1]))
+      await clickVertex(1)
       await popup.waitFor({ state: 'visible' })
       assert.match(await popup.textContent(), /已选中顶点\s*2\s*\/\s*5/)
       await popup.getByRole('button', { name: '删除顶点', exact: true }).click()
       await popup.waitFor({ state: 'hidden' })
 
-      // A second vertex can be removed with the keyboard without blurring or
-      // opening any other editor. Geometry must remain a closed triangle.
-      await page.mouse.click(...screen(polygon[2]))
+      // A second vertex can be removed with the keyboard. Closing coordinate
+      // must remain paired and a triangle must not lose any further vertex.
+      await clickVertex(1)
       await popup.waitFor({ state: 'visible' })
       assert.match(await popup.textContent(), /\/\s*4/)
       await page.keyboard.press('Delete')
       await popup.waitFor({ state: 'hidden' })
-      await page.mouse.click(...screen(polygon[3]))
+      await clickVertex(1)
       await popup.waitFor({ state: 'visible' })
       assert.match(await popup.textContent(), /\/\s*3/)
       assert(await popup.getByRole('button', { name: '删除顶点', exact: true }).isDisabled())
