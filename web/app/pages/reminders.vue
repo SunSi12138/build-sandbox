@@ -4,7 +4,16 @@ interface Reminder {pointId:string;pointName:string;communityId:string;community
 const items=ref<Reminder[]>([]),error=ref(''),busy=ref(true),type=ref(''),search=ref('')
 const types=computed(()=>[{label:'全部类型',value:'all'},...Array.from(new Map(items.value.map(x=>[x.typeId,{label:x.typeName,value:x.typeId}])).values())])
 const filtered=computed(()=>items.value.filter(x=>(!type.value||x.typeId===type.value)&&(!search.value||(x.pointName+x.communityName).includes(search.value))))
-async function load(){busy.value=true;try{items.value=await $fetch('/api/type-reminders')}catch(e){error.value=errorMessage(e)}finally{busy.value=false}}
+let loadVersion=0
+async function load(){
+  const version=++loadVersion
+  busy.value=true;error.value=''
+  try{
+    const result=await $fetch<Reminder[]>('/api/type-reminders')
+    if(version===loadVersion)items.value=result
+  }catch(e){if(version===loadVersion)error.value=errorMessage(e)}
+  finally{if(version===loadVersion)busy.value=false}
+}
 onMounted(load)
 const typeOption=useAllOption(type)
 </script>
