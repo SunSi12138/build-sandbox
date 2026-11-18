@@ -298,7 +298,7 @@ public static class WordExporter
             }
             document.Paragraph($"（{ChineseNumber(index + 1)}）问题 {index + 1}　{issue.PointName}", "Heading2");
             if (showShared) document.Gallery(shared.Select(photo => (photo, "")).ToArray(),
-                issue.PointName + " · " + issue.InspectionDate + " · 共同现场照片");
+                issue.PointName + " · " + issue.InspectionDate + " · 整改前 · 共同现场照片");
             if (own.Length > 0)
             {
                 var actions = ledger.History?.FirstOrDefault(history => history.IssueId == issue.Id)?.Actions ?? [];
