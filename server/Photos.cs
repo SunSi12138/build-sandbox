@@ -413,6 +413,7 @@ public static class PhotoApi
         app.MapPut("/api/photos/{id}/thumb", thumbnail);
         app.MapGet("/photos/{id}", read);
         app.MapDelete("/api/photos/{id}", delete);
-    }#endif
+    }
+#endif
 
 }
