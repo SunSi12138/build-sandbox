@@ -9,8 +9,8 @@
     <RootNamespace>StreetEcoTool.Mobile</RootNamespace>
     <ApplicationTitle>环保排查</ApplicationTitle>
     <ApplicationId>com.streetecotool.mobile</ApplicationId>
-    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
-    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.2.0</ApplicationDisplayVersion>
+    <ApplicationVersion>2</ApplicationVersion>
     <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
     <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
@@ -29,6 +29,6 @@
     <!-- Reuse the original SQLite schema and domain Store on Android; no ASP.NET endpoints are included. -->
     <Compile Include="../server/*.cs" Exclude="../server/Program.cs;../server/Startup.cs;../server/Api.cs;../server/Listening.cs" Link="Shared/%(Filename)%(Extension)" />
     <Compile Remove="probes/**/*.cs" />
-    <MauiAsset Include="Resources/Raw/wwwroot/**" LogicalName="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+    <MauiAsset Include="../web/.output/public/**" LogicalName="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
