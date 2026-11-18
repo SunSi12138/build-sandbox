@@ -280,9 +280,8 @@ a.list-row:hover { background:var(--surface-2); }
 @media(min-width:768px){.main-shell{--main-map-left:56px}}
 @media(min-width:1024px){.main-shell{--main-map-left:208px}}
 @media(max-width:767px){
-  .main-map-layer .simple-map .ol-zoom{bottom:calc(104px + env(safe-area-inset-bottom))}
-  .main-map-layer .map-fit{bottom:calc(184px + env(safe-area-inset-bottom))}
-  .main-map-layer .map-locate{bottom:calc(230px + env(safe-area-inset-bottom))}
-  .main-map-layer .map-north{bottom:calc(276px + env(safe-area-inset-bottom))}
+  .main-map-layer .map-fit{bottom:calc(104px + env(safe-area-inset-bottom))}
+  .main-map-layer .map-locate{bottom:calc(150px + env(safe-area-inset-bottom))}
+  .main-map-layer .map-north{bottom:calc(196px + env(safe-area-inset-bottom))}
   .main-map-layer .simple-map .ol-scale-line{bottom:calc(68px + env(safe-area-inset-bottom))}
 }
