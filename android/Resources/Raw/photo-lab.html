@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>MAUI WebView 照片上传验证</title>
+<style>
+:root{font-family:system-ui,sans-serif;color-scheme:light;color:#12221c;background:#f6faf7}
+body{margin:0;padding:14px;max-width:720px;margin-inline:auto}
+h1{font-size:21px;margin:8px 0}p{line-height:1.55}.muted{font-size:13px;color:#52645c}
+.card{background:#fff;border:1px solid #dce7e0;border-radius:12px;padding:14px;margin:12px 0}
+.actions{display:flex;flex-wrap:wrap;gap:9px}
+button{appearance:none;border:1px solid #0b6c56;background:#0b6c56;color:white;padding:12px;border-radius:9px;font-size:15px;min-height:43px}
+button.secondary{background:white;color:#0b6c56}button:disabled{opacity:.45}
+input[type=file]{position:absolute;left:-9999px;width:1px;height:1px}
+#preview{max-height:260px;max-width:100%;border-radius:8px;object-fit:contain;display:none;margin:10px 0}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#14271f;color:#b3efc9;padding:12px;border-radius:9px;min-height:120px;font-size:12px}
+#uploadResult{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+.ok{color:#08724d}.error{color:#b91c1c}
+</style></head>
+<body>
+<h1>MAUI WebView 图片上传实验</h1>
+<p class="muted">仅在手机本机运行。不使用业务数据库、不联网、不修改照片或地图数据。测试相册选择、相机拍摄、图片解码和本机 HTTP 上传。</p>
+<div class="card">
+<h2 style="font-size:17px">1. 文件来源</h2>
+<div class="actions">
+<button id="choose" type="button">从相册选择</button>
+<button id="camera" type="button" class="secondary">拍照（capture）</button>
+</div>
+<input id="gallery" type="file" accept="image/*" multiple>
+<input id="captured" type="file" accept="image/*" capture="environment">
+<p id="pickStatus" class="muted">尚未选择文件</p>
+<img id="preview" alt="已选择照片预览">
+</div>
+<div class="card">
+<h2 style="font-size:17px">2. 图片处理与上传</h2>
+<div class="actions">
+<button type="button" id="upload" disabled>直接上传原图片</button>
+<button type="button" id="normalize" class="secondary" disabled>Canvas 转 JPEG 再上传</button>
+</div>
+<p class="muted">直接上传用于隔离 HTTP 问题；Canvas 转 JPEG 用于测试 Android WebView 图片解码能力。两种方式都上传到本机 127.0.0.1。</p>
+<div id="uploadResult" role="status"></div>
+</div>
+<div class="card">
+<h2 style="font-size:17px">3. 诊断日志</h2>
+<div class="actions"><button id="clear" type="button" class="secondary">清除日志</button><button id="copy" type="button" class="secondary">复制日志</button></div>
+<pre id="log" aria-live="polite"></pre>
+</div>
+<script>
+(function(){
+'use strict';
+var logEl=document.getElementById('log');
+var selected=[];
+var previewUrl=null;
+function log(stage, value){
+ var text=new Date().toLocaleTimeString()+' | '+stage+(value?' | '+value:'');
+ logEl.textContent+=text+'\n';
+ logEl.scrollTop=logEl.scrollHeight;
+ console.info('[PhotoLab] '+text);
+}
+function msg(s, bad){var el=document.getElementById('uploadResult');el.className=bad?'error':'ok';el.textContent=s;}
+function loadPreview(file){
+ if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=null;}
+ if(!file){document.getElementById('preview').style.display='none';return;}
+ previewUrl=URL.createObjectURL(file);
+ var image=document.getElementById('preview');
+ image.src=previewUrl;image.style.display='block';
+ image.onerror=function(){log('预览失败','Blob URL 无法解码');};
+ image.onload=function(){log('预览成功',image.naturalWidth+' x '+image.naturalHeight);};
+}
+function picked(e){
+ selected=Array.from(e.target.files||[]);
+ e.target.value='';
+ document.getElementById('pickStatus').textContent=selected.length+' 个文件';
+ document.getElementById('upload').disabled=selected.length===0;
+ document.getElementById('normalize').disabled=selected.length===0;
+ selected.forEach(function(f,i){log('文件选择回调 '+(i+1),f.name+' | '+f.type+' | '+f.size+' bytes');});
+ loadPreview(selected[0]);
+ if(!selected.length)log('用户取消选择或未收到文件');
+}
+document.getElementById('gallery').addEventListener('change',picked);
+document.getElementById('captured').addEventListener('change',picked);
+document.getElementById('choose').onclick=function(){log('请求相册文件选择器');document.getElementById('gallery').click();};
+document.getElementById('camera').onclick=function(){log('请求拍照 capture=environment');document.getElementById('captured').click();};
+document.getElementById('clear').onclick=function(){logEl.textContent='';};
+document.getElementById('copy').onclick=async function(){
+ try{await navigator.clipboard.writeText(logEl.textContent);log('日志已复制');}
+ catch(e){log('复制失败',String(e));}
+};
+async function upload(blob,label){
+ msg('开始上传：'+label,false);
+ log('发送 PUT /api/upload',blob.type+' | '+blob.size+' bytes');
+ var xhr=new XMLHttpRequest();
+ xhr.open('PUT','/api/upload');
+ xhr.setRequestHeader('Content-Type',blob.type||'application/octet-stream');
+ xhr.timeout=90000;
+ xhr.upload.onprogress=function(e){if(e.lengthComputable)log('上传进度',Math.round(100*e.loaded/e.total)+'%');};
+ xhr.onload=function(){
+  log('HTTP响应',xhr.status+' | '+xhr.responseText.slice(0,500));
+  try{
+    var data=JSON.parse(xhr.responseText);
+    if(xhr.status===200&&data.ok)msg('上传成功：'+data.bytes+' bytes; SHA256='+data.sha256,false);
+    else msg('上传失败：HTTP '+xhr.status+' '+(data.error||xhr.responseText),true);
+  }catch(e){msg('服务器没有返回 JSON：'+String(e),true);}
+ };
+ xhr.onerror=function(){log('XHR error','网络或本地服务异常');msg('XHR error：无法连接到 127.0.0.1 本机服务',true);};
+ xhr.ontimeout=function(){log('XHR timeout');msg('请求超时',true);};
+ xhr.onabort=function(){log('XHR abort');msg('已取消',true);};
+ xhr.send(blob);
+}
+document.getElementById('upload').onclick=function(){
+ if(!selected.length)return;
+ upload(selected[0],'原始文件');
+};
+document.getElementById('normalize').onclick=async function(){
+ if(!selected.length)return;
+ var bmp=null,canvas=null;
+ try{
+  log('createImageBitmap 开始');
+  bmp=await createImageBitmap(selected[0]);
+  log('解码成功',bmp.width+' x '+bmp.height);
+  var scale=Math.min(1,1600/Math.max(bmp.width,bmp.height));
+  canvas=document.createElement('canvas');
+  canvas.width=Math.max(1,Math.round(bmp.width*scale));
+  canvas.height=Math.max(1,Math.round(bmp.height*scale));
+  var ctx=canvas.getContext('2d');if(!ctx)throw Error('canvas 2d unavailable');
+  ctx.drawImage(bmp,0,0,canvas.width,canvas.height);
+  var blob=await new Promise(function(resolve,reject){canvas.toBlob(function(v){v?resolve(v):reject(Error('canvas.toBlob failed'));},'image/jpeg',0.75);});
+  log('JPEG 转换成功',blob.size+' bytes');
+  upload(blob,'Canvas JPEG');
+ }catch(e){log('图片压缩失败',String(e));msg('图片处理失败：'+String(e),true);}
+ finally{if(bmp)bmp.close();if(canvas){canvas.width=1;canvas.height=1;}}
+};
+log('页面已加载',location.origin);
+fetch('/api/status').then(function(r){return r.json()}).then(function(v){log('本地HTTP服务',JSON.stringify(v));}).catch(function(e){log('本地服务自检失败',String(e));});
+window.addEventListener('error',function(e){log('JavaScript Error',e.message);});
+window.addEventListener('unhandledrejection',function(e){log('Unhandled Promise',String(e.reason));});
+})();
+</script></body></html>
