@@ -34,7 +34,7 @@ watch(sketching, value => emit('sketching', value), { flush: 'sync' })
 let map: OLMap | undefined, draw: Draw | undefined, modify: Modify | undefined, snaps: Snap[] = []
 const source = new VectorSource<Feature<Geometry>>()
 const editing = new VectorSource<Feature<Geometry>>()
-let tiles: (TileLayer<XYZ> | VectorTileLayer)[] = []
+const tiles = new Map<string, { layer: TileLayer<XYZ> | VectorTileLayer; signature: string }>()
 let resizing: ResizeObserver | undefined
 function geometry(value: GeoShape) { return value.type === 'Point' ? new Point(fromLonLat(value.coordinates[0]!)) : value.type === 'MultiPolygon' ? new MultiPolygon((value.areas ?? []).map(area => [area.map(x => fromLonLat(x))])) : new Polygon([value.coordinates.map(x => fromLonLat(x))]) }
 function readShape(g: Geometry): GeoShape {
@@ -68,10 +68,29 @@ function tileLayer(item: MapLayer) {
 }
 function refreshLayers() {
   if (!map) return
-  tiles.forEach(layer => map!.removeLayer(layer)); tiles = []
-  for (const item of [...props.layers].filter(x => x.enabled).sort((a, b) => a.sortOrder - b.sortOrder)) {
-    const layer = tileLayer(item)
-    tiles.push(layer); map.addLayer(layer)
+  const validIds = new Set(props.layers.map(layer => layer.id))
+  for (const [id, entry] of tiles) {
+    if (validIds.has(id)) continue
+    map.removeLayer(entry.layer)
+    tiles.delete(id)
+  }
+  for (const item of [...props.layers].sort((a, b) => a.sortOrder - b.sortOrder)) {
+    // A visibility toggle must never reconstruct the tile source/cache.
+    // Reconstruct only when the actual source/style configuration changes.
+    const signature = JSON.stringify({
+      folder: item.folder, scheme: item.scheme, sortOrder: item.sortOrder, opacity: item.opacity,
+      minZoom: item.minZoom, maxZoom: item.maxZoom, annotation: item.annotation,
+      tileType: item.tileType, styleJson: item.styleJson, cacheVersion: item.cacheVersion,
+      loadDepth: props.loadDepth ?? 0,
+    })
+    const existing = tiles.get(item.id)
+    if (existing?.signature !== signature) {
+      if (existing) map.removeLayer(existing.layer)
+      const layer = tileLayer(item)
+      layer.setVisible(item.enabled)
+      map.addLayer(layer)
+      tiles.set(item.id, { layer, signature })
+    } else existing.layer.setVisible(item.enabled)
   }
 }
 function clearInteractions() {
