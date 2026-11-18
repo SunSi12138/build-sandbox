@@ -54,7 +54,8 @@ public sealed class CommunityReportingTests
         var permit = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "point");
         var site = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "point");
         store.SaveCommunityRecord("use", null, new(point.Id, "持证商户",
-            Data($"""{"purposeId":"{{purpose.Id}}","position":"一楼","state":"使用中","photoIds":["{{permit.Id}}","{{site.Id}}"],"values":{"permit":"{{permit.Id}}"}}""")));
+            Data(JsonSerializer.Serialize(new { purposeId = purpose.Id, position = "一楼", state = "使用中",
+                photoIds = new[] { permit.Id, site.Id }, values = new { permit = permit.Id } }))));
         var report = store.GetReport(new("uses"));
         Assert.Contains("营业许可证：已附图片", Assert.Single(report.Rows)[5]);
         var place = store.ExportPlaceWord(point.Id);
@@ -74,7 +75,7 @@ public sealed class CommunityReportingTests
         var after = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "after");
         var campaign = store.SaveCampaign(null, new("现场整治", type.Id, point.Id, Store.Today, "施工",
             BeforePhotoIds: [license.Id, before.Id], AfterPhotoIds: [after.Id],
-            ExtraValues: Data($"""{"license":"{{license.Id}}"}""")));
+            ExtraValues: Data(JsonSerializer.Serialize(new { license = license.Id }))));
         foreach (var export in new[] { store.ExportCampaignWord(campaign.Campaign.Id),
             store.ExportCampaignLedgerWord(Store.Today, Store.Today, includePhotos: true) })
         {
