@@ -277,6 +277,56 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await picker.getByRole('button', { name: '取消', exact: true }).click()
       await editor.getByRole('button', { name: '取消', exact: true }).click()
     })
+    await test('M08 map-view zoom buttons are hidden; polygon vertices select and delete safely', async () => {
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await go('/points?view=map')
+      await page.locator('#main-map-layer .simple-map-canvas .ol-viewport').waitFor()
+      assert.equal(await page.locator('#main-map-layer .ol-zoom').count(), 0,
+        'map mode should hide OpenLayers zoom controls')
+      assert(await page.locator('#main-map-layer .map-fit').isVisible(), 'fit and locate controls should stay visible')
+
+      await go('/points')
+      await page.getByTestId('point-create').click()
+      const editor = page.getByRole('dialog', { name: '新增点位', exact: true })
+      await editor.getByRole('button', { name: /^(标记位置|编辑位置)$/ }).click()
+      const picker = page.getByRole('dialog', { name: '标记位置', exact: true })
+      await picker.getByRole('button', { name: '画区域', exact: true }).click()
+      const canvas = picker.locator('.simple-map-canvas')
+      await canvas.locator('.ol-viewport').waitFor()
+      assert.equal(await picker.locator('.ol-zoom').count(), 1,
+        'the location editor must retain zoom buttons')
+      const bounds = await canvas.boundingBox()
+      assert(bounds && bounds.width > 300 && bounds.height > 250)
+      const polygon = [[0.34, 0.3], [0.61, 0.28], [0.75, 0.52], [0.53, 0.76], [0.28, 0.59]]
+      const screen = ([x, y]) => [bounds.x + bounds.width * x, bounds.y + bounds.height * y]
+      for (const point of polygon) await page.mouse.click(...screen(point))
+      await picker.getByRole('button', { name: '完成区域' }).click()
+      await picker.getByRole('button', { name: '调整位置', exact: true }).waitFor()
+      const popup = picker.getByTestId('polygon-vertex-popup')
+      await page.mouse.click(...screen(polygon[1]))
+      await popup.waitFor({ state: 'visible' })
+      assert.match(await popup.textContent(), /已选中顶点\s*2\s*\/\s*5/)
+      await popup.getByRole('button', { name: '删除顶点', exact: true }).click()
+      await popup.waitFor({ state: 'hidden' })
+
+      // A second vertex can be removed with the keyboard without blurring or
+      // opening any other editor. Geometry must remain a closed triangle.
+      await page.mouse.click(...screen(polygon[2]))
+      await popup.waitFor({ state: 'visible' })
+      assert.match(await popup.textContent(), /\/\s*4/)
+      await page.keyboard.press('Delete')
+      await popup.waitFor({ state: 'hidden' })
+      await page.mouse.click(...screen(polygon[3]))
+      await popup.waitFor({ state: 'visible' })
+      assert.match(await popup.textContent(), /\/\s*3/)
+      assert(await popup.getByRole('button', { name: '删除顶点', exact: true }).isDisabled())
+      await page.keyboard.press('Delete')
+      assert.match(await popup.textContent(), /\/\s*3/, 'a triangle cannot lose another vertex')
+
+      await picker.getByRole('button', { name: '确定', exact: true }).click()
+      assert(await editor.getByText('已标记区域').isVisible(), 'valid polygon should be returned to the point editor')
+      await editor.getByRole('button', { name: '取消', exact: true }).click()
+    })
     await test('M07 clear-filter icon stays last and visible, and fullscreen map chrome is transparent', async () => {
       await page.setViewportSize({ width: 375, height: 812 })
       for (const target of ['/points', '/inspections', '/activities', '/matters']) {
