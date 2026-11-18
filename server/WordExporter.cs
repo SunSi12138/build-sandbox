@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using System.Xml;
 
 namespace StreetEcoTool;
@@ -20,7 +21,10 @@ public static class WordExporter
         using var document = new Document(destination, false, "场所档案", settings.StreetName);
         document.Paragraph("场所档案", "Title");
         document.Table(null, [["编号", point.Id], ["名称", point.Name], ["网格", point.CommunityName], ["形态", point.TypeName], ["地址", point.Address], ["联系人", point.Contact], ["电话", point.Phone], ["状态", point.Disabled ? "已停用" : "使用中"]], [24, 76], labelColumn: true);
-        document.Gallery(photos.Select(x => (x, "")).ToArray(), "场所照片");
+        var namedPhotos = CustomFieldPhotos(point.FieldSnapshot, point.ExtraValues, photos);
+        var namedIds = namedPhotos.Select(x => x.Photo.Photo.Id).ToHashSet(StringComparer.Ordinal);
+        WriteCustomFields(document, point.FieldSnapshot, point.ExtraValues, namedPhotos);
+        document.Gallery(photos.Where(x => !namedIds.Contains(x.Photo.Id)).Select(x => (x, "")).ToArray(), "场所照片");
         foreach (var use in uses)
         {
             var r = use.Record;
@@ -74,6 +78,9 @@ public static class WordExporter
         if (detail.Inspection.InspectionTypeName.Length > 0) document.Paragraph("检查类型：" + detail.Inspection.InspectionTypeName);
         if (detail.Inspection.UseName.Length > 0) document.Paragraph("经营使用：" + detail.Inspection.UseName);
         foreach (var item in detail.Inspection.Checklist ?? []) document.Paragraph(item.Name + "：" + (item.Result switch { "normal" => "正常", "issues" => "发现问题", "na" => "不适用", _ => "未检查" }) + (item.Notes.Length > 0 ? "；" + item.Notes : ""));
+        var namedPhotos = CustomFieldPhotos(detail.Inspection.FieldSnapshot, detail.Inspection.ExtraValues, photos);
+        var namedIds = namedPhotos.Select(x => x.Photo.Photo.Id).ToHashSet(StringComparer.Ordinal);
+        WriteCustomFields(document, detail.Inspection.FieldSnapshot, detail.Inspection.ExtraValues, namedPhotos);
         document.Section("发现问题");
         if (detail.Inspection.Result == "incomplete") document.Paragraph("本次未完成检查：" + detail.Inspection.IncompleteReason);
         if (detail.Issues.Length == 0 && detail.Inspection.Result != "incomplete") document.Paragraph(detail.Inspection.Result == "normal" ? "本次检查未发现问题。" : "原登记问题均已作废。");
@@ -84,7 +91,7 @@ public static class WordExporter
             document.Paragraph(detail.Inspection.Notes);
         }
         var operationIds = (detail.IssueDetails ?? []).SelectMany(x => x.Actions).Where(x => x.Kind is "progress" or "transfer" or "extend" or "assign").SelectMany(x => x.Photos).Select(x => x.Id).ToHashSet();
-        WriteSitePhotos(document, detail, photos.Where(x => !operationIds.Contains(x.Photo.Id)).ToArray(), false);
+        WriteSitePhotos(document, detail, photos.Where(x => !operationIds.Contains(x.Photo.Id) && !namedIds.Contains(x.Photo.Id)).ToArray(), false);
         var histories = (detail.IssueDetails ?? []).Where(item => item.Actions.Length > 0).ToArray();
         if (histories.Length > 0) document.Section("办理过程");
         foreach (var item in histories)
@@ -202,6 +209,9 @@ public static class WordExporter
             ["整治名称", campaign.Name], ["场所名称", campaign.PointName], ["整治类型", campaign.TypeName], ["所属网格", campaign.CommunityName],
             ["整治地点", campaign.Location], ["整治日期", campaign.Date]
         ], [24, 76], labelColumn: true);
+        var namedPhotos = CustomFieldPhotos(campaign.FieldSnapshot, campaign.ExtraValues, photos);
+        var namedIds = namedPhotos.Select(x => x.Photo.Photo.Id).ToHashSet(StringComparer.Ordinal);
+        WriteCustomFields(document, campaign.FieldSnapshot, campaign.ExtraValues, namedPhotos);
         document.Section("整治内容");
         document.Paragraph(campaign.Content);
         if (!string.IsNullOrWhiteSpace(campaign.Outcome))
@@ -215,7 +225,7 @@ public static class WordExporter
             document.Section("备注");
             document.Paragraph(campaign.Notes);
         }
-        var selected = SortPhotos(photos.Where(photo => photo.Photo.CampaignId == campaign.Id));
+        var selected = SortPhotos(photos.Where(photo => photo.Photo.CampaignId == campaign.Id && !namedIds.Contains(photo.Photo.Id)));
         if (selected.Length > 0)
         {
             document.Section("整治照片");
@@ -438,6 +448,52 @@ public static class WordExporter
                 (phase == "after" ? "整改后" : "复查") + "（未关联办理轮次）");
         }
     }
+    private static string[][] CustomFieldRows(PurposeField[]? snapshot, JsonElement? extra)
+    {
+        if (extra is not { ValueKind: JsonValueKind.Object }) return [];
+        var values = extra.Value;
+        var rows = new List<string[]>();
+        foreach (var field in snapshot ?? [])
+        {
+            if (field.Type == "image" || !values.TryGetProperty(field.Id, out var value)) continue;
+            var text = value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.ToString();
+            if (!string.IsNullOrEmpty(text)) rows.Add([field.Label, text]);
+        }
+        return [.. rows];
+    }
+
+    private static (WordPhoto Photo, string Caption)[] CustomFieldPhotos(PurposeField[]? snapshot, JsonElement? extra, WordPhoto[] photos)
+    {
+        if (extra is not { ValueKind: JsonValueKind.Object }) return [];
+        var values = extra.Value;
+        var byId = photos.ToDictionary(photo => photo.Photo.Id, StringComparer.Ordinal);
+        var results = new List<(WordPhoto, string)>();
+        foreach (var field in snapshot ?? [])
+        {
+            if (field.Type != "image" || !values.TryGetProperty(field.Id, out var value) ||
+                value.ValueKind != JsonValueKind.String || value.GetString() is not string id ||
+                !byId.TryGetValue(id, out var photo)) continue;
+            results.Add((photo, field.Label));
+        }
+        return [.. results];
+    }
+
+    private static void WriteCustomFields(Document document, PurposeField[]? snapshot, JsonElement? extra,
+        (WordPhoto Photo, string Caption)[] namedPhotos)
+    {
+        var rows = CustomFieldRows(snapshot, extra);
+        if (rows.Length > 0)
+        {
+            document.Section("扩展记录");
+            document.Table(null, rows, [24, 76], labelColumn: true);
+        }
+        if (namedPhotos.Length > 0)
+        {
+            document.Section("扩展字段图片");
+            document.Gallery(namedPhotos, "扩展字段图片");
+        }
+    }
+
     private static void WriteCampaignPhotoTables(Document document, WordPhoto[] photos, string context)
     {
         document.Comparison(photos.Where(photo => photo.Photo.Phase == "before").ToArray(), photos.Where(photo => photo.Photo.Phase == "after").ToArray(), "整治前", "整治后", context);
