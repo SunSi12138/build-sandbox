@@ -1,0 +1,102 @@
+name: Android Offline CoreCLR Emulator Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [maui-android-net11-coreclr]
+    paths:
+      - "android/**"
+      - ".github/workflows/android-emulator-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.100
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build bundled Nuxt assets
+        working-directory: web
+        run: |
+          npm ci
+          npm run generate
+      - name: Install Android MAUI workload and SDK platforms
+        working-directory: android
+        run: |
+          dotnet workload install maui-android
+          dotnet build StreetEcoTool.Mobile.csproj -t:InstallAndroidDependencies -f net11.0-android \
+            -p:AndroidSdkDirectory="$ANDROID_HOME" -p:AcceptAndroidSDKLicenses=true
+      - name: Sign x86_64 emulator variant
+        run: |
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/emulator.jks" -alias test -keyalg RSA \
+            -keysize 2048 -validity 365 -storepass android -keypass android \
+            -dname "CN=Android Offline Emulator Test, O=Test, C=CN"
+          dotnet publish android/StreetEcoTool.Mobile.csproj \
+            -c Release -f net11.0-android -r android-x64 \
+            -p:AndroidPackageFormat=apk \
+            -p:AndroidKeyStore=true \
+            -p:AndroidSigningKeyStore="$RUNNER_TEMP/emulator.jks" \
+            -p:AndroidSigningStorePass=android \
+            -p:AndroidSigningKeyAlias=test \
+            -p:AndroidSigningKeyPass=android \
+            -p:PublishAot=false -p:UseMonoRuntime=false
+          find android/bin/Release -name '*.apk' -type f -print
+      - name: Enable KVM accelerator
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+      - name: Start emulator and verify phone-only SQLite + Nuxt HTTP
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          disable-animations: true
+          script: |
+            set -e
+            mkdir -p evidence
+            APK="$(find android/bin/Release -name '*-Signed.apk' -type f | head -n 1)"
+            test -n "$APK"
+            adb install -r "$APK"
+            adb logcat -c
+            adb shell monkey -p com.streetecotool.mobile -c android.intent.category.LAUNCHER 1
+            sleep 25
+            adb logcat -d -v time > evidence/logcat.txt
+            grep -E 'StreetEcoOffline.*READY' evidence/logcat.txt
+            PORT="$(sed -nE 's/.*StreetEcoOffline.*READY http:\/\/127\.0\.0\.1:([0-9]+)\/.*/\1/p' evidence/logcat.txt | tail -n 1)"
+            test -n "$PORT"
+            adb forward tcp:18518 "tcp:$PORT"
+            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/api/health | tee evidence/health.json
+            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/api/bootstrap | tee evidence/bootstrap.json
+            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/api/map/layers | tee evidence/layers.json
+            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/ | grep -q 'DOCTYPE html'
+            adb exec-out screencap -p > evidence/android-emulator.png
+            test -s evidence/android-emulator.png
+            echo 'Local CoreCLR, SQLite, /api/bootstrap, Nuxt and maps responded on Android emulator'
+      - name: Upload emulator diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-offline-emulator-evidence
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 7
