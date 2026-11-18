@@ -285,7 +285,14 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
         'map mode should hide OpenLayers zoom controls')
       assert(await page.locator('#main-map-layer .map-fit').isVisible(), 'fit and locate controls should stay visible')
       await go('/points?view=map&q=no-such-record-for-map-empty-state')
-      await page.waitForFunction(() => document.querySelector('.record-map-shell')?.getAttribute('aria-busy') === 'false')
+      // A SPA route change can render the previous results before its next
+      // API fetch begins. Wait for the *new* zero-result state, not merely
+      // the stale map's briefly idle aria-busy attribute.
+      await page.waitForFunction(() => {
+        const shell = document.querySelector('.record-map-shell')
+        const summary = shell?.querySelector('.record-map-summary')?.textContent || ''
+        return shell?.getAttribute('aria-busy') === 'false' && /已标记\s*0\s*条/.test(summary)
+      }, null, { timeout: 15000 })
       assert.match(await page.locator('.record-map-summary').textContent(), /已标记\s*0\s*条/)
       assert.equal(await page.getByText('暂无匹配记录', { exact: true }).count(), 0,
         'zero-result map must not repeat the count with a centered empty-state')
