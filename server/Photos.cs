@@ -1,6 +1,8 @@
 using System.Buffers;
 using System.Globalization;
+#if !ANDROID
 using Microsoft.AspNetCore.Http.Features;
+#endif
 using Microsoft.Data.Sqlite;
 
 namespace StreetEcoTool;
@@ -332,6 +334,7 @@ public sealed partial class Store
     }
 }
 
+#if !ANDROID
 public static class PhotoApi
 {
     public static void Map(WebApplication app, Store store)
@@ -410,5 +413,6 @@ public static class PhotoApi
         app.MapPut("/api/photos/{id}/thumb", thumbnail);
         app.MapGet("/photos/{id}", read);
         app.MapDelete("/api/photos/{id}", delete);
-    }
+    }#endif
+
 }
