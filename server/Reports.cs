@@ -51,7 +51,7 @@ public sealed partial class Store
                     new("按网格", ["名称", "在用场所", "已查场所", "检查次数", "未完成检查", "问题数", "已完成整改", "超期"],
                         gridRows.Select(x => x.Skip(1).ToArray()).ToArray()),
                     new("按检查类型", ["检查类型", "已查场所", "检查次数", "未完成检查", "问题数", "已完成整改", "超期"],
-                        typeRows.Select(x => x.Skip(1).Skip(1).Prepend(x[1]).ToArray()).ToArray())
+                        typeRows.Select(x => x.Skip(3).Prepend(x[1]).ToArray()).ToArray())
                 ];
                 scope = $"检查日期：{statistics.From} 至 {statistics.To}；整改为这些检查发现问题的当前状态；" + scope;
             }
