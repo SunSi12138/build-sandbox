@@ -72,27 +72,7 @@ jobs:
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           disable-animations: true
-          script: |
-            set -e
-            mkdir -p evidence
-            APK="$(find android/bin/Release -name '*-Signed.apk' -type f | head -n 1)"
-            test -n "$APK"
-            adb install -r "$APK"
-            adb logcat -c
-            adb shell monkey -p com.streetecotool.mobile -c android.intent.category.LAUNCHER 1
-            sleep 25
-            adb logcat -d -v time > evidence/logcat.txt
-            grep -E 'StreetEcoOffline.*READY' evidence/logcat.txt
-            PORT="$(sed -nE 's/.*StreetEcoOffline.*READY http:\/\/127\.0\.0\.1:([0-9]+)\/.*/\1/p' evidence/logcat.txt | tail -n 1)"
-            test -n "$PORT"
-            adb forward tcp:18518 "tcp:$PORT"
-            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/api/health | tee evidence/health.json
-            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/api/bootstrap | tee evidence/bootstrap.json
-            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/api/map/layers | tee evidence/layers.json
-            curl --fail --max-time 15 --silent --show-error http://127.0.0.1:18518/ | grep -q 'DOCTYPE html'
-            adb exec-out screencap -p > evidence/android-emulator.png
-            test -s evidence/android-emulator.png
-            echo 'Local CoreCLR, SQLite, /api/bootstrap, Nuxt and maps responded on Android emulator'
+          script: bash .github/scripts/android-emulator-smoke.sh
       - name: Upload emulator diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v7
