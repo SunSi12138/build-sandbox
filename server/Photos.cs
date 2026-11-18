@@ -414,6 +414,5 @@ public static class PhotoApi
         app.MapGet("/photos/{id}", read);
         app.MapDelete("/api/photos/{id}", delete);
     }
-#endif
-
 }
+#endif
