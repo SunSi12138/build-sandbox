@@ -36,7 +36,14 @@ public static class WordExporter
                 if (Text(field.Item1).Length > 0) values.Add([field.Item2, Text(field.Item1)]);
             values.AddRange(Store.UseFieldValues(r.Data).Select(field => new[] { field.Label, field.Value }));
             document.Table(null, values, [24, 76], labelColumn: true);
-            document.Gallery(use.Photos.Select(x => (x, "")).ToArray(), r.Name + " · 照片");
+            var namedUsePhotos = Store.UseFieldImages(r.Data).Select(field =>
+            {
+                var photo = use.Photos.FirstOrDefault(x => x.Photo.Id == field.PhotoId);
+                return (Photo: photo, Caption: field.Label);
+            }).Where(x => x.Photo is not null).Select(x => (x.Photo!, x.Caption)).ToArray();
+            var namedUseIds = namedUsePhotos.Select(x => x.Item1.Photo.Id).ToHashSet(StringComparer.Ordinal);
+            document.Gallery(namedUsePhotos, r.Name + " · 字段图片");
+            document.Gallery(use.Photos.Where(photo => !namedUseIds.Contains(photo.Photo.Id)).Select(x => (x, "")).ToArray(), r.Name + " · 现场照片");
         }
         document.Paragraph("资料日期：" + Store.Today);
     }
@@ -303,7 +310,11 @@ public static class WordExporter
         foreach (var item in attachments)
         {
             document.Paragraph($"（{ChineseNumber(item.Index + 1)}）{item.Campaign.Name}", "Heading2");
-            WriteCampaignPhotoTables(document, item.Photos, item.Campaign.Name + " · " + item.Campaign.Date);
+            var named = CustomFieldPhotos(item.Campaign.FieldSnapshot, item.Campaign.ExtraValues, item.Photos);
+            var namedIds = named.Select(x => x.Photo.Photo.Id).ToHashSet(StringComparer.Ordinal);
+            document.Gallery(named, item.Campaign.Name + " · 字段图片");
+            WriteCampaignPhotoTables(document, item.Photos.Where(photo => !namedIds.Contains(photo.Photo.Id)).ToArray(),
+                item.Campaign.Name + " · " + item.Campaign.Date);
         }
     }
 

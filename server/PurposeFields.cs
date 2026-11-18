@@ -78,6 +78,17 @@ public sealed partial class Store
         return result.RootElement.Clone();
     }
 
+    public static (string Label, string PhotoId)[] UseFieldImages(JsonElement data)
+    {
+        if (!data.TryGetProperty("fieldSnapshot", out var fields) || fields.ValueKind != JsonValueKind.Array ||
+            !data.TryGetProperty("values", out var values) || values.ValueKind != JsonValueKind.Object) return [];
+        return fields.EnumerateArray()
+            .Where(field => JsonText(field, "type") == "image")
+            .Select(field => (Label: JsonText(field, "label"),
+                PhotoId: values.TryGetProperty(JsonText(field, "id"), out var value) ? value.ToString() : ""))
+            .Where(x => x.PhotoId.Length > 0).ToArray();
+    }
+
     public static (string Label, string Value)[] UseFieldValues(JsonElement data)
     {
         if (!data.TryGetProperty("fieldSnapshot", out var fields) || fields.ValueKind != JsonValueKind.Array ||

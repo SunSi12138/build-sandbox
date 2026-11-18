@@ -52,7 +52,8 @@ public sealed partial class Store
                     var state = JsonText(record.Data, "state");
                     if (query.Status.Length > 0 && query.Status != state) continue;
                     var purposes = PurposeName(record.Data);
-                    rows.Add([record.Id, point.Name, JsonText(record.Data,"position"), record.Name, purposes, string.Join("\n", UseFieldValues(record.Data).Select(f => f.Label + "：" + f.Value)), JsonText(record.Data,"contact"),JsonText(record.Data,"phone"),JsonText(record.Data,"startDate"),JsonText(record.Data,"endDate"),state]);
+                    rows.Add([record.Id, point.Name, JsonText(record.Data,"position"), record.Name, purposes, string.Join("\n", UseFieldValues(record.Data).Select(f => f.Label + "：" + f.Value)
+                        .Concat(UseFieldImages(record.Data).Select(f => f.Label + "：已附图片"))), JsonText(record.Data,"contact"),JsonText(record.Data,"phone"),JsonText(record.Data,"startDate"),JsonText(record.Data,"endDate"),state]);
                 }
             }
             else if (query.Kind == "inspections")

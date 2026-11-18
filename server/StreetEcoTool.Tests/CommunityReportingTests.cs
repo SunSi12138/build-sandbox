@@ -44,6 +44,51 @@ public sealed class CommunityReportingTests
         Assert.Equal(0, store.GetStatistics(Store.Today, Store.Today, "").Total.CheckedPlaces);
     }
     [Fact]
+    public void UseFieldImagesAndCampaignLicenseKeepTheirBusinessRoles()
+    {
+        using var env = new V2Environment();
+        using var store = env.Open();
+        var point = env.CreatePoint(store);
+        var purpose = store.SaveCommunityRecord("purpose-type", null, new("", "证照使用",
+            Data("""{"icon":"店","fields":[{"id":"permit","label":"营业许可证","type":"image","required":false}]}""")));
+        var permit = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "point");
+        var site = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "point");
+        store.SaveCommunityRecord("use", null, new(point.Id, "持证商户",
+            Data($"""{"purposeId":"{{purpose.Id}}","position":"一楼","state":"使用中","photoIds":["{{permit.Id}}","{{site.Id}}"],"values":{"permit":"{{permit.Id}}"}}""")));
+        var report = store.GetReport(new("uses"));
+        Assert.Contains("营业许可证：已附图片", Assert.Single(report.Rows)[5]);
+        var place = store.ExportPlaceWord(point.Id);
+        using (var package = ZipFile.OpenRead(place.FilePath))
+        {
+            using var reader = new StreamReader(package.GetEntry("word/document.xml")!.Open());
+            var xml = reader.ReadToEnd();
+            Assert.Contains("营业许可证", xml);
+            Assert.Contains("字段图片", xml);
+            Assert.Equal(2, package.Entries.Count(entry => entry.FullName.StartsWith("word/media/", StringComparison.Ordinal)));
+        }
+
+        var type = store.GetCampaignTypes()[0];
+        store.SaveCampaignType(type.Id, new(type.Name, [new("license", "施工许可证", "image", false)]));
+        var license = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "before");
+        var before = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "before");
+        var after = store.UploadPhoto(WordExporterTests.Jpeg(80, 90), "after");
+        var campaign = store.SaveCampaign(null, new("现场整治", type.Id, point.Id, Store.Today, "施工",
+            BeforePhotoIds: [license.Id, before.Id], AfterPhotoIds: [after.Id],
+            ExtraValues: Data($"""{"license":"{{license.Id}}"}""")));
+        foreach (var export in new[] { store.ExportCampaignWord(campaign.Campaign.Id),
+            store.ExportCampaignLedgerWord(Store.Today, Store.Today, includePhotos: true) })
+        {
+            using var package = ZipFile.OpenRead(export.FilePath);
+            using var reader = new StreamReader(package.GetEntry("word/document.xml")!.Open());
+            var xml = reader.ReadToEnd();
+            Assert.Contains("施工许可证", xml);
+            Assert.Contains("整治前", xml);
+            Assert.Contains("整治后", xml);
+            Assert.Equal(3, package.Entries.Count(entry => entry.FullName.StartsWith("word/media/", StringComparison.Ordinal)));
+        }
+    }
+
+    [Fact]
     public void PhotoDossiersAndProgressSurviveWordExport()
     {
         using var env = new V2Environment(); using var store = env.Open(); var point = env.CreatePoint(store);
