@@ -26,30 +26,52 @@ function snapshot(){return JSON.stringify({state,shape:mapShape.value,uses:inlin
 function mayClose(){return !saving.value&&!photosBusy.value&&!extraPhotosBusy.value&&!usesBusy.value&&(loading.value||snapshot()===initialSnapshot.value||window.confirm('场所资料尚未保存，放弃修改吗？'))}
 function changeOpen(value:boolean){if(value||mayClose())open.value=value}
 onBeforeRouteLeave(()=>!open.value||mayClose())
-watch(open, async value => {
-  overlayForm.value = value
-  if (!value) return
+let openingVersion = 0
+watch([open, () => props.point?.id], async ([isOpen]) => {
+  // Each opening starts from an isolated, non-null form model. An earlier
+  // request must not replace the contents of a subsequently opened point.
+  const version = ++openingVersion
+  overlayForm.value = isOpen
+  if (!isOpen) return
   error.value = ''; loading.value = true
   inlineUses.value = []; photosFailed.value = false; extraPhotoIds.value = []
+  extraPhotosFailed.value = false; photosBusy.value = false; extraPhotosBusy.value = false
   const point = props.point
   revision.value = point?.revision
   mapShape.value = props.initialShape ?? null; shapeRevision.value = 0
-  Object.assign(state, point ? { ...point, extraValues: { ...(point.extraValues ?? {}) }, coordinates: coordinatesText(point.longitude, point.latitude), photos: [] } : { ...defaults(), coordinates: props.initialCoordinates ?? '' })
+  Object.assign(state, defaults(), point ? {
+    name: point.name, communityId: point.communityId, typeId: point.typeId,
+    address: point.address, contact: point.contact, phone: point.phone,
+    frequency: point.frequency, notes: point.notes, disabled: point.disabled,
+    color: point.color, coordinates: coordinatesText(point.longitude, point.latitude),
+    extraValues: { ...(point.extraValues ?? {}) }, photos: [],
+  } : { coordinates: props.initialCoordinates ?? '' })
   try {
     await load()
-    if (!point) state.typeId=bootstrap.value?.pointTypes.find(x=>x.name==='永久建筑')?.id??''
+    if (version !== openingVersion) return
+    if (!point) state.typeId = bootstrap.value?.pointTypes.find(x=>x.name==='永久建筑')?.id ?? ''
     if (!point && communities.value.length === 1) state.communityId = communities.value[0]!.value
-    if (point) { const map = await $fetch<MapState>('/api/map'); const feature = map.features.find(x => x.kind === 'point' && x.id === point.id); mapShape.value = feature?.shape ?? null; shapeRevision.value = feature?.revision ?? 0 }
     if (point) {
-     const fieldIds = new Set(extraFields.value.filter(field => field.type === 'image')
-       .map(field => String(state.extraValues[field.id] ?? '')).filter(Boolean))
-     extraPhotoIds.value = [...fieldIds]
-     state.photos = (await $fetch<PointDetailDto>(`/api/points/${point.id}`)).photos
-       ?.filter(photo => !fieldIds.has(photo.id))
-       .map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
-   }
-  } catch (value) { error.value = errorMessage(value) }
-  finally { loading.value = false; initialSnapshot.value=snapshot() }
+      const fieldIds = new Set(extraFields.value.filter(field => field.type === 'image')
+        .map(field => String(state.extraValues[field.id] ?? '')).filter(Boolean))
+      extraPhotoIds.value = [...fieldIds]
+      const [map, pointDetail] = await Promise.all([
+        $fetch<MapState>('/api/map'),
+        $fetch<PointDetailDto>(`/api/points/${point.id}`),
+      ])
+      if (version !== openingVersion) return
+      const feature = map.features.find(x => x.kind === 'point' && x.id === point.id)
+      mapShape.value = feature?.shape ?? null
+      shapeRevision.value = feature?.revision ?? 0
+      state.photos = pointDetail.photos
+        ?.filter(photo => !fieldIds.has(photo.id))
+        .map(photo => ({ id: photo.id, width: photo.width, height: photo.height })) ?? []
+    }
+  } catch (value) {
+    if (version === openingVersion) error.value = errorMessage(value)
+  } finally {
+    if (version === openingVersion) { loading.value = false; initialSnapshot.value = snapshot() }
+  }
 })
 function validate(value: PointState): FormError[] {
   const errors: FormError[] = []

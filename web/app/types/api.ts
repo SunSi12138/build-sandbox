@@ -24,7 +24,7 @@ export interface PointWriteRequest {
   longitude?: number | null; latitude?: number | null; temporary?: boolean; photoIds?: string[]
 }
 export interface PointDto {
-  extraValues?: Record<string, string | number>
+  extraValues: Record<string, string | number> | null
   color: string
   revision: number
   id: string; name: string; communityId: string; communityName: string; typeId: string; typeName: string
