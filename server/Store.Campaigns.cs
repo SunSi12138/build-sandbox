@@ -182,18 +182,14 @@ public sealed partial class Store
         {
             PrepareWrite();
             var campaign = GetCampaign(id);
-            var removeTemporary = IsLastTemporaryRecord(campaign.PointId, campaignId: id);
+            var removeTemporary = ShouldRecycleTemporaryPoint(campaign.PointId, campaignId: id);
             var photos = ReadPhotos(campaignId: id).Select(photo => photo.Id).ToList();
             if (removeTemporary) photos.AddRange(ReadPhotos(pointId: campaign.PointId).Select(photo => photo.Id));
             ExecuteWithPhotoDeletion(photos.ToArray(), transaction =>
             {
                 using var command = Command("DELETE FROM campaigns WHERE id=$id;", transaction, ("$id", id));
                 RequireChanged(command.ExecuteNonQuery(), "整治记录");
-                if (removeTemporary)
-                {
-                    using var deletePoint = Command("DELETE FROM points WHERE id=$point;", transaction, ("$point", campaign.PointId));
-                    deletePoint.ExecuteNonQuery();
-                }
+                if (removeTemporary) RecycleTemporaryPoint(campaign.PointId, transaction);
             });
         }
     }

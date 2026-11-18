@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Xml.Linq;
+using System.Text.Json;
 using Xunit;
 
 namespace StreetEcoTool.Tests;
@@ -109,6 +110,67 @@ public sealed class PointCampaignTests
         Assert.Equal(404, Assert.Throws<ApiException>(() => store.GetPoint(id)).StatusCode);
         Assert.Throws<ApiException>(() => store.OpenPhoto(pointPhoto.Id));
         Assert.Throws<ApiException>(() => store.OpenPhoto(campaignPhoto.Id));
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public void FinalTemporaryRecordOnlyRecyclesPointWithoutIndependentUse(bool deleteInspection, bool hasUse)
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var ordinary = environment.CreatePoint(store);
+        var independentUse = store.SaveCommunityRecord("use", null, new(ordinary.Id, "长期商铺",
+            JsonDocument.Parse("""{"unitId":"","position":"沿街","purposeId":"purpose-shop","state":"使用中"}""").RootElement.Clone()));
+        var temporary = deleteInspection
+            ? store.CreateInspection(new(null, Store.Today, "张三", "normal", NewPoint: Temporary(ordinary))).Inspection.PointId
+            : store.SaveCampaign(null, Campaign(store, null, Temporary(ordinary))).Campaign.PointId;
+        var point = store.GetPoint(temporary);
+        store.SavePoint(point.Id, new(point.Name, point.CommunityId, point.TypeId, point.Address,
+            Shape: new("Point", [[88.893426, 29.274331]]), ShapeRevision: 0, Revision: point.Revision));
+        if (hasUse)
+            store.SaveCommunityRecord("use", null, new(temporary, "临时商户",
+                JsonDocument.Parse("""{"unitId":"","position":"现场","purposeId":"purpose-shop","state":"使用中"}""").RootElement.Clone()));
+        if (deleteInspection)
+            store.DeleteInspection(Assert.Single(store.GetPointDetail(temporary).Inspections).Id);
+        else
+            store.DeleteCampaign(Assert.Single(store.GetPointDetail(temporary).Campaigns!).Id);
+        if (hasUse)
+        {
+            Assert.Equal(temporary, store.GetPoint(temporary).Id);
+            Assert.Equal(2, store.GetReport(new("uses")).Rows.Length);
+        }
+        else
+        {
+            Assert.Equal(404, Assert.Throws<ApiException>(() => store.GetPoint(temporary)).StatusCode);
+            Assert.Equal(0, V2Environment.Number(store.DatabasePath,
+                $"SELECT COUNT(*) FROM map_shapes WHERE kind='point' AND record_id='{temporary}';"));
+            Assert.Single(store.GetReport(new("uses")).Rows);
+        }
+        Assert.Contains(store.GetReport(new("uses")).Rows, row => row[0] == independentUse.Id);
+        V2Environment.AssertForeignKeys(store.DatabasePath);
+    }
+
+    [Theory]
+    [InlineData("unit")]
+    [InlineData("plan")]
+    public void TemporaryPointSurvivesIndependentUnitOrPlan(string kind)
+    {
+        using var environment = new V2Environment();
+        using var store = environment.Open();
+        var ordinary = environment.CreatePoint(store);
+        var campaign = store.SaveCampaign(null, Campaign(store, null, Temporary(ordinary)));
+        var pointId = campaign.Campaign.PointId;
+        if (kind == "unit")
+            store.SaveCommunityRecord("unit", null, new(pointId, "临时单元", JsonDocument.Parse("{}").RootElement.Clone()));
+        else
+            store.SaveCommunityRecord("plan", null, new("", "临时安排",
+                JsonDocument.Parse($"""{"inspector":"张三","from":"{{Store.Today}}","to":"{{Store.Today}}","typeId":"{{store.ListCommunityRecords("inspection-type")[0].Id}}","pointIds":["{{pointId}}"]}""").RootElement.Clone()));
+        store.DeleteCampaign(campaign.Campaign.Id);
+        Assert.Equal(pointId, store.GetPoint(pointId).Id);
         V2Environment.AssertForeignKeys(store.DatabasePath);
     }
 

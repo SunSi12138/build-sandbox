@@ -113,16 +113,28 @@ public sealed partial class Store
         return point;
     }
 
-    // Both record types keep a temporary point alive. Call under the storage lock
-    // before staging photo deletion so the same decision governs files and SQL.
-    private bool IsLastTemporaryRecord(string pointId, string? inspectionId = null, string? campaignId = null)
+    // A temporary point is disposable only when neither business records nor independent
+    // use/unit/plan/merge records still refer to it. Archived records are references too.
+    // Call under _gate before staging photo deletion; SQL mutations share one transaction.
+    private bool ShouldRecycleTemporaryPoint(string pointId, string? inspectionId = null, string? campaignId = null)
     {
         if (!GetPointInternal(pointId).Temporary) return false;
         using var command = Command("""
             SELECT (SELECT COUNT(*) FROM inspections WHERE point_id=$point AND id<>$inspection)
-                 + (SELECT COUNT(*) FROM campaigns WHERE point_id=$point AND id<>$campaign);
+                 + (SELECT COUNT(*) FROM campaigns WHERE point_id=$point AND id<>$campaign)
+                 + (SELECT COUNT(*) FROM community_records WHERE parent_id=$point AND kind IN ('unit','use','point-merge'))
+                 + (SELECT COUNT(*) FROM community_records r WHERE r.kind='plan'
+                    AND EXISTS (SELECT 1 FROM json_each(r.body,'$.pointIds') j WHERE j.value=$point));
             """, null, ("$point", pointId), ("$inspection", inspectionId ?? ""), ("$campaign", campaignId ?? ""));
         return Convert.ToInt32(command.ExecuteScalar()) == 0;
+    }
+
+    private void RecycleTemporaryPoint(string pointId, SqliteTransaction transaction)
+    {
+        using (var shape = Command("DELETE FROM map_shapes WHERE kind='point' AND record_id=$point;", transaction, ("$point", pointId))) shape.ExecuteNonQuery();
+        using (var history = Command("DELETE FROM community_history WHERE kind='point' AND record_id=$point;", transaction, ("$point", pointId))) history.ExecuteNonQuery();
+        using var point = Command("DELETE FROM points WHERE id=$point;", transaction, ("$point", pointId));
+        RequireChanged(point.ExecuteNonQuery(), "临时场所");
     }
 
     private string SavePointCore(string? id, PointWriteRequest request, SqliteTransaction transaction, bool createTemporary = false)
