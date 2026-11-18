@@ -204,10 +204,17 @@ public sealed partial class Store : IDisposable
             if (version == 0 && application == 0 && Number(connection, "SELECT COUNT(*) FROM sqlite_master;") == 0) return true;
             if (version != SchemaVersion || application != DatabaseApplicationId)
                 throw new ApiException(409, "数据版本不匹配，请使用新目录启动。现有数据未修改。");
-            foreach (var sql in RequiredSchemaQueries)
+            try
             {
-                using var command = connection.CreateCommand(); command.CommandText = sql;
-                using var reader = command.ExecuteReader();
+                foreach (var sql in RequiredSchemaQueries)
+                {
+                    using var command = connection.CreateCommand(); command.CommandText = sql;
+                    using var reader = command.ExecuteReader();
+                }
+            }
+            catch (SqliteException)
+            {
+                throw new ApiException(409, "数据库缺少当前版本必需的列或表，请使用完整的数据目录。现有数据未修改。");
             }
             return false;
         }

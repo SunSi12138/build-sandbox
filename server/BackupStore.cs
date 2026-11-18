@@ -317,6 +317,8 @@ public sealed partial class Store
             checked((int)Number(connection, "SELECT count(*) FROM issues;")), expanded, DateTime.Now.AddMinutes(30).ToString("O", CultureInfo.InvariantCulture), checked((int)Number(connection, "SELECT count(*) FROM campaigns;")));
     }
 
+    // Startup and backup restoration must validate exactly the same schema-7
+    // contract. LIMIT 0 checks column existence without loading user data.
     private static readonly string[] RequiredSchemaQueries =
     [
         "SELECT voided,void_reason FROM inspections LIMIT 0;",
@@ -325,20 +327,20 @@ public sealed partial class Store
         "SELECT id FROM active_issues LIMIT 0;",
         "SELECT id,street_name,issuing_unit,default_inspector,notice_template,jpeg_quality FROM settings LIMIT 0;",
         "SELECT id,name,title,parent_id,color FROM communities LIMIT 0;",
-        "SELECT id,name FROM point_types LIMIT 0;",
-        "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,color FROM points LIMIT 0;",
-        "SELECT id,point_id,inspection_date,inspector,result,notes,notice_number,point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone,inspection_type_id,inspection_type_name,use_id,use_name,created_at,incomplete_reason,checklist,submission_key FROM inspections LIMIT 0;",
+        "SELECT id,name,fields FROM point_types LIMIT 0;",
+        "SELECT id,name,community_id,type_id,address,contact,phone,frequency,notes,disabled,longitude,latitude,temporary,color,extra_values,field_snapshot FROM points LIMIT 0;",
+        "SELECT id,point_id,inspection_date,inspector,result,notes,notice_number,point_name,community_id,community_name,community_title,type_id,type_name,address,contact,phone,inspection_type_id,inspection_type_name,use_id,use_name,created_at,incomplete_reason,checklist,submission_key,voided,void_reason,extra_values,field_snapshot FROM inspections LIMIT 0;",
         "SELECT id,kind,parent_id,name,body,revision,updated_at,archived FROM community_records LIMIT 0;",
         "SELECT record_id,photo_id,active FROM record_photos LIMIT 0;",
         "SELECT source_key,record_id,kind FROM imported_rows LIMIT 0;",
         "SELECT id,kind,record_id,at,action,before_json,after_json FROM community_history LIMIT 0;",
         "SELECT kind,record_id,shape,revision FROM map_shapes LIMIT 0;",
-        "SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,annotation,map_key,cache_version FROM map_layers LIMIT 0;",
-        "SELECT id,inspection_id,description,requirement,deadline,responsible_unit,status,feedback_date,feedback_notes,review_date,review_conclusion,closed_date FROM issues LIMIT 0;",
+        "SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,annotation,map_key,cache_version,tile_type,style_json FROM map_layers LIMIT 0;",
+        "SELECT id,inspection_id,description,requirement,deadline,responsible_unit,status,feedback_date,feedback_notes,review_date,review_conclusion,closed_date,voided,void_reason FROM issues LIMIT 0;",
         "SELECT id,issue_id,kind,action_date,notes FROM issue_actions LIMIT 0;",
         "SELECT id,inspection_id,issue_id,action_id,point_id,campaign_id,phase,relative_path,width,height,uploaded_at,has_thumb FROM photos LIMIT 0;",
-        "SELECT id,name FROM campaign_types LIMIT 0;",
-        "SELECT id,name,point_id,point_name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes FROM campaigns LIMIT 0;"
+        "SELECT id,name,fields FROM campaign_types LIMIT 0;",
+        "SELECT id,name,point_id,point_name,type_id,type_name,community_id,community_name,location,campaign_date,end_date,organizer,participants,participant_count,vehicle_count,garbage_tons,area_sqm,content,outcome,notes,extra_values,field_snapshot FROM campaigns LIMIT 0;"
     ];
 
     public RestoreResultDto Restore(RestoreRequest request)

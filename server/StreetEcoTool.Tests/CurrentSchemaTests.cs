@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.IO.Compression;
 using Xunit;
 
 namespace StreetEcoTool.Tests;
@@ -31,6 +32,44 @@ public sealed class CurrentSchemaTests
             V2Environment.AssertForeignKeys(reopened.DatabasePath);
         }
         Assert.Equal(before, Fingerprint(environment.Root));
+    }
+
+    [Fact]
+    public async Task MissingNewColumnsAreRejectedByStartupAndRestoreBeforeDataReplacement()
+    {
+        using var source = new V2Environment();
+        string archive;
+        using (var store = source.Open())
+        {
+            source.CreatePoint(store);
+            archive = store.CreateBackupZip();
+        }
+        // The SQLite file advertises schema 7, but a required map column is gone.
+        V2Environment.Execute(Path.Combine(source.Data, "app.db"), "ALTER TABLE map_layers DROP COLUMN style_json;");
+        var beforeStartup = Fingerprint(source.Root);
+        var startupError = Assert.Throws<ApiException>(() => source.Open());
+        Assert.Equal(409, startupError.StatusCode);
+        Assert.Equal(beforeStartup, Fingerprint(source.Root));
+
+        var corruptDirectory = Path.Combine(source.Root, "broken-restore");
+        Directory.CreateDirectory(corruptDirectory);
+        ZipFile.ExtractToDirectory(archive, corruptDirectory);
+        V2Environment.Execute(Path.Combine(corruptDirectory, "app.db"),
+            "ALTER TABLE campaigns DROP COLUMN field_snapshot;");
+        var brokenZip = Path.Combine(source.Root, "broken-restore.zip");
+        ZipFile.CreateFromDirectory(corruptDirectory, brokenZip);
+
+        using var target = new V2Environment();
+        using var live = target.Open();
+        var current = target.CreatePoint(live);
+        var unchanged = Fingerprint(target.Root);
+        await using var input = File.OpenRead(brokenZip);
+        var error = await Assert.ThrowsAsync<ApiException>(() => live.PrepareRestoreAsync(input, CancellationToken.None));
+        Assert.Equal(400, error.StatusCode);
+        Assert.Equal(current.Id, live.GetPoint(current.Id).Id);
+        // A rejected restore cannot replace the live database or create new records.
+        Assert.Single(live.ListPoints(new()).Items);
+        V2Environment.AssertForeignKeys(live.DatabasePath);
     }
 
     [Theory]
