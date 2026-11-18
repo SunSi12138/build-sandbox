@@ -8,9 +8,9 @@
 - .NET 11、MAUI 11、ARM64 CoreCLR；不需要联网或运行电脑后端。
 - **不包含业务数据库和 Nuxt 页面，不会读写原应用的照片、地图或 SQLite。**
 - 独立测试页面通过 Android WebView 访问 `http://127.0.0.1:随机端口/`。
-- 两种选择器可切换：默认 MAUI `MauiWebChromeClient`、增强 `PhotoLabChromeClient`（提供系统相册/文件选择与系统相机拍照）。
+- 两种选择器可切换：默认 **Android 原生 Photo Picker（支持一次多选最多 10 张）**、对照用的 MAUI 自带 `MauiWebChromeClient` 文件选择器。原来的 MAUI `DisplayActionSheet` 手写选择菜单已删除。
 - 原 HTML 直接使用 `<input type="file" accept="image/*" multiple>` 和 `<input type="file" accept="image/*" capture="environment">`。
-- 可测试直接上传原图片，以及使用 `createImageBitmap` / Canvas 转 JPEG 后再上传。
+- 支持多张图片缩略图预览、逐张批量上传、逐张报告 HTTP/文件 SHA-256 和汇总成功/失败数量；既可直接上传原图片，也可使用 `createImageBitmap` / Canvas 批量转换 JPEG 再上传。
 - 本地 HTTP 上传终点：`PUT /api/upload`，返回文件大小、MIME 和 SHA-256；测试文件保存在本应用**临时缓存目录**，不会进入原应用。
 - 用于定位真实失败阶段：Android 文件选择回调 → HTML `change` → 图片解码 → HTTP PUT → C# 保存响应。
 
@@ -25,11 +25,11 @@
 ## 测试顺序
 
 1. 打开 APP，确认顶部出现 `本机上传服务已就绪`，网页出现 `本地HTTP服务` 日志。
-2. 选择 **增强选择器**，点击「从相册选择」，选取 JPEG 或 PNG。应依次出现「文件选择回调」「预览成功」。
-3. 点击「直接上传原图片」，应显示 `HTTP响应 200` 和 SHA-256。
-4. 点击「Canvas 转 JPEG 再上传」，应显示「解码成功」「JPEG 转换成功」「HTTP响应 200」。
-5. 点击「拍照（capture）」，调用系统相机，拍照确认后应进入同样的上传流程。
-6. 切到 **MAUI 默认选择器** 重复相册选择与上传，比较两者的差异。
+2. 默认使用 **系统照片选择器**。点击「系统相册 · 多选照片」，在 Android 系统原生相册中一次选择 2–10 张 JPEG/PNG（不是手写相册 UI）。应该出现各张「文件选择回调」「预览成功」，显示多个缩略图。
+3. 点击「批量直接上传原图」，应对每张照片分别显示 `HTTP 200`、SHA-256，并汇总成功和失败张数。
+4. 点击「批量转 JPEG 并上传」，每张应依次显示「解码成功」「JPEG 转换成功」「HTTP 200」。
+5. 点击「系统相机拍照」，调用系统相机；拍照返回单张照片，能直接上传。
+6. 切换到 **MAUI 默认文件选择器** 重复操作，比较系统原生 Photo Picker 与 MAUI 默认文件 UI 的差异；默认实现未必正确支持多选。
 7. 如果失败，点击「复制日志」粘贴给开发者，说明是哪一步失败，以及是否出现了原生选择器。
 
 **诊断意义：**
@@ -43,4 +43,4 @@
 
 Android 项目从原实验版分支复制后，在本分支中禁用了所有业务模块编译，包括离线 SQLite Store 和 Nuxt Web 资源。测试照片只存到 Photo Lab 缓存目录，可能随 Android 清理缓存或卸载而消失。
 
-调用系统相机使用 Android ACTION_IMAGE_CAPTURE、FileProvider `content://`，不需要声明任意存储权限或访问手机完整媒体库；相册通过 Android 系统文件选择器选取，用户自行授权选中的文件。拍照行为仍需 REDMI K90 Pro Max / 澎湃 OS 4 真机验证，模拟器验证不能替代真实系统相机。
+在 Android 13/API 33 及以上使用 `MediaStore.ACTION_PICK_IMAGES` 与 `EXTRA_PICK_IMAGES_MAX=10` 打开原生系统 Photo Picker；更旧的设备回退到 `ACTION_OPEN_DOCUMENT` + `EXTRA_ALLOW_MULTIPLE`。返回的多张照片从 `Intent.ClipData` 提取 `content://` URI 并交回 WebView（单张回退到 `Intent.Data`）。拍照使用 Android `ACTION_IMAGE_CAPTURE` + FileProvider，不需要申请照片库全面读取权限。系统照片选择器的具体外观由 Android/澎湃 OS 4 控制，不由网页重绘。拍照行为仍需 REDMI K90 Pro Max / 澎湃 OS 4 真机验证，模拟器验证不能替代真实系统相机。
