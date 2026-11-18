@@ -284,7 +284,7 @@ internal static class MobileApi
         return kind switch
         {
             "activity-ledger" => DownloadWord(store.ExportActivityLedgerWord(from, to, community,
-                request.Query("typeId"), includePhotos, points, current ? Activities(request) : null)),
+                request.Query("typeId"), includePhotos, current ? Activities(request) : null)),
             "rectification-ledger" => DownloadWord(store.ExportLedgerWord(from, to, community,
                 includePhotos, points, current ? Inspections(request) : null)),
             "inspection-ledger" => DownloadWord(store.ExportInspectionLedgerWord(from, to, community,
