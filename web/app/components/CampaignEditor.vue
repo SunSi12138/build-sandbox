@@ -11,6 +11,7 @@ const router = useRouter()
 const draftKey = 'street-eco-campaign-draft-v3'
 const selectedPoint = ref<PointDto | null>(null)
 const pointLoading = ref(false)
+const pointPhotosFailed = ref(false)
 const conflictOpen = ref(false)
 const requestedPoint = ref('')
 function emptyPoint(): NewPointDraft { return { name: '', communityId: '', typeId: '', address: '', contact: '', phone: '', coordinates: '', extraValues: {}, photoIds: [] } }
@@ -52,7 +53,7 @@ const saving = ref(false),
   leaveOpen = ref(false)
 const phaseBusy = reactive({ before: false, process: false, after: false, extra: false })
 const phaseFailed = reactive({ before: false, process: false, after: false, extra: false })
-const photosFailed = computed(() => Object.values(phaseFailed).some(Boolean))
+const photosFailed = computed(() => pointPhotosFailed.value || Object.values(phaseFailed).some(Boolean))
 const formDisabled = computed(() => loading.value || saving.value)
 const photosBusy = computed(() => Object.values(phaseBusy).some(Boolean))
 const communities = computed(() =>
@@ -206,7 +207,7 @@ function validate(value: CampaignState): FormError[] {
   return errors
 }
 async function save() {
-  if (loading.value || saving.value || pointLoading.value || photosBusy.value || validate(state).length) return
+  if (loading.value || saving.value || pointLoading.value || photosBusy.value || photosFailed.value || validate(state).length) return
   saving.value = true
   error.value = ''
   const body: CampaignWriteRequest = {
@@ -299,7 +300,7 @@ function useRequestedPoint() {
     请先维护社区和整治类型
   </p>
   <UForm :state="state" :validate="validate" class="form-sections" @submit="save">
-    <RecordPointPicker v-if="!initial" v-model:mode="state.pointMode" v-model:point-id="state.pointId" v-model:new-point="state.newPoint" :disabled="formDisabled" @selected="selectedPoint = $event" @busy="pointLoading = $event" />
+    <RecordPointPicker v-if="!initial" v-model:mode="state.pointMode" v-model:point-id="state.pointId" v-model:new-point="state.newPoint" :disabled="formDisabled" @selected="selectedPoint = $event" @busy="pointLoading = $event" @failed="pointPhotosFailed = $event" />
     <section v-else class="form-section"><h2>场所</h2><NuxtLink :to="`/points/${initial.campaign.pointId}`" class="text-sm text-primary">{{ initial.campaign.pointName }}</NuxtLink><p class="text-xs text-muted">{{ initial.campaign.communityName }} · {{ initial.campaign.location }}</p></section>
     <section class="form-section">
       <h2>基本信息</h2>
@@ -419,7 +420,7 @@ function useRequestedPoint() {
         type="submit"
         label="保存"
         :loading="saving"
-        :disabled="loading || pointLoading || photosBusy || conflictOpen || !communities.length || !types.length"
+        :disabled="loading || pointLoading || photosBusy || photosFailed || conflictOpen || !communities.length || !types.length"
         data-testid="campaign-save"
       />
     </div>

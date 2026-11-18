@@ -5,7 +5,7 @@ const mode = defineModel<'regular' | 'temporary'>('mode', { required: true })
 const pointId = defineModel<string>('pointId', { required: true })
 const newPoint = defineModel<NewPointDraft>('newPoint', { required: true })
 const props = withDefaults(defineProps<{ disabled?: boolean; prefix?: string }>(), { prefix: 'campaign' })
-const emit = defineEmits<{ selected: [point: PointDto | null]; busy: [value: boolean] }>()
+const emit = defineEmits<{ selected: [point: PointDto | null]; busy: [value: boolean]; failed: [value: boolean] }>()
 const { bootstrap } = useAppData()
 const selected = ref<PointDto | null>(null)
 const extraFields = computed(() => bootstrap.value?.pointTypes.find(x=>x.id===newPoint.value.typeId)?.fields??[])
@@ -24,7 +24,8 @@ let sequence = 0
 let selectedSequence = 0
 const communities = computed(() => (bootstrap.value?.communities ?? []).map(p => ({ label: p.name, value: p.id })))
 const types = computed(() => (bootstrap.value?.pointTypes ?? []).map(p => ({ label: p.name, value: p.id })))
-watch([resolving,extraBusy], () => emit('busy', resolving.value || extraBusy.value), { immediate: true })
+watch([mode, resolving, extraBusy], () => emit('busy', resolving.value || (mode.value === 'temporary' && extraBusy.value)), { immediate: true })
+watch([mode, extraFailed], () => emit('failed', mode.value === 'temporary' && extraFailed.value), { immediate: true })
 async function list(reset = true) {
   controller?.abort()
   controller = new AbortController()
@@ -67,7 +68,7 @@ watch(pointId, async id => {
 }, { immediate: true })
 watch(search, () => { clearTimeout(timer); timer = setTimeout(() => { void list() }, 250) })
 onMounted(() => { void list() })
-onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequence++; emit('busy', false) })
+onBeforeUnmount(() => { clearTimeout(timer); controller?.abort(); selectedSequence++; emit('busy', false); emit('failed', false) })
 </script>
 
 <template>

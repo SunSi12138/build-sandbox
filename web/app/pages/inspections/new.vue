@@ -372,7 +372,7 @@ function validationFailed() {
 async function saveInspection() {
   if (saving.value) return
   saveError.value = ''
-  if (uploadsBusy.value) { saveError.value = '还有照片未上传完成，请等待处理，或重试、移除失败照片后保存。'; return }
+  if (uploadsBusy.value || photosFailed.value) { saveError.value = '还有照片未上传完成或上传失败，请重试、移除失败照片后保存。'; return }
   if (validate(draft).length) { validationFailed(); return }
   saving.value = true
   persistDraft()
@@ -467,7 +467,7 @@ const moreActions = computed(() => [{label:'打开草稿箱',to:'/drafts'}, {lab
           <section class="form-section"><UFormField name="notes" label="备注"><UTextarea v-model="draft.notes" :rows="3" :maxlength="8000" autoresize class="w-full" :disabled="formDisabled" /></UFormField></section>
         </div>
         <UAlert v-if="saveError" :description="saveError" color="error" variant="subtle" />
-        <div class="form-actions"><p class="draft-state" aria-live="polite">{{ photosFailed ? '有照片未完成，请重试或移除' : uploadsBusy ? '照片处理中' : draftSavedTime ? `已在本机暂存 ${draftSavedTime}` : '尚未暂存' }}</p><UButton type="submit" data-testid="inspection-save" label="保存检查记录" :loading="saving" :disabled="uploadsBusy || (draft.pointMode === 'regular' && (!selectedPoint || selectedPoint.disabled))" /></div>
+        <div class="form-actions"><p class="draft-state" aria-live="polite">{{ photosFailed ? '有照片未完成，请重试或移除' : uploadsBusy ? '照片处理中' : draftSavedTime ? `已在本机暂存 ${draftSavedTime}` : '尚未暂存' }}</p><UButton type="submit" data-testid="inspection-save" label="保存检查记录" :loading="saving" :disabled="uploadsBusy || photosFailed || (draft.pointMode === 'regular' && (!selectedPoint || selectedPoint.disabled))" /></div>
       </UForm>
     </PageState>
     <UModal v-model:open="destructiveOpen" :title="destructiveTitle" :description="destructiveDescription"><template #footer><UButton type="button" label="取消" color="neutral" variant="outline" @click="destructiveOpen = false" /><UButton type="button" :label="destructiveAction === 'clear' ? '清空' : destructiveAction === 'normal' ? '改为正常' : '移除'" color="error" @click="confirmDestructiveAction" /></template></UModal>
