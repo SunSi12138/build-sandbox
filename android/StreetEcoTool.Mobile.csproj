@@ -9,8 +9,8 @@
     <RootNamespace>StreetEcoTool.Mobile</RootNamespace>
     <ApplicationTitle>WebView 照片验证</ApplicationTitle>
     <ApplicationId>com.streetecotool.photolab</ApplicationId>
-    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
-    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>0.2.0</ApplicationDisplayVersion>
+    <ApplicationVersion>2</ApplicationVersion>
     <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
     <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
     <AndroidPackageFormat>apk</AndroidPackageFormat>
