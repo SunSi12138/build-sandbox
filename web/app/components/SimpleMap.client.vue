@@ -132,13 +132,13 @@ function vertexStyle(feature: Feature<Geometry>) {
   const point = new Style({
     image: new CircleStyle({
       radius: active ? 8 : 7,
-      fill: new Fill({ color: active ? '#dc2626' : '#fff' }),
-      stroke: new Stroke({ color: active ? '#dc2626' : '#099a91', width: 3 }),
+      fill: new Fill({ color: active ? mapColors.danger : mapColors.halo }),
+      stroke: new Stroke({ color: active ? mapColors.danger : mapColors.editing, width: 3 }),
     }),
     zIndex: active ? 10 : 1,
   })
   return active
-    ? [new Style({ image: new CircleStyle({ radius: 16, stroke: new Stroke({ color: '#dc2626', width: 3, lineDash: [4, 4] }) }), zIndex: 9 }), point]
+    ? [new Style({ image: new CircleStyle({ radius: 16, stroke: new Stroke({ color: mapColors.danger, width: 3, lineDash: [4, 4] }) }), zIndex: 9 }), point]
     : [point]
 }
 const vertexLayer = new VectorLayer({ source: verticesSource, style: feature => vertexStyle(feature as Feature<Geometry>), declutter: false })
