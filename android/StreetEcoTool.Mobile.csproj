@@ -23,5 +23,12 @@
     <PackageReference Include="Microsoft.Maui.Controls" Version="11.0.10" />
     <MauiIcon Include="Resources/AppIcon/appicon.svg" Color="#075e54" />
     <MauiSplashScreen Include="Resources/Splash/splash.svg" Color="#075e54" BaseSize="128,128" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Reuse the original SQLite schema and domain Store on Android; no ASP.NET endpoints are included. -->
+    <Compile Include="../server/*.cs" Exclude="../server/Program.cs;../server/Startup.cs;../server/Api.cs;../server/Listening.cs" Link="Shared/%(Filename)%(Extension)" />
+    <Compile Remove="probes/**/*.cs" />
+    <MauiAsset Include="Resources/Raw/wwwroot/**" LogicalName="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
