@@ -44,6 +44,11 @@ jobs:
         working-directory: android
         run: |
           dotnet build StreetEcoTool.Mobile.csproj -t:InstallAndroidDependencies -f net11.0-android -p:AndroidSdkDirectory="$ANDROID_HOME" -p:AcceptAndroidSDKLicenses=true -p:AndroidManifestMerger=manifestmerger.jar
+      - name: Probe ASP.NET Core runtime availability on Android
+        continue-on-error: true
+        working-directory: android
+        run: |
+          dotnet build probes/AspNetAndroidProbe.csproj -c Release -r android-arm64 -v normal
       - name: Generate temporary test-only signing key
         run: |
           keytool -genkeypair -v -keystore "$RUNNER_TEMP/experiment-signing.jks" -alias experiment -keyalg RSA -keysize 2048 -validity 3650 -storepass android -keypass android -dname "CN=Street Eco Tool MAUI Experiment, O=Test, C=CN"
