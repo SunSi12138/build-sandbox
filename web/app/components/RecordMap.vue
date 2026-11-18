@@ -54,7 +54,7 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <div class="record-map-shell" :aria-busy="loading">
-    <Teleport to="#main-map-layer" :disabled="!ready"><div class="record-map-surface"><SimpleMap ref="map" :records="markers" :selected="selected" @select="select" /></div></Teleport>
+    <Teleport to="#main-map-layer" :disabled="!ready"><div class="record-map-surface"><SimpleMap ref="map" :records="markers" :selected="selected" :show-zoom-controls="false" @select="select" /></div></Teleport>
     <UButton v-if="!choose" type="button" :icon="fullscreen ? 'i-lucide-minimize' : 'i-lucide-maximize'" :aria-label="fullscreen ? '退出浏览器全屏' : '浏览器全屏'" :title="fullscreen ? '退出浏览器全屏' : '浏览器全屏'" :aria-pressed="fullscreen" color="neutral" variant="ghost" class="map-fullscreen" data-testid="map-fullscreen" @click="toggleFullscreen" />
     <span v-if="fullscreenError" class="record-map-fullscreen-error" role="alert">{{ fullscreenError }}</span>
     <div class="record-map-summary" :class="{ 'with-fullscreen': !choose }"><span v-if="loading" role="status">加载中…</span><span>已标记 {{ records.length - missing.length }} 条</span><button v-if="missing.length" type="button" :aria-pressed="unlocated" @click="unlocated = !unlocated; selected = []">未标记 {{ missing.length }} 条 ›</button></div>
