@@ -52,6 +52,7 @@ function scheduleDepthPrefetch() {
 }
 const recordsSource = new VectorSource<Feature<Geometry>>(), editingSource = new VectorSource<Feature<Geometry>>()
 const verticesSource = new VectorSource<Feature<Geometry>>()
+const vertexAnchors: Overlay[] = []
 let reporting = false
 function geometry(shape: GeoShape) { return shape.type === 'Point' ? new Point(fromLonLat(gcj02ToWgs84(shape.coordinates[0]!))) : new Polygon([shape.coordinates.map(c => fromLonLat(gcj02ToWgs84(c)))]) }
 function toShape(feature: Feature<Geometry>): GeoShape {
@@ -88,14 +89,31 @@ function closestVertex(pixel: readonly number[]): number | null {
   return nearest
 }
 function refreshVertices() {
+  // Noninteractive anchors follow the vertices through pan/zoom. Besides
+  // providing precise hit-position diagnostics, they never intercept pointer
+  // events or interfere with OpenLayers Modify dragging.
+  if (map) for (const anchor of vertexAnchors) map.removeOverlay(anchor)
+  vertexAnchors.length = 0
   verticesSource.clear()
   vertexCount.value = 0
   const edit = props.mode === 'edit' ? editingPolygon() : null
   const ring = edit?.polygon.getCoordinates()[0]
   if (!ring) { selectedVertex.value = null; vertexOverlay?.setPosition(undefined); return }
   vertexCount.value = polygonVertexCount(ring)
-  for (let i = 0; i < vertexCount.value; i++)
+  for (let i = 0; i < vertexCount.value; i++) {
     verticesSource.addFeature(new Feature({ geometry: new Point([...ring[i]!]), vertexIndex: i }))
+    if (map) {
+      const marker = document.createElement('span')
+      marker.className = 'map-vertex-anchor'
+      marker.dataset.testid = 'polygon-vertex-anchor'
+      marker.dataset.vertexIndex = String(i)
+      marker.setAttribute('aria-hidden', 'true')
+      const anchor = new Overlay({ element: marker, positioning: 'center-center', stopEvent: false })
+      map.addOverlay(anchor)
+      anchor.setPosition(ring[i]!)
+      vertexAnchors.push(anchor)
+    }
+  }
   if (selectedVertex.value !== null && selectedVertex.value < vertexCount.value)
     vertexOverlay?.setPosition(ring[selectedVertex.value]!)
   else { selectedVertex.value = null; vertexOverlay?.setPosition(undefined) }
@@ -396,6 +414,8 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleVertexKeydown)
+  if (map) for (const anchor of vertexAnchors) map.removeOverlay(anchor)
+  vertexAnchors.length = 0
   layerRequest.abort(); depthPrefetchers.forEach(item => item.dispose())
   observer?.disconnect(); map?.setTarget(undefined); map?.dispose()
 })
@@ -410,6 +430,7 @@ onBeforeUnmount(() => {
     <div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button v-if="isRotated" type="button" class="map-north" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
+.map-vertex-anchor{display:block;width:1px;height:1px;pointer-events:none}
 .map-vertex-popup{display:flex;flex-direction:column;gap:7px;align-items:center;padding:9px 12px;border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 3px 18px var(--border-strong);min-width:158px;pointer-events:auto;white-space:nowrap}
 .map-vertex-selected{font-weight:600;font-size:12px}
 .map-vertex-delete{display:flex;align-items:center;justify-content:center;gap:8px;border-radius:7px;padding:7px 12px;background:var(--surface-2);font-weight:500;cursor:pointer}
