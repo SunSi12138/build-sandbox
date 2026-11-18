@@ -266,7 +266,7 @@ internal static class Startup
         RequestDelegate systemInfo = context => Api.Write(context, listening.GetInfo(context.Connection.RemoteIpAddress), StartupJsonContext.Default.SystemInfoResponse);
         RequestDelegate changeListen = async context =>
         {
-            if (!ListeningService.IsLoopback(context.Connection.RemoteIpAddress))
+            if (!listening.CanConfigure(context.Connection.RemoteIpAddress))
                 throw new ApiException(403, "请在运行程序的电脑上修改监听设置");
             var result = listening.Prepare(await Api.Read(context, StartupJsonContext.Default.ListenRequest), context.Connection.RemoteIpAddress);
             context.Response.OnCompleted(() => { listening.SignalChange(); return Task.CompletedTask; });
