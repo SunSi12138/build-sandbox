@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
+import qrcode from 'qrcode-generator'
 import { verifyWordDownloads } from './word-browser-test.mjs'
 import { verifyOptimization } from './optimization-browser-test.mjs'
 import { verifyRound3 } from './round3-browser-test.mjs'
@@ -619,12 +620,37 @@ try {
     await page.goto(origin + '/#/', { waitUntil: 'networkidle' })
     await page.getByTestId('listen-trigger').click()
     assert(await page.getByRole('checkbox', { name: '仅本机', exact: true }).isChecked())
+    assert.equal(await page.getByTestId('listen-qr-button').count(), 0, 'loopback-only address should not have a QR button')
     await page.getByRole('checkbox', { name: '所有网卡', exact: true }).check()
     assert(!await page.getByRole('checkbox', { name: '仅本机', exact: true }).isChecked())
     let response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/system/listen' && response.request().method() === 'PUT' && response.status() === 200)
     await page.getByTestId('listen-apply').click(); await response
     await page.waitForFunction(() => document.querySelector('[data-testid="listen-trigger"]')?.textContent.includes('局域网'), null, { timeout: 12000 })
     assert.deepEqual((await api('/system')).listen, ['0.0.0.0'])
+    const lanAddresses = (await api('/system')).addresses.filter(address => /^http:\/\/(?:\d+\.){3}\d+:\d+$/.test(address) && !address.includes('127.0.0.1'))
+    assert(lanAddresses.length > 0, 'wildcard listening should show at least one LAN URL')
+    assert.equal(await page.getByTestId('listen-qr-button').count(), lanAddresses.length,
+      'every LAN address must offer an offline QR code')
+    await page.getByTestId('listen-qr-button').first().click()
+    const qrDialog = page.getByRole('dialog', { name: '扫码访问', exact: true })
+    await qrDialog.waitFor()
+    assert.equal(await qrDialog.locator('a').textContent(), lanAddresses[0],
+      'QR dialog must use the complete LAN URL and server port')
+    const qrSvg = qrDialog.getByRole('img', { name: '扫码打开 ' + lanAddresses[0] })
+    const reference = qrcode(0, 'M')
+    reference.addData(lanAddresses[0])
+    reference.make()
+    assert.equal(await qrSvg.getAttribute('viewBox'), '0 0 ' + (reference.getModuleCount() + 8) + ' ' + (reference.getModuleCount() + 8))
+    const displayedCells = await qrSvg.locator('rect[fill="black"]').evaluateAll(elements =>
+      elements.map(el => [Number(el.getAttribute('x')), Number(el.getAttribute('y'))]))
+    const expectedCells = []
+    for (let y = 0; y < reference.getModuleCount(); y++)
+      for (let x = 0; x < reference.getModuleCount(); x++)
+        if (reference.isDark(y, x)) expectedCells.push([x + 4, y + 4])
+    assert.deepEqual(displayedCells, expectedCells, 'QR SVG must encode the selected URL without external image APIs')
+    await page.keyboard.press('Escape')
+    await qrDialog.waitFor({ state: 'hidden' })
+    if (!await page.getByTestId('listen-apply').isVisible()) await page.getByTestId('listen-trigger').click()
     await page.getByRole('checkbox', { name: '仅本机', exact: true }).check()
     response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/system/listen' && response.status() === 200)
     await page.getByTestId('listen-apply').click(); await response
