@@ -29,6 +29,7 @@ namespace StreetEcoTool;
 [JsonSerializable(typeof(PageDto<IssueDto>), TypeInfoPropertyName = "IssuePage")]
 [JsonSerializable(typeof(FeedbackRequest))]
 [JsonSerializable(typeof(ReviewRequest))]
+[JsonSerializable(typeof(IssueActionUpdateRequest))]
 [JsonSerializable(typeof(ReturnIssueRequest))]
 [JsonSerializable(typeof(PhotoDto))]
 [JsonSerializable(typeof(PhotoUploadDto))]
