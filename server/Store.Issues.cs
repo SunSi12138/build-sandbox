@@ -105,7 +105,6 @@ public sealed partial class Store
         {
             PrepareWrite();
             var issue = GetIssue(id);
-            if (issue.Status != "pending") throw new ApiException(409, "只有待整改问题可以修改；如需继续整改，请先退回待整改。");
             using var tx = _db.BeginTransaction();
             var kind = RequireIssueType(request.IssueTypeId, tx);
             using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit,issue_type_id=$type,issue_type_name=$typeName WHERE id=$id;", tx,
@@ -143,6 +142,82 @@ public sealed partial class Store
             var issue = GetIssue(id);
             ReviewInspection(issue.InspectionId, new(request.Date, [new(id, request.Conclusion, request.PhotoIds)]));
             return GetIssueDetail(id);
+        }
+    }
+
+    public IssueDetailDto UpdateIssueAction(string issueId, string actionId, IssueActionUpdateRequest request)
+    {
+        lock (_gate)
+        {
+            PrepareWrite();
+            var issue = GetIssue(issueId);
+            string kind;
+            using (var command = Command("SELECT kind FROM issue_actions WHERE id=$id AND issue_id=$issue;", null,
+                ("$id", actionId), ("$issue", issueId)))
+                kind = command.ExecuteScalar() as string ?? throw new ApiException(404, "办理记录不存在。");
+            if (kind is not ("feedback" or "review"))
+                throw new ApiException(409, "退回记录不可修改。");
+
+            var dateLabel = kind == "feedback" ? "反馈日期" : "复查日期";
+            var date = ActionDate(request.Date, issue.InspectionDate, dateLabel);
+            var notes = Text(request.Notes, kind == "feedback" ? "整改情况" : "复查结论", 8000, true);
+
+            // An earlier or later action (including a return to pending) must
+            // not be crossed when editing this date; the history stays ordered.
+            using (var previous = Command("""
+                SELECT action_date FROM issue_actions WHERE issue_id=$issue AND rowid<
+                (SELECT rowid FROM issue_actions WHERE id=$id) ORDER BY rowid DESC LIMIT 1;
+                """, null, ("$issue", issueId), ("$id", actionId)))
+                if (previous.ExecuteScalar() is string minimum && string.CompareOrdinal(date, minimum) < 0)
+                    throw new ApiException(400, $"{dateLabel}不能早于上一条办理记录日期 {minimum}。");
+            using (var next = Command("""
+                SELECT action_date FROM issue_actions WHERE issue_id=$issue AND rowid>
+                (SELECT rowid FROM issue_actions WHERE id=$id) ORDER BY rowid LIMIT 1;
+                """, null, ("$issue", issueId), ("$id", actionId)))
+                if (next.ExecuteScalar() is string maximum && string.CompareOrdinal(date, maximum) > 0)
+                    throw new ApiException(400, $"{dateLabel}不能晚于下一条办理记录日期 {maximum}。");
+
+            // Null photoIds means "do not touch photos" for API compatibility.
+            // An explicit list means replace: retained photos keep their IDs,
+            // newly uploaded photos are attached, and removed files are deleted
+            // with the same database transaction/rollback safety as elsewhere.
+            var existing = ReadPhotos(actionId: actionId).Select(photo => photo.Id).ToArray();
+            var requested = request.PhotoIds ?? existing;
+            if (requested.Length > 100 || requested.Any(string.IsNullOrWhiteSpace) ||
+                requested.Distinct(StringComparer.Ordinal).Count() != requested.Length)
+                throw new ApiException(400, "照片列表无效或超过 100 张。");
+            var keep = new HashSet<string>(existing, StringComparer.Ordinal);
+            var wanted = new HashSet<string>(requested, StringComparer.Ordinal);
+            var removed = existing.Where(id => !wanted.Contains(id)).ToArray();
+            var additions = requested.Where(id => !keep.Contains(id)).ToArray();
+
+            string? activeActionId;
+            using (var last = Command("""
+                SELECT id FROM issue_actions WHERE issue_id=$issue AND kind=$kind
+                AND rowid>COALESCE((SELECT MAX(rowid) FROM issue_actions
+                    WHERE issue_id=$issue AND kind='return'),0)
+                ORDER BY rowid DESC LIMIT 1;
+                """, null, ("$issue", issueId), ("$kind", kind)))
+                activeActionId = last.ExecuteScalar() as string;
+            var currentRound = activeActionId == actionId &&
+                (kind == "feedback" ? issue.Status is "feedback" or "closed" : issue.Status == "closed");
+
+            ExecuteWithPhotoDeletion(removed, transaction =>
+            {
+                using (var update = Command("UPDATE issue_actions SET action_date=$date,notes=$notes WHERE id=$id;", transaction,
+                    ("$date", date), ("$notes", notes), ("$id", actionId)))
+                    update.ExecuteNonQuery();
+                if (currentRound)
+                {
+                    var sql = kind == "feedback"
+                        ? "UPDATE issues SET feedback_date=$date,feedback_notes=$notes WHERE id=$issue;"
+                        : "UPDATE issues SET review_date=$date,review_conclusion=$notes,closed_date=$date WHERE id=$issue;";
+                    using var summary = Command(sql, transaction, ("$date", date), ("$notes", notes), ("$issue", issueId));
+                    summary.ExecuteNonQuery();
+                }
+                AttachPhotos(additions, kind == "feedback" ? "after" : "review", null, issueId, transaction, actionId);
+            });
+            return GetIssueDetail(issueId);
         }
     }
 
