@@ -54,6 +54,7 @@ export interface IssueDetailDto { issue: IssueDto; inspection: InspectionDto; ph
 export interface IssueActionDto { id: string; kind: 'feedback' | 'review' | 'return'; date: string; notes: string; photos: PhotoDto[] }
 export interface FeedbackRequest { date: string; notes: string; photoIds?: string[] }
 export interface ReviewRequest { date: string; conclusion: string; photoIds?: string[] }
+export interface IssueActionUpdateRequest { date: string; notes: string; photoIds?: string[] }
 export interface ReturnIssueRequest { reason?: string }
 export interface PhotoDto {
   id: string; width: number; height: number; phase: PhotoPhase; url: string; uploadedAt: string
