@@ -39,6 +39,7 @@ public sealed record IssueDetailDto(IssueDto Issue, InspectionDto Inspection, Ph
 public sealed record IssueActionDto(string Id, string Kind, string Date, string Notes, PhotoDto[] Photos);
 public sealed record FeedbackRequest(string Date, string Notes, string[]? PhotoIds = null);
 public sealed record ReviewRequest(string Date, string Conclusion, string[]? PhotoIds = null);
+public sealed record IssueActionUpdateRequest(string Date, string Notes, string[]? PhotoIds = null);
 public sealed record ReturnIssueRequest(string? Reason = null);
 public sealed record PhotoDto(string Id, int Width, int Height, string Phase, string Url, string UploadedAt, string? InspectionId = null, string? IssueId = null, string? ActionId = null, string? PointId = null, bool HasThumb = false, string? ActivityId = null);
 public sealed record PhotoUploadDto(string Id, int Width, int Height);
