@@ -203,12 +203,14 @@ public static class Api
         RequestDelegate issues = context => Write(context, store.ListIssues(new(Query(context, "status"), Query(context, "communityId"), Query(context, "pointId"), Query(context, "inspectionId"), Flag(context, "overdue"), Flag(context, "dueSoon"), Query(context, "from"), Query(context, "to"), Query(context, "q"), Number(context, "page", 1), Number(context, "pageSize", 30), Query(context, "typeId"))), AppJsonContext.Default.IssuePage);
         RequestDelegate issue = context => Write(context, store.GetIssueDetail(Id(context)), AppJsonContext.Default.IssueDetailDto);
         RequestDelegate updateIssue = async context => await Write(context, store.UpdateIssue(Id(context), await Read(context, AppJsonContext.Default.IssueUpdateRequest)), AppJsonContext.Default.IssueDetailDto);
+        RequestDelegate updateIssueAction = async context => await Write(context, store.UpdateIssueAction(Id(context), context.Request.RouteValues["actionId"] as string ?? "", await Read(context, AppJsonContext.Default.IssueActionUpdateRequest)), AppJsonContext.Default.IssueDetailDto);
         RequestDelegate feedback = async context => await Write(context, store.RecordFeedback(Id(context), await Read(context, AppJsonContext.Default.FeedbackRequest)), AppJsonContext.Default.IssueDetailDto);
         RequestDelegate review = async context => await Write(context, store.ReviewAndClose(Id(context), await Read(context, AppJsonContext.Default.ReviewRequest)), AppJsonContext.Default.IssueDetailDto);
         RequestDelegate returnIssue = async context => await Write(context, store.ReturnIssue(Id(context), await Read(context, AppJsonContext.Default.ReturnIssueRequest)), AppJsonContext.Default.IssueDetailDto);
         app.MapGet("/api/issues", issues);
         app.MapGet("/api/issues/{id}", issue);
         app.MapPut("/api/issues/{id}", updateIssue);
+        app.MapPut("/api/issues/{id}/actions/{actionId}", updateIssueAction);
         app.MapPost("/api/issues/{id}/feedback", feedback);
         app.MapPost("/api/issues/{id}/review", review);
         app.MapPost("/api/issues/{id}/return", returnIssue);
