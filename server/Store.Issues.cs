@@ -104,7 +104,7 @@ public sealed partial class Store
         lock (_gate)
         {
             PrepareWrite();
-            var issue = GetIssue(id);
+            _ = GetIssue(id);
             using var tx = _db.BeginTransaction();
             var kind = RequireIssueType(request.IssueTypeId, tx);
             using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit,issue_type_id=$type,issue_type_name=$typeName WHERE id=$id;", tx,
