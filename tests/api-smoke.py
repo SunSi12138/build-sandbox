@@ -343,12 +343,39 @@ class ApiSmoke:
         require(feedback["issue"]["status"] == "feedback" and feedback["issue"]["feedbackDate"] == day(self.today), "Feedback did not update status and date")
         require(after["id"] in ids(feedback["photos"]), "After photo was not associated")
         self.json("POST", prefix + "/feedback", {"date": day(self.today), "notes": "重复反馈"}, expected=409)
-        self.json("PUT", prefix, self.issue_body("不能改已反馈问题", self.today, responsible=self.community["name"]), expected=409)
+        edited_issue = self.json("PUT", prefix, self.issue_body("已编辑的反馈问题", self.today, responsible=self.community["name"]))
+        require(edited_issue["issue"]["status"] == "feedback" and edited_issue["issue"]["description"] == "已编辑的反馈问题",
+                "Editing a problem after feedback must not reset its workflow status")
+        feedback_action = feedback["actions"][-1]["id"]
+        corrected = self.json("PUT", prefix + "/actions/" + feedback_action, {
+            "date": day(self.today), "notes": "修改后的整改反馈", "photoIds": [after["id"]]
+        })
+        require(corrected["issue"]["feedbackNotes"] == "修改后的整改反馈" and
+                corrected["actions"][-1]["notes"] == "修改后的整改反馈" and
+                after["id"] in ids(corrected["actions"][-1]["photos"]),
+                "Editing feedback must update the current summary and preserve linked photos")
+        self.json("PUT", prefix + "/actions/" + feedback_action, {
+            "date": day(self.today + dt.timedelta(days=1)), "notes": "未来日期"
+        }, expected=400)
+        self.json("PUT", prefix + "/actions/" + "0" * 32, {
+            "date": day(self.today), "notes": "不存在的记录"
+        }, expected=404)
         before = self.fingerprint()
         self.json("POST", prefix + "/review", {"date": day(self.today - dt.timedelta(days=1)), "conclusion": "日期错误"}, expected=400)
         require(self.fingerprint() == before, "Invalid review date changed the issue")
         closed = self.json("POST", prefix + "/review", {"date": day(self.today), "conclusion": "现场复查整改到位", "photoIds": []})
         require(closed["issue"]["status"] == "closed" and closed["issue"]["closedDate"] == day(self.today), "Review without photos must close the issue")
+        review_action = closed["actions"][-1]["id"]
+        corrected_review = self.json("PUT", prefix + "/actions/" + review_action, {
+            "date": day(self.today), "notes": "复查确认已整改完成", "photoIds": []
+        })
+        require(corrected_review["issue"]["status"] == "closed" and
+                corrected_review["issue"]["reviewConclusion"] == "复查确认已整改完成" and
+                corrected_review["actions"][-1]["notes"] == "复查确认已整改完成",
+                "Editing review must update the active closure without reopening the issue")
+        self.json("PUT", prefix + "/actions/" + review_action, {
+            "date": day(self.today + dt.timedelta(days=1)), "notes": "无效复查日期"
+        }, expected=400)
         self.json("POST", prefix + "/review", {"date": day(self.today), "conclusion": "重复闭环"}, expected=409)
         returned = self.json("POST", prefix + "/return", {"reason": "需要补充清理"})
         require(returned["issue"]["status"] == "pending", "Return did not move the issue back to pending")
@@ -357,6 +384,15 @@ class ApiSmoke:
         require(returned["issue"]["feedbackNotes"] == "" and returned["issue"]["reviewConclusion"] == "", "Return retained stale current-round text")
         require([action["kind"] for action in returned["actions"]] == ["feedback", "review", "return"], "Returning an issue lost audit history")
         require(after["id"] in ids(returned["photos"]), "Returning an issue deleted historical evidence photos")
+        historic = self.json("PUT", prefix + "/actions/" + feedback_action, {
+            "date": day(self.today), "notes": "补充旧轮整改说明"
+        })
+        require(historic["issue"]["status"] == "pending" and historic["issue"]["feedbackNotes"] == "" and
+                historic["actions"][0]["notes"] == "补充旧轮整改说明",
+                "Editing a historical action must not overwrite the reset current-round summary")
+        self.json("PUT", prefix + "/actions/" + returned["actions"][-1]["id"], {
+            "date": day(self.today), "notes": "不得修改退回"
+        }, expected=409)
         self.json("POST", prefix + "/return", {}, expected=409)
         prefix = "/api/issues/" + second["id"]
         wrong_phase = self.upload("site")
@@ -367,6 +403,21 @@ class ApiSmoke:
         self.json("POST", prefix + "/feedback", {"date": day(self.today), "notes": "已落实", "photoIds": [after2["id"]]})
         closed2 = self.json("POST", prefix + "/review", {"date": day(self.today), "conclusion": "复查合格", "photoIds": [review_photo["id"]]})
         require(closed2["issue"]["status"] == "closed" and review_photo["id"] in ids(closed2["photos"]), "Review photo was not retained on closure")
+        replacement_photo = self.upload("review")
+        latest_review = closed2["actions"][-1]["id"]
+        updated = self.json("PUT", prefix + "/actions/" + latest_review, {
+            "date": day(self.today), "notes": "复查补充照片", "photoIds": [replacement_photo["id"]]
+        })
+        require(replacement_photo["id"] in ids(updated["photos"]) and
+                review_photo["id"] not in ids(updated["photos"]) and
+                updated["issue"]["reviewConclusion"] == "复查补充照片",
+                "Editing review photos must replace attachments and synchronize the summary")
+        self.request("GET", "/photos/" + review_photo["id"], expected=404)
+        changed_before = self.fingerprint()
+        self.json("PUT", "/api/issues/" + first["id"] + "/actions/" + latest_review, {
+            "date": day(self.today), "notes": "跨问题关联"
+        }, expected=404)
+        require(self.fingerprint() == changed_before, "Cross-issue action edit changed stored data")
 
     def test_dashboard(self) -> None:
         baseline = self.json("GET", "/api/dashboard")
