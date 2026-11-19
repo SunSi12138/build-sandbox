@@ -1,10 +1,39 @@
 <script setup lang="ts">
 import type { ListenUpdateResponse, SystemInfoResponse } from '~/types/api'
 import { errorMessage } from '~/utils/format'
+import qrcode from 'qrcode-generator'
 const toast = useToast()
 const info = ref<SystemInfoResponse | null>(null), open = ref(false), selected = ref<string[]>([])
 const loading = ref(false), applying = ref(false), error = ref(''), showOther = ref(false), warningOpen = ref(false)
 const newAddresses = ref<string[]>([])
+const qrOpen = ref(false), qrAddress = ref('')
+function isLanAddress(address: string) {
+  try {
+    const url = new URL(address)
+    const host = url.hostname.toLowerCase()
+    return url.protocol === 'http:' &&
+      /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) &&
+      host !== '0.0.0.0' && !host.startsWith('127.')
+  } catch { return false }
+}
+function showQr(address: string) {
+  if (!isLanAddress(address)) return
+  qrAddress.value = address
+  qrOpen.value = true
+}
+const qrCode = computed(() => {
+  if (!isLanAddress(qrAddress.value)) return null
+  // Bundled QR encoding runs entirely offline; no remote image API.
+  const qr = qrcode(0, 'M')
+  qr.addData(qrAddress.value)
+  qr.make()
+  const count = qr.getModuleCount()
+  const modules: { x: number; y: number }[] = []
+  for (let y = 0; y < count; y++)
+    for (let x = 0; x < count; x++)
+      if (qr.isDark(y, x)) modules.push({ x: x + 4, y: y + 4 })
+  return { size: count + 8, modules }
+})
 let disposed = false
 const localOnly = computed(() => !info.value?.listen.some(value => value !== '127.0.0.1' && value !== '::1'))
 const label = computed(() => localOnly.value ? '仅本机' : `局域网 · ${info.value?.addresses.filter(url => !url.includes('localhost') && !url.includes('127.0.0.1')).length ?? 0}`)
@@ -40,7 +69,7 @@ function confirmApply() {
 }
 async function apply() {
   if (!selected.value.length || applying.value) return
-  warningOpen.value = false; applying.value = true; error.value = ''; newAddresses.value = []
+  warningOpen.value = false; qrOpen.value = false; applying.value = true; error.value = ''; newAddresses.value = []
   try {
     const response = await $fetch<ListenUpdateResponse>('/api/system/listen', { method: 'PUT', body: { listen: selected.value }, retry: 0 })
     newAddresses.value = response.addresses
@@ -99,8 +128,20 @@ onBeforeUnmount(() => { disposed = true })
       </template>
       <p v-if="error" role="alert" class="text-sm text-error">{{ error }}</p>
       <h3 class="border-t border-[var(--divider)] pt-2 text-xs text-muted">可访问地址</h3>
-      <div v-for="address in newAddresses.length ? newAddresses : info?.addresses ?? []" :key="address" class="flex items-center gap-1"><a :href="address" class="min-w-0 flex-1 break-all text-xs text-primary">{{ address }}</a><UButton label="复制" color="neutral" variant="ghost" @click="copy(address)" /></div>
+      <div v-for="address in newAddresses.length ? newAddresses : info?.addresses ?? []" :key="address" class="flex items-center gap-1"><a :href="address" class="min-w-0 flex-1 break-all text-xs text-primary">{{ address }}</a><UButton v-if="isLanAddress(address)" icon="i-lucide-qr-code" :aria-label="`显示 ${address} 的二维码`" title="扫码访问" color="neutral" variant="ghost" data-testid="listen-qr-button" @click="showQr(address)" /><UButton label="复制" color="neutral" variant="ghost" @click="copy(address)" /></div>
     </div></template>
   </UPopover>
+  <UModal v-model:open="qrOpen" title="扫码访问" :ui="{ content: 'max-w-[360px]' }">
+    <template #body>
+      <div class="flex flex-col items-center gap-3 text-center" data-testid="listen-qr-dialog">
+        <svg v-if="qrCode" class="block w-[240px] h-[240px] max-w-full" :viewBox="`0 0 ${qrCode.size} ${qrCode.size}`" role="img" :aria-label="`扫码打开 ${qrAddress}`" shape-rendering="crispEdges" xmlns="http://www.w3.org/2000/svg">
+          <rect :width="qrCode.size" :height="qrCode.size" fill="white" />
+          <rect v-for="cell in qrCode.modules" :key="`${cell.y}-${cell.x}`" :x="cell.x" :y="cell.y" width="1" height="1" fill="black" />
+        </svg>
+        <a :href="qrAddress" class="break-all text-sm text-primary">{{ qrAddress }}</a>
+        <p class="text-xs text-muted">手机与电脑连接同一局域网后扫码访问</p>
+      </div>
+    </template>
+  </UModal>
   <UModal v-model:open="warningOpen" title="应用访问设置？" description="本机也需改用所选地址访问"><template #footer><UButton label="取消" color="neutral" variant="outline" @click="warningOpen = false" /><UButton label="应用" @click="apply" /></template></UModal>
 </template>
