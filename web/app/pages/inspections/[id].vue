@@ -4,6 +4,9 @@ import type {
   InspectionDetailDto,
   InspectionUpdateRequest,
   IssueDto,
+  IssueActionDto,
+  IssueActionUpdateRequest,
+  PhotoUploadDto,
   IssueUpdateRequest,
 } from '~/types/api'
 import { downloadWord } from '~/utils/wordDownload'
@@ -50,6 +53,20 @@ const issueEditOpen = ref(false),
   issueEditing = ref(false),
   issueEditError = ref(''),
   issueToEdit = ref<IssueDto | null>(null)
+const actionEditOpen = ref(false),
+  actionEditing = ref(false),
+  actionUploadBusy = ref(false),
+  actionPhotoFailed = ref(false),
+  actionEditError = ref(''),
+  actionTarget = ref<{ issueId: string; action: IssueActionDto } | null>(null),
+  actionOriginalPhotoIds = ref<string[]>([])
+const actionState = reactive<{ date: string; notes: string; photos: PhotoUploadDto[] }>({
+  date: '', notes: '', photos: [],
+})
+const actionBusy = computed(() => actionEditing.value || actionUploadBusy.value)
+const actionTitle = computed(() =>
+  actionTarget.value?.action.kind === 'review' ? '编辑复查' : '编辑整改反馈',
+)
 const returnOpen = ref(false),
   returning = ref(false),
   returnError = ref(''),
@@ -70,7 +87,7 @@ const issueState = reactive<IssueUpdateRequest>({
 })
 const overlayForm = useState<boolean>('street-eco-overlay-form', () => false)
 watch(
-  () => editOpen.value || batchOpen.value || issueEditOpen.value || reassignOpen.value,
+   () => editOpen.value || batchOpen.value || issueEditOpen.value || actionEditOpen.value || reassignOpen.value,
   (value) => {
     overlayForm.value = value
   },
@@ -273,6 +290,51 @@ async function saveIssue() {
     issueEditing.value = false
   }
 }
+function openActionEdit(issueId: string, action: IssueActionDto) {
+  if (action.kind !== 'feedback' && action.kind !== 'review') return
+  actionTarget.value = { issueId, action }
+  actionState.date = action.date
+  actionState.notes = action.notes
+  actionState.photos = action.photos.map(photo => ({
+    id: photo.id, width: photo.width, height: photo.height,
+  }))
+  actionOriginalPhotoIds.value = action.photos.map(photo => photo.id)
+  actionEditError.value = ''
+  actionPhotoFailed.value = false
+  actionEditOpen.value = true
+}
+function validateAction(): FormError[] {
+  const errors: FormError[] = []
+  if (!actionState.date || actionState.date > todayLocal() ||
+      (detail.value && actionState.date < detail.value.inspection.date))
+    errors.push({ name: 'date', message: '日期不得早于排查日期或晚于今天' })
+  if (!actionState.notes.trim())
+    errors.push({ name: 'notes', message: '请填写办理内容' })
+  return errors
+}
+async function saveAction() {
+  if (actionBusy.value || !actionTarget.value || validateAction().length) return
+  actionEditing.value = true
+  actionEditError.value = ''
+  try {
+    const request: IssueActionUpdateRequest = {
+      date: actionState.date,
+      notes: actionState.notes.trim(),
+      photoIds: actionState.photos.map(photo => photo.id),
+    }
+    const { issueId, action } = actionTarget.value
+    await $fetch(`/api/issues/${issueId}/actions/${action.id}`, {
+      method: 'PUT', body: request, retry: 0,
+    })
+    actionEditOpen.value = false
+    await load()
+    toast.add({ title: '已保存', color: 'success', duration: 2000 })
+  } catch (value) {
+    actionEditError.value = errorMessage(value)
+  } finally {
+    actionEditing.value = false
+  }
+}
 function openReturn(issue: IssueDto) {
   issueToReturn.value = issue
   returnReason.value = ''
@@ -299,13 +361,13 @@ async function returnIssue() {
   }
 }
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (batchBusy.value || editing.value || issueEditing.value || returning.value || deleting.value) {
+  if (batchBusy.value || editing.value || issueEditing.value || actionBusy.value || returning.value || deleting.value) {
     event.preventDefault()
     event.returnValue = ''
   }
 }
 onBeforeRouteLeave(
-  () => !batchBusy.value && !editing.value && !issueEditing.value && !returning.value,
+  () => !batchBusy.value && !editing.value && !issueEditing.value && !actionBusy.value && !returning.value,
 )
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onBeforeUnmount(() => {
@@ -533,16 +595,21 @@ watch(() => route.query.issue, revealIssue)
                 /><template #content
                   ><div v-if="issueDetails.get(issue.id)?.actions.length" class="action-timeline">
                     <div v-for="action in issueDetails.get(issue.id)?.actions" :key="action.id">
-                      <p class="text-xs text-muted">
-                        {{ action.date }} ·
-                        {{
-                          action.kind === 'feedback'
-                            ? '反馈'
-                            : action.kind === 'review'
-                              ? '复查'
-                              : '退回'
-                        }}
-                      </p>
+                      <div class="flex flex-wrap items-center justify-between gap-2">
+                        <p class="text-xs text-muted">
+                          {{ action.date }} ·
+                          {{ action.kind === 'feedback' ? '反馈' : action.kind === 'review' ? '复查' : '退回' }}
+                        </p>
+                        <UButton
+                          v-if="action.kind === 'feedback' || action.kind === 'review'"
+                          :label="action.kind === 'feedback' ? '编辑反馈' : '编辑复查'"
+                          color="neutral"
+                          variant="link"
+                          size="xs"
+                          :data-testid="`edit-issue-action-${action.id}`"
+                          @click="openActionEdit(issue.id, action)"
+                        />
+                      </div>
                       <p class="whitespace-pre-wrap text-sm">{{ action.notes }}</p>
                       <IssuePhotos v-if="action.photos.length" :photos="action.photos" />
                     </div>
@@ -570,10 +637,10 @@ watch(() => route.query.issue, revealIssue)
                   variant="outline"
                   @click="openReturn(issue)"
                 /><UButton
-                  v-if="issue.status === 'pending'"
-                  label="编辑"
+                  label="编辑问题"
                   color="neutral"
                   variant="link"
+                  :data-testid="`edit-issue-${issue.id}`"
                   @click="openIssueEdit(issue)"
                 />
               </div>
@@ -723,6 +790,47 @@ watch(() => route.query.issue, revealIssue)
           form="issue-edit"
           label="保存"
           :loading="issueEditing" /></template
+    ></UModal>
+    <UModal
+      v-model:open="actionEditOpen"
+      :content="focus.content"
+      @after:leave="focus.restoreFocus"
+      :title="actionTitle"
+      :dismissible="!actionBusy"
+      :close="!actionBusy"
+      :ui="{ content: 'mobile-full-dialog max-w-[560px]' }"
+      ><template #body
+        ><UForm id="issue-action-edit" :state="actionState" :validate="validateAction"
+          class="space-y-3" @submit="saveAction"
+          ><UFormField name="date" :label="actionTarget?.action.kind === 'review' ? '复查日期' : '反馈日期'" required>
+            <UInput v-model="actionState.date" type="date" data-testid="action-edit-date"
+              :min="detail?.inspection.date" :max="todayLocal()" :disabled="actionBusy" class="w-full" />
+          </UFormField>
+          <UFormField name="notes" :label="actionTarget?.action.kind === 'review' ? '复查结论' : '整改情况'" required>
+            <UTextarea v-model="actionState.notes" :rows="4" :maxlength="8000"
+              data-testid="action-edit-notes" :disabled="actionBusy" class="w-full" />
+          </UFormField>
+          <UFormField :label="actionTarget?.action.kind === 'review' ? '复查照片' : '整改后照片'">
+            <PhotoUploader v-model="actionState.photos"
+              :phase="actionTarget?.action.kind === 'review' ? 'review' : 'after'"
+              :quality="bootstrap?.settings.jpegQuality"
+              :defer-delete-ids="actionOriginalPhotoIds"
+              :disabled="actionEditing"
+              @busy="actionUploadBusy = $event"
+              @failed="actionPhotoFailed = $event" />
+          </UFormField>
+          <UAlert v-if="actionEditError" :description="actionEditError"
+            color="error" variant="subtle" />
+        </UForm></template
+      ><template #footer
+        ><span v-if="actionUploadBusy" class="mr-auto text-xs text-muted">
+          {{ actionPhotoFailed ? '照片上传失败，请重试或移除' : '照片处理中' }}
+        </span>
+        <UButton label="取消" color="neutral" variant="outline"
+          :disabled="actionBusy" @click="actionEditOpen = false" />
+        <UButton type="submit" form="issue-action-edit" label="保存" data-testid="action-edit-save"
+          :loading="actionEditing" :disabled="actionUploadBusy" />
+      </template
     ></UModal>
     <UModal
       v-model:open="returnOpen"
