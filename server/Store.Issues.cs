@@ -105,14 +105,18 @@ public sealed partial class Store
         {
             PrepareWrite();
             _ = GetIssue(id);
-            using var tx = _db.BeginTransaction();
-            var kind = RequireIssueType(request.IssueTypeId, tx);
-            using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit,issue_type_id=$type,issue_type_name=$typeName WHERE id=$id;", tx,
-                ("$id", id), ("$type", kind.Id), ("$typeName", kind.Name), ("$description", Text(request.Description, "问题描述", 8000, true)), ("$requirement", Text(request.Requirement, "整改要求", 8000)),
-                ("$deadline", DateText(request.Deadline, "整改期限")), ("$unit", Text(request.ResponsibleUnit, "责任单位", 200, true)));
-            command.ExecuteNonQuery();
-            ReplaceMatterLinks("issue", id, request.MatterIds, tx);
-            tx.Commit();
+            var photos = ReadPhotos(issueId: id).Where(photo => photo.Phase == "site" && photo.ActionId is null).Select(photo => photo.Id).ToArray();
+            var (removed, additions) = PhotoChanges(photos, request.PhotoIds);
+            ExecuteWithPhotoDeletion(removed, tx =>
+            {
+                var kind = RequireIssueType(request.IssueTypeId, tx);
+                using var command = Command("UPDATE issues SET description=$description,requirement=$requirement,deadline=$deadline,responsible_unit=$unit,issue_type_id=$type,issue_type_name=$typeName WHERE id=$id;", tx,
+                    ("$id", id), ("$type", kind.Id), ("$typeName", kind.Name), ("$description", Text(request.Description, "问题描述", 8000, true)), ("$requirement", Text(request.Requirement, "整改要求", 8000)),
+                    ("$deadline", DateText(request.Deadline, "整改期限")), ("$unit", Text(request.ResponsibleUnit, "责任单位", 200, true)));
+                command.ExecuteNonQuery();
+                ReplaceMatterLinks("issue", id, request.MatterIds, tx);
+                AttachPhotos(additions, "site", null, id, tx);
+            });
             return GetIssueDetail(id);
         }
     }

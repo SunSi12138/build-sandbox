@@ -31,7 +31,7 @@ public sealed record PointDto(string Id, string Name, string CommunityId, string
 public sealed record PointDetailDto(PointDto Point, InspectionDto[] Inspections, IssueDto[] OpenIssues, PhotoDto[]? Photos = null, ActivityDto[]? Activities = null, AttachmentDto[]? Attachments = null, MatterLinkDto[]? Matters = null);
 public sealed record InspectionCreateRequest(string? PointId, string Date, string Inspector, string Result, string? Notes = null, string? NoticeNumber = null, IssueCreateRequest[]? Issues = null, string[]? PhotoIds = null, PointWriteRequest? NewPoint = null, string Source = "routine", string[]? MatterIds = null, string[]? TagIds = null, GeoShape? Shape = null);
 public sealed record IssueCreateRequest(string Description, string Requirement, string Deadline, string? ResponsibleUnit = null, string[]? PhotoIds = null, string? IssueTypeId = null, string[]? MatterIds = null);
-public sealed record IssueUpdateRequest(string Description, string Requirement, string Deadline, string ResponsibleUnit, string IssueTypeId = "", string[]? MatterIds = null);
+public sealed record IssueUpdateRequest(string Description, string Requirement, string Deadline, string ResponsibleUnit, string IssueTypeId = "", string[]? MatterIds = null, string[]? PhotoIds = null);
 public sealed record InspectionDto(string Id, string PointId, string PointName, string CommunityId, string CommunityName, string CommunityTitle, string TypeId, string TypeName, string Address, string Contact, string Phone, string Date, string Inspector, string Result, string Notes, string NoticeNumber, int IssueCount, int OpenIssueCount, string RectifyStatus = "none", int ClosedCount = 0, int OverdueCount = 0, string? NearestDeadline = null, bool PointTemporary = false, double? Longitude = null, double? Latitude = null, string Source = "routine", GeoShape? Shape = null) { public TagDto[] Tags { get; init; } = []; public MatterLinkDto[] Matters { get; init; } = []; }
 public sealed record InspectionDetailDto(InspectionDto Inspection, IssueDto[] Issues, PhotoDto[] Photos, IssueDetailDto[]? IssueDetails = null);
 public sealed record IssueDto(string Id, string InspectionId, string PointId, string PointName, string CommunityId, string CommunityName, string InspectionDate, string Description, string Requirement, string Deadline, string ResponsibleUnit, string Status, string? FeedbackDate, string FeedbackNotes, string? ReviewDate, string ReviewConclusion, string? ClosedDate, bool Overdue, string IssueTypeId = "", string IssueTypeName = "") { public MatterLinkDto[] Matters { get; init; } = []; }
@@ -57,7 +57,7 @@ public sealed record PointBulkDeleteRequest(string[] Ids);
 public sealed record PointReassignRequest(string PointId);
 public sealed record PointStatusRequest(bool? Disabled);
 public sealed record PointPromoteRequest(string Frequency = "irregular");
-public sealed record InspectionUpdateRequest(string Date, string Inspector, string? NoticeNumber = null, string? Notes = null, string? Source = null);
+public sealed record InspectionUpdateRequest(string Date, string Inspector, string? NoticeNumber = null, string? Notes = null, string? Source = null, string[]? PhotoIds = null);
 public sealed record InspectionCountsDto(int All, int None, int Pending, int Feedback, int Closed, int IssueCount);
 public sealed record InspectionFeedbackItem(string IssueId, string Notes, string[]? PhotoIds = null);
 public sealed record InspectionFeedbackRequest(string Date, InspectionFeedbackItem[] Items);

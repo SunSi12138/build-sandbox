@@ -53,6 +53,14 @@ const issueEditOpen = ref(false),
   issueEditing = ref(false),
   issueEditError = ref(''),
   issueToEdit = ref<IssueDto | null>(null)
+const editPhotos = ref<PhotoUploadDto[]>([]),
+  editOriginalPhotoIds = ref<string[]>([]),
+  editUploadBusy = ref(false),
+  issuePhotos = ref<PhotoUploadDto[]>([]),
+  issueOriginalPhotoIds = ref<string[]>([]),
+  issueUploadBusy = ref(false)
+const editBusy = computed(() => editing.value || editUploadBusy.value)
+const issueBusy = computed(() => issueEditing.value || issueUploadBusy.value)
 const actionEditOpen = ref(false),
   actionEditing = ref(false),
   actionUploadBusy = ref(false),
@@ -203,6 +211,8 @@ function openEdit() {
     noticeNumber: detail.value.inspection.noticeNumber,
     notes: detail.value.inspection.notes,
   })
+  editPhotos.value = sitePhotos.value.map(photo => ({ id: photo.id, width: photo.width, height: photo.height }))
+  editOriginalPhotoIds.value = editPhotos.value.map(photo => photo.id)
   editError.value = ''
   editOpen.value = true
 }
@@ -214,14 +224,14 @@ function validateEdit(): FormError[] {
   return errors
 }
 async function saveEdit() {
-  if (editing.value || validateEdit().length) return
+  if (editBusy.value || validateEdit().length) return
   editing.value = true
   editError.value = ''
   try {
     assign(
       await $fetch<InspectionDetailDto>(`/api/inspections/${id.value}`, {
         method: 'PUT',
-        body: editState,
+        body: { ...editState, photoIds: editPhotos.value.map(photo => photo.id) },
         retry: 0,
       }),
     )
@@ -260,6 +270,9 @@ function openIssueEdit(issue: IssueDto) {
     responsibleUnit: issue.responsibleUnit,
     issueTypeId: issue.issueTypeId,
   })
+  issuePhotos.value = (detail.value?.photos ?? []).filter(photo => photo.issueId === issue.id && photo.phase === 'site' && !photo.actionId)
+    .map(photo => ({ id: photo.id, width: photo.width, height: photo.height }))
+  issueOriginalPhotoIds.value = issuePhotos.value.map(photo => photo.id)
   issueEditError.value = ''
   issueEditOpen.value = true
 }
@@ -272,13 +285,13 @@ function validateIssue(): FormError[] {
   return errors
 }
 async function saveIssue() {
-  if (issueEditing.value || !issueToEdit.value || validateIssue().length) return
+  if (issueBusy.value || !issueToEdit.value || validateIssue().length) return
   issueEditing.value = true
   issueEditError.value = ''
   try {
     await $fetch(`/api/issues/${issueToEdit.value.id}`, {
       method: 'PUT',
-      body: issueState,
+      body: { ...issueState, photoIds: issuePhotos.value.map(photo => photo.id) },
       retry: 0,
     })
     issueEditOpen.value = false
@@ -361,13 +374,13 @@ async function returnIssue() {
   }
 }
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (batchBusy.value || editing.value || issueEditing.value || actionBusy.value || returning.value || deleting.value) {
+  if (batchBusy.value || editBusy.value || issueBusy.value || actionBusy.value || returning.value || deleting.value) {
     event.preventDefault()
     event.returnValue = ''
   }
 }
 onBeforeRouteLeave(
-  () => !batchBusy.value && !editing.value && !issueEditing.value && !actionBusy.value && !returning.value,
+  () => !batchBusy.value && !editBusy.value && !issueBusy.value && !actionBusy.value && !returning.value,
 )
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onBeforeUnmount(() => {
@@ -677,8 +690,8 @@ watch(() => route.query.issue, revealIssue)
       :content="focus.content"
       @after:leave="focus.restoreFocus"
       title="编辑排查信息"
-      :dismissible="!editing"
-      :close="!editing"
+      :dismissible="!editBusy"
+      :close="!editBusy"
       :ui="{ content: 'mobile-full-dialog' }"
       ><template #body
         ><UForm
@@ -693,28 +706,31 @@ watch(() => route.query.issue, revealIssue)
               type="date"
               :max="todayLocal()"
               class="w-full"
-              :disabled="editing" /></UFormField
+              :disabled="editBusy" /></UFormField
           ><UFormField name="inspector" label="排查人" required
             ><NameTagsInput
               v-model="editState.inspector"
               :maxlength="100"
               class="w-full"
-              :disabled="editing" /></UFormField
-          ><UFormField name="source" label="排查来源" class="field-full"><USelect v-model="editState.source" :items="detail?.inspection.matters.length ? [{ label: '事项核查', value: 'matter' }] : [{ label: '日常巡查', value: 'routine' }, { label: '其他', value: 'other' }]" :disabled="editing || !!detail?.inspection.matters.length" class="w-full" /></UFormField
+              :disabled="editBusy" /></UFormField
+          ><UFormField name="source" label="排查来源" class="field-full"><USelect v-model="editState.source" :items="detail?.inspection.matters.length ? [{ label: '事项核查', value: 'matter' }] : [{ label: '日常巡查', value: 'routine' }, { label: '其他', value: 'other' }]" :disabled="editBusy || !!detail?.inspection.matters.length" class="w-full" /></UFormField
           ><UFormField name="noticeNumber" label="通知单编号" class="field-full"
             ><UInput
               v-model="editState.noticeNumber"
               :maxlength="100"
               class="w-full"
-              :disabled="editing" /></UFormField
+              :disabled="editBusy" /></UFormField
           ><UFormField name="notes" label="备注" class="field-full"
             ><UTextarea
               v-model="editState.notes"
               :rows="4"
               :maxlength="8000"
               class="w-full"
-              :disabled="editing" /></UFormField
-          ><UAlert
+              :disabled="editBusy" /></UFormField
+          ><UFormField label="现场照片" class="field-full">
+            <PhotoUploader v-model="editPhotos" phase="site" :quality="bootstrap?.settings.jpegQuality"
+              :defer-delete-ids="editOriginalPhotoIds" :disabled="editing" @busy="editUploadBusy = $event" />
+          </UFormField><UAlert
             v-if="editError"
             :description="editError"
             color="error"
@@ -725,20 +741,20 @@ watch(() => route.query.issue, revealIssue)
           label="取消"
           color="neutral"
           variant="outline"
-          :disabled="editing"
+          :disabled="editBusy"
           @click="editOpen = false" /><UButton
           type="submit"
           form="inspection-edit"
           label="保存"
-          :loading="editing" /></template
+          :loading="editing" :disabled="editUploadBusy" /></template
     ></UModal>
     <UModal
       v-model:open="issueEditOpen"
       :content="focus.content"
       @after:leave="focus.restoreFocus"
       title="编辑问题"
-      :dismissible="!issueEditing"
-      :close="!issueEditing"
+      :dismissible="!issueBusy"
+      :close="!issueBusy"
       :ui="{ content: 'mobile-full-dialog' }"
       ><template #body
         ><UForm
@@ -747,33 +763,36 @@ watch(() => route.query.issue, revealIssue)
           :validate="validateIssue"
           class="field-grid"
           @submit="saveIssue"
-          ><UFormField name="issueTypeId" label="问题类型" required class="field-full"><USelect v-model="issueState.issueTypeId" :items="(bootstrap?.issueTypes ?? []).map(item => ({ label: item.name, value: item.id }))" placeholder="请选择" class="w-full" :disabled="issueEditing" /></UFormField><UFormField name="description" label="问题描述" required class="field-full"
+          ><UFormField name="issueTypeId" label="问题类型" required class="field-full"><USelect v-model="issueState.issueTypeId" :items="(bootstrap?.issueTypes ?? []).map(item => ({ label: item.name, value: item.id }))" placeholder="请选择" class="w-full" :disabled="issueBusy" /></UFormField><UFormField name="description" label="问题描述" required class="field-full"
             ><UTextarea
               v-model="issueState.description"
               :rows="3"
               :maxlength="8000"
               class="w-full"
-              :disabled="issueEditing" /></UFormField
+              :disabled="issueBusy" /></UFormField
           ><UFormField name="requirement" label="整改要求" class="field-full"
             ><UTextarea
               v-model="issueState.requirement"
               :rows="3"
               :maxlength="8000"
               class="w-full"
-              :disabled="issueEditing" /></UFormField
+              :disabled="issueBusy" /></UFormField
           ><UFormField name="deadline" label="整改期限" required
             ><UInput
               v-model="issueState.deadline"
               type="date"
               class="w-full"
-              :disabled="issueEditing" /></UFormField
+              :disabled="issueBusy" /></UFormField
           ><UFormField name="responsibleUnit" label="责任单位"
             ><NameTagsInput
               v-model="issueState.responsibleUnit"
               :maxlength="200"
               class="w-full"
-              :disabled="issueEditing" /></UFormField
-          ><UAlert
+              :disabled="issueBusy" /></UFormField
+          ><UFormField label="问题照片" class="field-full">
+            <PhotoUploader v-model="issuePhotos" phase="site" :quality="bootstrap?.settings.jpegQuality"
+              :defer-delete-ids="issueOriginalPhotoIds" :disabled="issueEditing" @busy="issueUploadBusy = $event" />
+          </UFormField><UAlert
             v-if="issueEditError"
             :description="issueEditError"
             color="error"
@@ -784,12 +803,12 @@ watch(() => route.query.issue, revealIssue)
           label="取消"
           color="neutral"
           variant="outline"
-          :disabled="issueEditing"
+          :disabled="issueBusy"
           @click="issueEditOpen = false" /><UButton
           type="submit"
           form="issue-edit"
           label="保存"
-          :loading="issueEditing" /></template
+          :loading="issueEditing" :disabled="issueUploadBusy" /></template
     ></UModal>
     <UModal
       v-model:open="actionEditOpen"

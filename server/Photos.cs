@@ -191,6 +191,16 @@ public sealed partial class Store
         foreach (var (_, pending) in moved) TryDeletePhotoFile(pending);
     }
 
+    private static (string[] Removed, string[] Additions) PhotoChanges(string[] existing, string[]? requested)
+    {
+        if (requested is null) return ([], []);
+        if (requested.Length > 100 || requested.Any(string.IsNullOrWhiteSpace) ||
+            requested.Distinct(StringComparer.Ordinal).Count() != requested.Length)
+            throw new ApiException(400, "照片列表无效或超过 100 张。");
+        return (existing.Except(requested, StringComparer.Ordinal).ToArray(),
+            requested.Except(existing, StringComparer.Ordinal).ToArray());
+    }
+
     private void AttachPhotos(string[]? photoIds, string phase, string? inspectionId, string? issueId,
         SqliteTransaction tx, string? actionId = null, string? pointId = null, string? activityId = null)
     {

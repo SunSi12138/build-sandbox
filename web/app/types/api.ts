@@ -36,7 +36,7 @@ export interface InspectionCreateRequest {
   shape?: GeoShape | null; noticeNumber?: string | null; issues?: IssueCreateRequest[]; photoIds?: string[]; source?: 'routine' | 'matter' | 'other'; matterIds?: string[]; tagIds?: string[]
 }
 export interface IssueCreateRequest { description: string; requirement: string; deadline: string; responsibleUnit?: string | null; photoIds?: string[]; issueTypeId?: string; matterIds?: string[] }
-export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string; issueTypeId: string; matterIds?: string[] }
+export interface IssueUpdateRequest { description: string; requirement: string; deadline: string; responsibleUnit: string; issueTypeId: string; matterIds?: string[]; photoIds?: string[] }
 export interface InspectionDto {
   id: string; pointId: string; pointName: string; communityId: string; communityName: string; communityTitle: string
   typeId: string; typeName: string; address: string; contact: string; phone: string; date: string
@@ -88,7 +88,7 @@ export interface PointQuery {
   map?: boolean; page?: number; pageSize?: number; recent?: boolean; missed?: boolean; temporary?: 'false' | 'true' | 'all'
 }
 export interface InspectionQuery { map?: boolean; pointId?: string; communityId?: string; from?: string; to?: string; q?: string; page?: number; pageSize?: number; rectify?: RectifyStatus; overdue?: boolean; dueSoon?: boolean; typeId?: string; temporary?: boolean; issueTypeId?: string }
-export interface InspectionUpdateRequest { date: string; inspector: string; noticeNumber?: string; notes?: string; source?: string }
+export interface InspectionUpdateRequest { date: string; inspector: string; noticeNumber?: string; notes?: string; source?: string; photoIds?: string[] }
 export interface InspectionCountsDto { all: number; none: number; pending: number; feedback: number; closed: number; issueCount: number }
 export interface InspectionFeedbackRequest { date: string; items: { issueId: string; notes: string; photoIds: string[] }[] }
 export interface InspectionReviewRequest { date: string; items: { issueId: string; conclusion: string; photoIds: string[] }[] }

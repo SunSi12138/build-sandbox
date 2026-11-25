@@ -215,10 +215,16 @@ public sealed partial class Store
             using (var earliest = Command("SELECT MIN(a.action_date) FROM issue_actions a JOIN issues x ON x.id=a.issue_id WHERE x.inspection_id=$id;", null, ("$id", id)))
                 if (earliest.ExecuteScalar() is string minimum && string.CompareOrdinal(date, minimum) > 0)
                     throw new ApiException(400, "排查日期不能晚于已有办理日期。");
-            using var update = Command("UPDATE inspections SET inspection_date=$date,inspector=$inspector,notice_number=$number,notes=$notes,source=$source WHERE id=$id;", null,
-                ("$id", id), ("$source", source), ("$date", date), ("$inspector", Text(request.Inspector, "排查人", 100, true)),
-                ("$number", Text(request.NoticeNumber, "通知单编号", 100)), ("$notes", Text(request.Notes, "备注", 8000)));
-            update.ExecuteNonQuery();
+            var photos = ReadPhotos(inspectionId: id).Where(photo => photo.Phase == "site" && photo.IssueId is null).Select(photo => photo.Id).ToArray();
+            var (removed, additions) = PhotoChanges(photos, request.PhotoIds);
+            ExecuteWithPhotoDeletion(removed, transaction =>
+            {
+                using var update = Command("UPDATE inspections SET inspection_date=$date,inspector=$inspector,notice_number=$number,notes=$notes,source=$source WHERE id=$id;", transaction,
+                    ("$id", id), ("$source", source), ("$date", date), ("$inspector", Text(request.Inspector, "排查人", 100, true)),
+                    ("$number", Text(request.NoticeNumber, "通知单编号", 100)), ("$notes", Text(request.Notes, "备注", 8000)));
+                update.ExecuteNonQuery();
+                AttachPhotos(additions, "site", id, null, transaction);
+            });
             return GetInspectionDetail(id);
         }
     }
