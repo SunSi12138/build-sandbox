@@ -1,0 +1,88 @@
+name: Build File Assistant NativeAOT
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [file-assistant]
+    paths:
+      - 'file-assistant/**'
+      - '.github/workflows/file-assistant.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: file-assistant-${ github.ref }
+  cancel-in-progress: true
+
+jobs:
+  linux-arm64:
+    name: Kylin V10 ARM64 (GLIBC <= 2.31)
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ubuntu:20.04
+    timeout-minutes: 35
+    steps:
+      - name: Install native prerequisites
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl git clang zlib1g-dev libicu-dev python3 binutils
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: Publish NativeAOT
+        run: dotnet publish file-assistant/FileAssistant.csproj -c Release -r linux-arm64 -o publish-file-assistant -p:PublishAot=true -p:SelfContained=true -warnaserror
+      - name: Verify ELF and GLIBC compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=publish-file-assistant/FileAssistant
+          readelf -h "$binary" | grep -E 'Machine:.*AArch64'
+          versions="$(readelf --version-info "$binary" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu)"
+          test -n "$versions"
+          max="$(printf '%s\n' "$versions" | tail -1)"
+          echo "Maximum required GLIBC: $max"
+          test "$(printf '%s\n' GLIBC_2.31 "$max" | sort -V | tail -1)" = GLIBC_2.31
+      - name: Smoke test native executable
+        run: python3 file-assistant/smoke.py publish-file-assistant/FileAssistant
+      - name: Package Linux executable and desktop shortcut
+        shell: bash
+        run: |
+          mkdir -p dist-file-assistant/FileAssistant
+          cp publish-file-assistant/FileAssistant file-assistant/start-linux.sh file-assistant/*.desktop dist-file-assistant/FileAssistant/
+          chmod +x dist-file-assistant/FileAssistant/FileAssistant dist-file-assistant/FileAssistant/start-linux.sh dist-file-assistant/FileAssistant/*.desktop
+          tar -czf dist-file-assistant/FileAssistant-linux-arm64.tar.gz -C dist-file-assistant FileAssistant
+          cd dist-file-assistant
+          sha256sum FileAssistant-linux-arm64.tar.gz > FileAssistant-linux-arm64.tar.gz.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: FileAssistant-linux-arm64
+          path: |
+            dist-file-assistant/FileAssistant-linux-arm64.tar.gz
+            dist-file-assistant/FileAssistant-linux-arm64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-x64:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Publish NativeAOT
+        run: dotnet publish file-assistant/FileAssistant.csproj -c Release -r win-x64 -o publish-file-assistant -p:PublishAot=true -p:SelfContained=true -warnaserror
+      - name: Smoke test native executable
+        run: python file-assistant/smoke.py publish-file-assistant/FileAssistant.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: FileAssistant-win-x64
+          path: publish-file-assistant/FileAssistant.exe
+          if-no-files-found: error
+          retention-days: 30

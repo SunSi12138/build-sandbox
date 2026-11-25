@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=文件助手
+Comment=局域网文件接收
+Icon=folder-download
+Terminal=true
+StartupNotify=false
+Exec=bash -c "p=\\$1; if [[ \\$p == file://* ]]; then p=\\${p#file://}; [[ \\$p == localhost/* ]] && p=\\${p#localhost}; printf -v p '%%b' \\"\\${p//%%/\\\\\\\\x}\\"; fi; exec bash \\"\\$(dirname -- \\"\\$(readlink -f -- \\"\\$p\\")\\")/start-linux.sh\\"" file-assistant %k
