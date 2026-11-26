@@ -118,15 +118,7 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
     ></PageHeader>
     <PageState :loading="loading" :error="error" @retry="load"
       ><template v-if="detail">
-        <section class="panel">
-          <div class="panel-head">
-            <h2 class="section-title">现场图片</h2>
-            <span class="text-xs text-muted">{{ photos.length }}/9</span>
-          </div>
-          <div class="panel-body">
-            <IssuePhotos :photos="photos" label="现场" />
-          </div>
-        </section>
+        <RecordRelations kind="point" :id="id" :tags="detail.point.tags" :matters="detail.matters" @changed="load" />
         <section class="panel">
           <div class="panel-head">
             <h2 class="section-title">基本信息</h2>
@@ -185,6 +177,15 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
         </section>
         <section class="panel">
           <div class="panel-head">
+            <h2 class="section-title">现场图片</h2>
+            <span class="text-xs text-muted">{{ photos.length }}/9</span>
+          </div>
+          <div class="panel-body">
+            <IssuePhotos :photos="photos" label="现场" />
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
             <h2 class="section-title">未闭环问题</h2>
             <span class="text-xs text-muted">{{ detail.openIssues.length }} 项</span>
           </div>
@@ -223,9 +224,7 @@ watch(id, () => { detail.value = null; void load() }, { immediate: true })
             :return-to="route.fullPath"
           /><EmptyState v-if="!detail.inspections.length" title="暂无排查记录" />
         </section>
-        <RecordRelations kind="point" :id="id" :tags="detail.point.tags" @changed="load" />
         <PointAttachments :point-id="id" />
-        <section v-if="detail.matters.length" class="panel"><div class="panel-head"><h2 class="section-title">相关事项</h2></div><div class="panel-body"><MatterLinks :matters="detail.matters" /></div></section>
         <section class="panel" data-testid="activity-history">
           <div class="panel-head"><h2 class="section-title">相关活动</h2><UButton :to="`/activities?pointId=${id}`" label="查看全部" color="neutral" variant="link" /></div>
           <NuxtLink v-for="record in detail.activities ?? []" :key="record.id" :to="{ path: `/activities/${record.id}`, query: { returnTo: `/points/${id}` } }" class="list-row"><div class="row-body"><p class="row-title"><span>{{ record.name }}</span></p><p class="row-secondary">{{ record.date }} · {{ record.typeName }}</p></div></NuxtLink>

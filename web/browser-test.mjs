@@ -377,6 +377,39 @@ try {
     report.homeFilterChecks = { mixedInspectionId: mixed.inspection.id, awaitingReview: { inspectionCount: awaiting.total, issueCount: awaiting.matchingIssueCount }, openOnly: { inspectionCount: open.total, issueCount: open.matchingIssueCount } }
   })
 
+  await test('Mobile dashboard columns stay within the page with long record names', async () => {
+    const dashboard = await api('/dashboard')
+    const long = '超长点位名称'.repeat(12)
+    const longRecord = record => ({ ...record, pointName: long, inspector: long, communityName: long, typeName: long })
+    const payload = { ...dashboard,
+      todos: dashboard.todos.map(longRecord),
+      recentInspections: dashboard.recentInspections.map(longRecord),
+      missedInspections: { ...dashboard.missedInspections, items: dashboard.missedInspections.items.map(item => ({ ...item, name: long, communityName: long })) }
+    }
+    const endpoint = '**/api/dashboard'
+    await page.route(endpoint, route => route.fulfill({ json: payload }))
+    try {
+      for (const width of [320, 375]) {
+        await page.setViewportSize({ width, height: 812 })
+        await page.goto(origin + '/#/', { waitUntil: 'networkidle' })
+        await page.getByTestId('home-todos').locator('.list-row').first().waitFor()
+        await noHorizontalOverflow()
+        const bounds = await page.locator('.dashboard-columns .group-list').evaluateAll(groups => groups.map(group => {
+          const { left, right, width } = group.getBoundingClientRect()
+          return { left, right, width, viewport: innerWidth }
+        }))
+        assert.equal(bounds.length, 3)
+        for (const box of bounds) {
+          assert(box.left >= 0 && box.right <= box.viewport + 1, JSON.stringify(box))
+          assert(Math.abs(box.width - bounds[0].width) <= 1, JSON.stringify(bounds))
+        }
+      }
+    } finally {
+      await page.unroute(endpoint)
+      await page.setViewportSize({ width: 375, height: 812 })
+    }
+  })
+
   let inspectionId, issueId, closedInspectionId, remediationId, fixtureJpeg
   await test('Regular mobile inspection: worker JPEG, thumbnail, WASM fallback and version-4 draft', async () => {
     await page.goto(origin + '/#/inspections/new', { waitUntil: 'networkidle' })
@@ -534,6 +567,35 @@ try {
     const marker = await page.getByRole('link', { name: '高德查看', exact: true }).getAttribute('href')
     const navigation = await page.getByRole('link', { name: '高德导航', exact: true }).getAttribute('href')
     assert(marker.includes('coordinate=gaode')); assert(navigation.includes('callnative=0') && !navigation.includes('coordinate='))
+  })
+
+  await test('Point detail orders relation and photo cards and edits matter association', async () => {
+    const matter = await api('/matters', { method: 'POST', body: { title: '点位关联编辑验证事项', source: 'public', receivedDate: bootstrap.today, content: '关联后仍保留原状态' } })
+    await page.goto(origin + '/#/points/' + point.id, { waitUntil: 'networkidle' })
+    await page.getByRole('heading', { name: '基本信息', exact: true }).waitFor()
+    assert.deepEqual((await page.locator('.page-stack > section .section-title').allTextContents()).slice(0, 3), ['标签与事项', '基本信息', '现场图片'])
+    await page.getByRole('button', { name: '编辑关联', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '编辑关联', exact: true })
+    await dialog.getByLabel('关联事项', { exact: true }).click()
+    await page.getByRole('option', { name: matter.title, exact: true }).click()
+    await page.keyboard.press('Escape')
+    let response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/points/' + point.id + '/relations' && response.request().method() === 'PUT' && response.status() === 200)
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
+    await response; await waitForDialogsClosed()
+    await page.getByRole('link', { name: matter.title, exact: true }).waitFor()
+    assert.equal((await api('/matters/' + matter.id)).matter.pointId, point.id)
+    await page.getByRole('button', { name: '编辑关联', exact: true }).click()
+    await dialog.getByLabel('关联事项', { exact: true }).click()
+    const option = page.getByRole('option', { name: matter.title, exact: true })
+    assert.equal(await option.getAttribute('aria-selected'), 'true')
+    await option.click()
+    await page.keyboard.press('Escape')
+    response = page.waitForResponse(response => new URL(response.url()).pathname === '/api/points/' + point.id + '/relations' && response.request().method() === 'PUT' && response.status() === 200)
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
+    await response; await waitForDialogsClosed()
+    assert.equal((await api('/matters/' + matter.id)).matter.pointId, null)
+    await page.getByRole('link', { name: matter.title, exact: true }).waitFor({ state: 'detached' })
+    await api('/matters/' + matter.id + '?confirm=true', { method: 'DELETE' })
   })
 
   await test('Temporary-point draft, atomic creation, promotion and per-issue batch photo ownership', async () => {

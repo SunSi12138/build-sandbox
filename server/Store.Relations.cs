@@ -133,6 +133,36 @@ public sealed partial class Store
             return ReadMatterLinks(kind, id);
         }
     }
+    private void ReplacePointMatters(string pointId, string[]? matterIds, SqliteTransaction tx)
+    {
+        if (matterIds is null) return;
+        if (matterIds.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 100) ||
+            matterIds.Distinct(StringComparer.Ordinal).Count() != matterIds.Length)
+            throw new ApiException(400, "关联事项不能包含空编号或重复项。");
+        foreach (var matterId in matterIds)
+        {
+            using var query = Command("SELECT point_id FROM matters WHERE id=$id;", tx, ("$id", matterId));
+            var owner = query.ExecuteScalar();
+            if (owner is null) throw new ApiException(404, "事项不存在。");
+            if (owner is string existingPointId && existingPointId != pointId)
+                throw new ApiException(409, "事项已关联其他点位，请先解除原关联。");
+        }
+        var previous = new List<string>();
+        using (var query = Command("SELECT id FROM matters WHERE point_id=$point;", tx, ("$point", pointId)))
+        using (var rows = query.ExecuteReader())
+            while (rows.Read()) previous.Add(rows.GetString(0));
+        foreach (var matterId in previous.Except(matterIds, StringComparer.Ordinal))
+        {
+            using var clear = Command("UPDATE matters SET point_id=NULL WHERE id=$id AND point_id=$point;", tx, ("$id", matterId), ("$point", pointId));
+            clear.ExecuteNonQuery();
+        }
+        foreach (var matterId in matterIds.Except(previous, StringComparer.Ordinal))
+        {
+            using var add = Command("UPDATE matters SET point_id=$point WHERE id=$id AND point_id IS NULL;", tx, ("$id", matterId), ("$point", pointId));
+            add.ExecuteNonQuery();
+        }
+    }
+
     public void SetRelations(string kind, string id, RecordRelationsRequest request)
     {
         lock (_gate)
@@ -140,7 +170,8 @@ public sealed partial class Store
             PrepareWrite(); RequireOwner(kind, id);
             using var tx = _db.BeginTransaction();
             ReplaceTags(kind, id, request.TagIds, tx);
-            ReplaceMatterLinks(kind, id, request.MatterIds, tx);
+            if (kind == "point") ReplacePointMatters(id, request.MatterIds, tx);
+            else ReplaceMatterLinks(kind, id, request.MatterIds, tx);
             tx.Commit();
         }
     }
