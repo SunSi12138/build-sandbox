@@ -117,18 +117,23 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
       await go('/settings?tab=maps')
     })
     await test('M05 real offline PMTiles MVT uses local style directory for geometry', async () => {
-      const { archive, tile } = createMvtPmtilesFixture()
+      const { archive, tile, tileRange } = createMvtPmtilesFixture()
       assert.equal(new MVT().readFeatures(tile).length, 1, 'Fixture should decode as a real MVT/PBF tile')
       const config = await api('/map/settings')
       const existingEnabled = config.providers.filter(layer => layer.enabled)
       const fixturePath = path.join(config.cacheRoot, 'mvt-render-fixture.pmtiles')
       const styleDirectory = path.join(config.cacheRoot, 'mvt-style-fixture')
       let layer
-      await mkdir(styleDirectory, { recursive: true })
+      await mkdir(path.join(styleDirectory, 'fonts', 'Test Font'), { recursive: true })
+      await writeFile(path.join(styleDirectory, 'fonts', 'Test Font', '0-255.pbf'), Buffer.from([1, 2, 3]))
+      await writeFile(path.join(styleDirectory, 'sprite.json'), '{}')
+      await writeFile(path.join(styleDirectory, 'sprite.png'), Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7VQAAAAASUVORK5CYII=', 'base64'))
       await writeFile(fixturePath, archive)
       await writeFile(path.join(styleDirectory, 'style.json'), JSON.stringify({
         version: 8,
-        sources: { fixture: { type: 'vector', tiles: ['/tiles/{z}/{x}/{y}.pbf'], minzoom: 0, maxzoom: 0 } },
+        sources: { fixture: { type: 'vector', tiles: ['/tiles/{z}/{x}/{y}.pbf'] } },
+        glyphs: './fonts/{fontstack}/{range}.pbf',
+        sprite: './sprite',
         layers: [{ id: 'water', type: 'fill', source: 'fixture', 'source-layer': 'water', paint: { 'fill-color': '#1982a5' } }],
       }))
       try {
@@ -147,19 +152,43 @@ export async function verifyMapManagement({ browser, origin, api, test, bootstra
         assert.equal(matching.styleUrl, '/api/map/style/' + layer.id + '/style.json')
         const renderedStyle = await api('/map/style/' + layer.id + '/style.json')
         assert.equal(renderedStyle.sources.fixture.tiles[0], 'hbtiles://' + layer.id + '/{z}/{x}/{y}')
+        assert(renderedStyle.glyphs.endsWith('/assets/fonts/{fontstack}/{range}.pbf'))
+        assert(renderedStyle.sprite.endsWith('/assets/sprite'))
+        assert.deepEqual(await api('/map/style/' + layer.id + '/assets/sprite.json'), {})
         const checked = await api('/map/settings/' + layer.id + '/check')
         assert.equal(checked.status, 'cached')
         assert(checked.message.includes('MVT/PBF 矢量'))
+        // A canvas alone is not proof of loading. Require the actual compressed
+        // tile range, not just the initial 16 KiB header/directory request.
         const fetched = page.waitForResponse(response =>
-          new URL(response.url()).pathname.endsWith('/api/map/archive/' + layer.id) && response.status() === 206)
+          new URL(response.url()).pathname.endsWith('/api/map/archive/' + layer.id) &&
+          response.status() === 206 && response.request().headers().range === tileRange, { timeout: 20000 })
         await page.setViewportSize({ width: 1440, height: 900 })
         await go('/points?view=map')
-        await fetched
+        const tileResponse = await fetched
+        assert(tileResponse.headers().etag, 'PMTiles byte-range response must identify the archive version')
         await page.locator('.simple-map-canvas .maplibregl-canvas').waitFor({ timeout: 12000 })
         await page.waitForFunction(() => {
           const canvas = document.querySelector('.simple-map-canvas .maplibregl-canvas')
           return canvas && canvas.width > 50 && canvas.height > 50
         }, null, { timeout: 12000 })
+        // Reopen the same PMTiles without a style; a missing style may not
+        // prevent a valid vector tile from rendering on the OpenLayers canvas.
+        await go('/settings?tab=maps')
+        layer = await api('/map/settings/' + layer.id, { method: 'PUT', body: { ...layer, styleDirectory: '' } })
+        const fallbackFetched = page.waitForResponse(response =>
+          new URL(response.url()).pathname.endsWith('/api/map/archive/' + layer.id) &&
+          response.status() === 206 && response.request().headers().range === tileRange, { timeout: 20000 })
+        await go('/points?view=map&q=' + encodeURIComponent('pmtiles-no-records-fixture'))
+        await fallbackFetched
+        await page.waitForFunction(() => [...document.querySelectorAll('.simple-map-canvas .ol-layer canvas')].some(canvas => {
+          if (canvas.width < 50 || canvas.height < 50) return false
+          const ctx = canvas.getContext('2d')
+          if (!ctx) return false
+          const rgba = ctx.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data
+          return rgba[3] > 0 && rgba[2] > rgba[0]
+        }), null, { timeout: 12000 })
+        await go('/settings?tab=maps')
       } finally {
         if (layer) await api('/map/settings/' + layer.id + '?confirm=true', { method: 'DELETE' })
         for (const existing of existingEnabled)

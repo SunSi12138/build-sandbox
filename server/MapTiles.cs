@@ -3,13 +3,14 @@ using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
+using Microsoft.Net.Http.Headers;
 
 namespace StreetEcoTool;
 
 // Preload is a legacy API/storage name kept for existing databases.
 // It now represents high-resolution depth; OpenLayers preload is fixed at 1.
 public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0, string StyleDirectory = "", bool HasStyle = false);
-public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0, string? StyleUrl = null);
+public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0, string? StyleUrl = null, string? Name = null);
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
 public sealed record MapSettingsDto(TileProvider[] Providers, TileProvider[] Defaults, string CacheRoot);
@@ -232,7 +233,7 @@ public sealed partial class Store
     {
         lock (_gate)
         {
-            using var command = Command("SELECT id,url_template FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
+            using var command = Command("SELECT id,url_template,name FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
             using var rows = command.ExecuteReader(); var layers = new List<MapLayerDto>();
             while (rows.Read())
             {
@@ -241,7 +242,7 @@ public sealed partial class Store
                     url.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal) ? "pmtiles" :
                     url.StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster", preload,
                     styleDirectory.Length > 0 && File.Exists(Path.Combine(MapCacheDirectory(styleDirectory), "style.json"))
-                        ? $"/api/map/style/{Uri.EscapeDataString(rows.GetString(0))}/style.json" : null));
+                        ? $"/api/map/style/{Uri.EscapeDataString(rows.GetString(0))}/style.json" : null, rows.GetString(2)));
             }
             return layers.ToArray();
         }
@@ -309,9 +310,14 @@ public sealed partial class Store
                 2 => "PNG 图片",
                 3 => "JPG 图片",
                 4 => "WebP 图片",
+                5 => "AVIF 图片",
                 _ => "未知图块类型"
             };
-            return new("cached", $"本地 PMTiles v3 归档可读取。图块类型：{type}，缩放级别：{header[100]}–{header[101]}。未逐一检查图块。", true, false);
+            if (header[97] > 2 || header[98] > 2)
+                return new("unavailable", $"PMTiles 压缩格式暂不支持（目录 {header[97]}，图块 {header[98]}），请转换为无压缩或 Gzip。", true, false);
+            var style = header[99] == 1
+                ? provider.HasStyle ? "，使用本地矢量样式" : "，使用基础矢量样式" : "";
+            return new("cached", $"本地 PMTiles v3 归档可读取。图块类型：{type}，缩放级别：{header[100]}–{header[101]}{style}。未逐一检查图块。", true, false);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { return new("error", "无法读取 PMTiles 文件，请检查路径与权限。", false, false); }
@@ -322,18 +328,26 @@ public sealed partial class Store
         TileProvider provider;
         lock (_gate) provider = GetMapProvider(Api.Id(context));
         if (!provider.Enabled || !IsPmtiles(provider)) { context.Response.StatusCode = 404; return; }
+        var local = MapCacheDirectory(provider.Folder);
+        var info = new FileInfo(local);
+        if (!info.Exists) { context.Response.StatusCode = 404; return; }
+        context.Response.Headers.CacheControl = "no-store";
+        context.Response.Headers.AcceptRanges = "bytes";
         var match = ArchiveRange.Match(context.Request.Headers.Range.ToString());
         if (!match.Success ||
             !long.TryParse(match.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var start) ||
             !long.TryParse(match.Groups[2].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var end) ||
             end < start || end - start >= ArchiveMaxRange)
-        { context.Response.StatusCode = 416; return; }
-        context.Response.Headers.CacheControl = "no-store";
-        context.Response.Headers.AcceptRanges = "bytes";
-        var local = MapCacheDirectory(provider.Folder);
-        if (!File.Exists(local)) { context.Response.StatusCode = 404; return; }
-        // ASP.NET Core handles byte ranges directly from the local file.
-        await Results.File(local, "application/octet-stream", enableRangeProcessing: true).ExecuteAsync(context);
+        {
+            context.Response.StatusCode = 416;
+            context.Response.Headers.ContentRange = $"bytes */{info.Length}";
+            return;
+        }
+        // Give the PMTiles client a stable archive identity. Its range reader
+        // invalidates stale directory offsets if the file changes in place.
+        var etag = new EntityTagHeaderValue($"\"{info.Length:x}-{info.LastWriteTimeUtc.Ticks:x}\"");
+        await Results.File(local, "application/octet-stream", lastModified: new DateTimeOffset(info.LastWriteTimeUtc),
+            entityTag: etag, enableRangeProcessing: true).ExecuteAsync(context);
     }
 
     private static string? CachedMapTile(string path, TileProvider provider) => TileExtensions(provider).Select(extension => path + extension).Where(File.Exists).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();

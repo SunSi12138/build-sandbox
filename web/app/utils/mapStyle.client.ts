@@ -1,36 +1,59 @@
-import { addProtocol, setWorkerUrl } from 'maplibre-gl'
+import { addProtocol, setWorkerUrl, type StyleSpecification } from 'maplibre-gl'
 import { MapLibreLayer } from '@geoblocks/ol-maplibre-layer'
-import { PMTiles } from 'pmtiles'
+import type { PMTiles, Header } from 'pmtiles'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-// MapLibre is only loaded when an MVT layer has a configured style directory.
-// OpenLayers continues to own navigation, drawing, editing and record overlays.
 setWorkerUrl(workerUrl)
+// Each mounted map owns its archive. Do not reuse a stale header/directory
+// cache after a file is replaced, a layer is edited, or a map is reopened.
 const archives = new Map<string, PMTiles>()
-function archiveFor(id: string) {
-  let archive = archives.get(id)
-  if (!archive) {
-    archive = new PMTiles(`/api/map/archive/${encodeURIComponent(id)}`)
-    archives.set(id, archive)
-  }
-  return archive
-}
-export async function prefetchArchiveVectorTile(id: string, z: number, x: number, y: number, signal: AbortSignal) {
-  if (signal.aborted) return
-  await archiveFor(id).getZxy(z, x, y)
-}
-addProtocol('hbtiles', async ({ url }) => {
+let archiveSequence = 0
+addProtocol('hbtiles', async ({ url }, controller) => {
   const match = /^hbtiles:\/\/([^/]+)\/(\d+)\/(\d+)\/(\d+)$/.exec(url)
   if (!match) throw new Error('Invalid PMTiles tile URL')
-  const [, id, z, x, y] = match
-  const result = await archiveFor(id!).getZxy(Number(z), Number(x), Number(y))
-  if (!result) return { data: new ArrayBuffer(0) }
-  return { data: result.data }
+  const [, key, z, x, y] = match
+  const archive = archives.get(key!)
+  if (!archive) throw new Error('PMTiles archive has been released')
+  const result = await archive.getZxy(Number(z), Number(x), Number(y), controller.signal)
+  return { data: result?.data ?? new ArrayBuffer(0) }
 })
 
-export function externalVectorStyle(styleUrl: string): MapLibreLayer {
-  return new MapLibreLayer({
-    mapLibreOptions: { style: styleUrl, localIdeographFontFamily: false },
-  })
+export async function externalVectorStyle(styleUrl: string, signal: AbortSignal, pmtiles?: { archive: PMTiles; header: Header }) {
+  // Fetch and validate the local style independently so failure cannot stop
+  // other base layers. An inline style also lets us apply archive zoom bounds.
+  const response = await fetch(styleUrl, { signal, cache: 'no-store' })
+  if (!response.ok) throw new Error('Style HTTP ' + response.status)
+  const style = await response.json() as StyleSpecification
+  if (style.version !== 8 || !style.sources || !Array.isArray(style.layers))
+    throw new Error('Invalid vector style')
+  signal.throwIfAborted()
+  let key: string | undefined
+  const release = () => { if (key) archives.delete(key) }
+  try {
+    if (pmtiles) {
+      key = 'archive-' + (++archiveSequence)
+      archives.set(key, pmtiles.archive)
+      const { header } = pmtiles
+      for (const source of Object.values(style.sources)) {
+        if (source.type !== 'vector') continue
+        // PMTiles always uses XYZ; an unrelated style's default maxzoom 22
+        // otherwise requests tiles that cannot exist in lower-zoom archives.
+        delete source.url
+        source.tiles = ['hbtiles://' + key + '/{z}/{x}/{y}']
+        source.scheme = 'xyz'
+        source.minzoom = header.minZoom
+        source.maxzoom = header.maxZoom
+      }
+    }
+    return {
+      layer: new MapLibreLayer({
+        mapLibreOptions: { style, localIdeographFontFamily: false },
+      }),
+      release,
+    }
+  } catch (error) {
+    release()
+    throw error
+  }
 }

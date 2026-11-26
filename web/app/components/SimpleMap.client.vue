@@ -8,11 +8,17 @@ import Polygon from 'ol/geom/Polygon'
 import VectorSource from 'ol/source/Vector'
 import VectorLayer from 'ol/layer/Vector'
 import TileLayer from 'ol/layer/Tile'
+import VectorTileLayer from 'ol/layer/VectorTile'
+import VectorTileSource from 'ol/source/VectorTile'
+import MVT from 'ol/format/MVT'
+import type VectorTile from 'ol/VectorTile'
+import type RenderFeature from 'ol/render/Feature'
+import type BaseLayer from 'ol/layer/Base'
 import XYZ from 'ol/source/XYZ'
 import { createXYZ } from 'ol/tilegrid'
 import type ImageTile from 'ol/ImageTile'
 import TileState from 'ol/TileState'
-import { PMTiles, TileType } from 'pmtiles'
+import { PMTiles, TileType, type Header } from 'pmtiles'
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
 import DragRotate from 'ol/interaction/DragRotate'
@@ -34,7 +40,11 @@ const props = withDefaults(defineProps<{ records?: MapRecord[]; shape?: GeoShape
 const emit = defineEmits<{ select: [ids: string[]]; change: [shape: GeoShape]; drawing: [active: boolean] }>()
 const host = ref<HTMLElement>()
 const locateError = ref('')
-const layerRequest = new AbortController()
+let layerRequest: AbortController | undefined
+const layerProblems = ref<Record<string, string>>({})
+const baseLayers: BaseLayer[] = []
+const baseCleanups: Array<() => void> = []
+let retryLayers: () => void = () => {}
 const sketchVertices = ref(0)
 const rotation = ref(0)
 const selectedVertex = ref<number | null>(null)
@@ -304,117 +314,240 @@ onMounted(() => {
     try { localStorage.setItem(mapViewKey, JSON.stringify({ longitude, latitude, zoom: map!.getView().getZoom() ?? 16 })) } catch { /* Optional map preference. */ }
     scheduleDepthPrefetch()
   })
-  const registerPrefetch = (options: Parameters<typeof makeDeepTilePrefetch>[0]) => {
-    if (layerRequest.signal.aborted || !map) return
-    const prefetch = makeDeepTilePrefetch(options)
-    depthPrefetchers.push(prefetch)
-    prefetch.schedule()
+  function clearBaseLayers() {
+    layerRequest?.abort()
+    depthPrefetchers.splice(0).forEach(item => item.dispose())
+    for (const layer of baseLayers.splice(0)) {
+      try { map?.removeLayer(layer); layer.dispose() } catch { /* A failed renderer must not block teardown. */ }
+    }
+    baseCleanups.splice(0).forEach(release => release())
   }
   const zoom = () => map?.getView().getZoom() ?? 0
   const pixelRatio = () => map?.getPixelRatio() ?? 1
-  void $fetch<{ id: string; kind?: 'raster' | 'mvt' | 'pmtiles'; preload?: number; styleUrl?: string | null }[]>('/api/map/layers', { signal: layerRequest.signal }).then(async layers => {
-    const created = await Promise.all(layers.map(async layer => {
-      const url = `/api/map/tiles/${encodeURIComponent(layer.id)}/{z}/{x}/{y}?cache=server`
-      // Legacy API property "preload" now means higher-zoom depth. OpenLayers'
-      // lower-zoom preload is intentionally fixed at 1 for every raster layer.
-      const depth = Number.isInteger(layer.preload) ? Math.max(0, Math.min(3, layer.preload!)) : 0
-      if (layer.kind === 'pmtiles') {
+  const defaultVectorStyle = new Style({
+    fill: new Fill({ color: 'rgba(40,123,164,0.22)' }),
+    stroke: new Stroke({ color: '#477f98', width: 1.3 }),
+    image: new CircleStyle({ radius: 3, fill: new Fill({ color: '#477f98' }) }),
+  })
+  function basicVectorLayer(url: string, signal: AbortSignal, archive?: PMTiles, header?: Header) {
+    const format = new MVT()
+    const source = new VectorTileSource({
+      format,
+      tileGrid: createXYZ({ minZoom: header?.minZoom ?? 0, maxZoom: header?.maxZoom ?? MAX_TILE_ZOOM, tileSize: 512 }),
+      tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
+      tileLoadFunction: tile => {
+        const vectorTile = tile as VectorTile<RenderFeature>
+        vectorTile.setLoader((extent, _resolution, projection) => {
+          const coordinate = vectorTile.getTileCoord()
+          const [z, x, y] = coordinate
+          const load = async () => {
+            if (archive) return (await archive.getZxy(z!, x!, y!, signal))?.data
+            const response = await fetch(url.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), { signal })
+            if (response.status === 404) return undefined
+            if (!response.ok) throw new Error('Vector tile HTTP ' + response.status)
+            return await response.arrayBuffer()
+          }
+          void load().then(data => {
+            if (signal.aborted) return
+            vectorTile.setFeatures(data ? format.readFeatures(data, { extent, featureProjection: projection }) : [])
+          }).catch(() => { if (!signal.aborted) vectorTile.setState(TileState.ERROR) })
+        })
+      },
+    })
+    return new VectorTileLayer({ source, style: feature => {
+      const name = feature.get('name:zh') || feature.get('name')
+      // Basic rendering keeps all geometry visible, including unlabeled
+      // polygons and lines. Place labels are optional, not a prerequisite.
+      if (feature.getGeometry()?.getType() !== 'Point' || typeof name !== 'string' || !name.trim()) return defaultVectorStyle
+      return new Style({
+        image: defaultVectorStyle.getImage() ?? undefined,
+        text: new Text({ text: name, font: '12px sans-serif', offsetY: -10,
+          fill: new Fill({ color: '#23495c' }), stroke: new Stroke({ color: '#fff', width: 3 }) }),
+      })
+    }, declutter: true })
+  }
+  async function loadBaseLayers() {
+    clearBaseLayers()
+    layerProblems.value = {}
+    const request = new AbortController()
+    layerRequest = request
+    const { signal } = request
+    const target = map
+    const active = () => !signal.aborted && !!target && map === target
+    const problem = (id: string, message: string) => {
+      if (active()) layerProblems.value = { ...layerProblems.value, [id]: message }
+    }
+    const registerPrefetch = (options: Parameters<typeof makeDeepTilePrefetch>[0]) => {
+      if (!active()) return
+      const prefetch = makeDeepTilePrefetch(options)
+      depthPrefetchers.push(prefetch)
+      prefetch.schedule()
+    }
+    function install(layer: BaseLayer, order: number) {
+      if (!active()) { layer.dispose(); return false }
+      // Every layer installs independently; negative z-indices keep the
+      // configured bottom-to-top order and all record/edit overlays above.
+      layer.setZIndex(order)
+      try {
+        target!.addLayer(layer)
+        baseLayers.push(layer)
+        target!.render()
+        return true
+      } catch (error) {
+        try { target!.removeLayer(layer); layer.dispose() } catch { /* renderer failed */ }
+        throw error
+      }
+    }
+    async function vectorLayer(id: string, url: string, styleUrl: string | null | undefined,
+      order: number, archive?: PMTiles, header?: Header) {
+      const fallback = () => install(basicVectorLayer(url, signal, archive, header), order)
+      if (!styleUrl) { fallback(); return }
+      let styled: Awaited<ReturnType<typeof import('~/utils/mapStyle.client')['externalVectorStyle']>> | undefined
+      try {
+        const { externalVectorStyle } = await import('~/utils/mapStyle.client')
+        styled = await externalVectorStyle(styleUrl, signal, archive && header ? { archive, header } : undefined)
+        if (!active()) { styled.release(); styled.layer.dispose(); return }
+        const item = styled
+        if (!install(item.layer, order)) { item.release(); return }
+        baseCleanups.push(item.release)
+        let replaced = false
+        item.layer.mapLibreMap?.on('error', event => {
+          if (!active() || replaced || item.layer.loaded) return
+          replaced = true
+          // Style or WebGL initialization errors should not leave a blank
+          // vector map. Defer removal until the MapLibre event has returned.
+          queueMicrotask(() => {
+            if (!active()) return
+            try {
+              target!.removeLayer(item.layer)
+              const index = baseLayers.indexOf(item.layer)
+              if (index >= 0) baseLayers.splice(index, 1)
+              item.release()
+              fallback()
+            } catch (error) { problem(id, String(error)) }
+          })
+          console.warn('Vector style initialization failed; using basic rendering', id, event.error)
+        })
+      } catch (error) {
+        styled?.release()
+        if (active()) {
+          console.warn('Vector style unavailable; using basic rendering', id, error)
+          fallback()
+        }
+      }
+    }
+    try {
+      const layers = await $fetch<{ id: string; name?: string; kind?: 'raster' | 'mvt' | 'pmtiles'; preload?: number; styleUrl?: string | null }[]>('/api/map/layers', { signal, retry: 1 })
+      if (!active()) return
+      await Promise.allSettled(layers.map(async (layer, index) => {
+        const url = '/api/map/tiles/' + encodeURIComponent(layer.id) + '/{z}/{x}/{y}?cache=server'
+        const order = index - layers.length
+        const depth = Number.isInteger(layer.preload) ? Math.max(0, Math.min(3, layer.preload!)) : 0
         try {
-          const archive = new PMTiles(`/api/map/archive/${encodeURIComponent(layer.id)}`)
-          const header = await archive.getHeader()
-          const maxZoom = Math.min(header.maxZoom, 18)
-          if (header.tileType === TileType.Mvt) {
-            if (!layer.styleUrl) return null
-            const { externalVectorStyle, prefetchArchiveVectorTile } = await import('~/utils/mapStyle.client')
+          if (layer.kind === 'pmtiles') {
+            const archiveUrl = '/api/map/archive/' + encodeURIComponent(layer.id)
+            let archive = new PMTiles(archiveUrl)
+            let header: Header
+            try { header = await archive.getHeader() }
+            catch (error) {
+              if (!active()) return
+              // PMTiles caches a rejected header promise. Retry using a fresh
+              // instance, not the same permanently rejected cache.
+              archive = new PMTiles(archiveUrl)
+              header = await archive.getHeader()
+            }
+            if (!active()) return
+            const maxZoom = Math.min(header.maxZoom, MAX_TILE_ZOOM)
+            if (header.tileType === TileType.Mvt) {
+              await vectorLayer(layer.id, url, layer.styleUrl, order, archive, header)
+              if (depth) {
+                const grid = createXYZ({ maxZoom })
+                registerPrefetch({
+                  depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0,
+                  getExtent: currentMapExtent, tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
+                  fetchTile: (z, x, y, prefetchSignal) => archive.getZxy(z, x, y, prefetchSignal),
+                })
+              }
+              return
+            }
+            const contentType = header.tileType === TileType.Png ? 'image/png'
+              : header.tileType === TileType.Jpeg ? 'image/jpeg'
+              : header.tileType === TileType.Webp ? 'image/webp' : header.tileType === 5 ? 'image/avif' : null
+            if (!contentType) throw new Error('Unsupported PMTiles tile type: ' + header.tileType)
+            const source = new XYZ({
+              minZoom: Math.min(header.minZoom, maxZoom), maxZoom,
+              tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
+              tileLoadFunction: tile => {
+                const imageTile = tile as ImageTile
+                const coordinate = imageTile.getTileCoord()
+                if (!coordinate) { imageTile.setState(TileState.EMPTY); return }
+                void archive.getZxy(coordinate[0]!, coordinate[1]!, coordinate[2]!, signal).then(result => {
+                  if (signal.aborted) return
+                  if (!result) { imageTile.setState(TileState.EMPTY); return }
+                  const image = imageTile.getImage() as HTMLImageElement
+                  const imageUrl = URL.createObjectURL(new Blob([result.data], { type: contentType }))
+                  const cleanup = () => URL.revokeObjectURL(imageUrl)
+                  image.addEventListener('load', cleanup, { once: true })
+                  image.addEventListener('error', cleanup, { once: true })
+                  image.src = imageUrl
+                }).catch(() => { if (!signal.aborted) imageTile.setState(TileState.ERROR) })
+              },
+            })
+            installDeepRasterTiles(source, { depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio })
             if (depth) {
-              const grid = createXYZ({ maxZoom })
-              registerPrefetch({
-                depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0,
-                getExtent: currentMapExtent,
+              const grid = source.getTileGrid()
+              if (grid) registerPrefetch({
+                depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
                 tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
-                // MapLibre draws vector geometry at the current view zoom.
-                // Higher-detail vector tiles are warmed for subsequent zooms.
-                fetchTile: (z, x, y, signal) => prefetchArchiveVectorTile(layer.id, z, x, y, signal),
+                fetchTile: async (z, x, y, prefetchSignal) => {
+                  if (prefetchSignal.aborted || !active()) return
+                  const tile = source.getTile(z, x, y, pixelRatio(), target!.getView().getProjection())
+                  if (tile.getState() === TileState.IDLE) tile.load()
+                },
               })
             }
-            return externalVectorStyle(layer.styleUrl)
+            install(new TileLayer({ source, preload: DEFAULT_TILE_PRELOAD }), order)
+            return
           }
-          const contentType = header.tileType === TileType.Png ? 'image/png'
-            : header.tileType === TileType.Jpeg ? 'image/jpeg'
-            : header.tileType === TileType.Webp ? 'image/webp' : null
-          if (!contentType) return null
-          const source = new XYZ({
-            maxZoom,
-            tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
-            tileLoadFunction: tile => {
-              const imageTile = tile as ImageTile
-              const coordinate = imageTile.getTileCoord()
-              if (!coordinate) { imageTile.setState(TileState.EMPTY); return }
-              void archive.getZxy(coordinate[0]!, coordinate[1]!, coordinate[2]!).then(result => {
-                if (!result) { imageTile.setState(TileState.EMPTY); return }
-                const image = imageTile.getImage() as HTMLImageElement
-                const imageUrl = URL.createObjectURL(new Blob([result.data], { type: contentType }))
-                const cleanup = () => URL.revokeObjectURL(imageUrl)
-                image.addEventListener('load', cleanup, { once: true })
-                image.addEventListener('error', cleanup, { once: true })
-                image.src = imageUrl
-              }).catch(() => imageTile.setState(TileState.ERROR))
-            },
-          })
-          installDeepRasterTiles(source, { depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio })
+          if (layer.kind === 'mvt') {
+            await vectorLayer(layer.id, url, layer.styleUrl, order)
+            if (depth) {
+              const grid = createXYZ({ maxZoom: MAX_TILE_ZOOM })
+              registerPrefetch({
+                depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0, getExtent: currentMapExtent,
+                tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
+                fetchTile: async (z, x, y, prefetchSignal) => {
+                  const response = await fetch(url.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), { cache: 'force-cache', signal: prefetchSignal })
+                  if (!response.ok) throw new Error('PBF prefetch failed')
+                  await response.arrayBuffer()
+                },
+              })
+            }
+            return
+          }
+          const source = new XYZ({ url, maxZoom: MAX_TILE_ZOOM })
+          installDeepRasterTiles(source, { depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio })
           if (depth) {
             const grid = source.getTileGrid()
             if (grid) registerPrefetch({
-              depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
+              depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
               tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
-              fetchTile: async (z, x, y, signal) => {
-                if (signal.aborted || !map) return
-                const tile = source.getTile(z, x, y, pixelRatio(), map.getView().getProjection())
-                if (tile.getState() === TileState.IDLE) tile.load()
+              fetchTile: async (z, x, y, prefetchSignal) => {
+                const response = await fetch(url.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), { cache: 'force-cache', signal: prefetchSignal })
+                if (!response.ok) throw new Error('Raster prefetch failed')
+                await response.blob()
               },
             })
           }
-          return new TileLayer({ source, preload: DEFAULT_TILE_PRELOAD })
-        } catch { return null }
-      }
-      if (layer.kind === 'mvt') {
-        if (!layer.styleUrl) return null
-        const { externalVectorStyle } = await import('~/utils/mapStyle.client')
-        if (depth) {
-          const grid = createXYZ({ maxZoom: MAX_TILE_ZOOM })
-          registerPrefetch({
-            depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0, getExtent: currentMapExtent,
-            tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
-            fetchTile: async (z, x, y, signal) => {
-              const tileUrl = `/api/map/tiles/${encodeURIComponent(layer.id)}/${z}/${x}/${y}?cache=server`
-              const response = await fetch(tileUrl, { cache: 'force-cache', signal })
-              if (!response.ok) throw new Error('PBF prefetch failed')
-              await response.arrayBuffer()
-            },
-          })
+          install(new TileLayer({ source, preload: DEFAULT_TILE_PRELOAD }), order)
+        } catch (error) {
+          problem(layer.id, (layer.name || layer.id) + ': ' + String(error))
         }
-        return externalVectorStyle(layer.styleUrl)
-      }
-      const source = new XYZ({ url, maxZoom: MAX_TILE_ZOOM })
-      installDeepRasterTiles(source, { depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio })
-      if (depth) {
-        const grid = source.getTileGrid()
-        if (grid) registerPrefetch({
-          depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
-          tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
-          fetchTile: async (z, x, y, signal) => {
-            const tileUrl = `/api/map/tiles/${encodeURIComponent(layer.id)}/${z}/${x}/${y}?cache=server`
-            const response = await fetch(tileUrl, { cache: 'force-cache', signal })
-            if (!response.ok) throw new Error('Raster prefetch failed')
-            await response.blob()
-          },
-        })
-      }
-      return new TileLayer({ source, preload: DEFAULT_TILE_PRELOAD })
-    }))
-    if (layerRequest.signal.aborted || !map) return
-    created.forEach((layer, index) => { if (layer) map!.getLayers().insertAt(index, layer) })
-  }).catch(() => { /* No base layers is a supported offline state. */ })
+      }))
+    } catch (error) { problem('layers', String(error)) }
+  }
+  retryLayers = () => { void loadBaseLayers() }
+  void loadBaseLayers()
   map.on('singleclick', event => {
     if (props.mode === 'point') {
       const feature = new Feature(new Point(event.coordinate)); editingSource.clear(); editingSource.addFeature(feature); report(feature)
@@ -440,8 +573,12 @@ onBeforeUnmount(() => {
   host.value?.removeEventListener('pointerup', vertexPointerUp, true)
   if (map) for (const anchor of vertexAnchors) map.removeOverlay(anchor)
   vertexAnchors.length = 0
-  layerRequest.abort(); depthPrefetchers.forEach(item => item.dispose())
-  observer?.disconnect(); map?.setTarget(undefined); map?.dispose()
+  layerRequest?.abort(); depthPrefetchers.splice(0).forEach(item => item.dispose())
+  for (const layer of baseLayers.splice(0)) {
+    try { map?.removeLayer(layer); layer.dispose() } catch { /* best effort renderer cleanup */ }
+  }
+  baseCleanups.splice(0).forEach(release => release())
+  observer?.disconnect(); map?.setTarget(undefined); map?.dispose(); map = undefined
 })
 </script>
 <template>
@@ -451,9 +588,11 @@ onBeforeUnmount(() => {
       <button type="button" class="map-vertex-delete" aria-label="删除顶点" :disabled="vertexCount <= 3" @click.stop="deleteSelectedVertex"><UIcon name="i-lucide-trash-2" aria-hidden="true" /> 删除顶点</button>
       <span class="map-vertex-tip">{{ vertexCount <= 3 ? '至少保留 3 个顶点' : '也可按 Delete 删除' }}</span>
     </div>
+    <div v-if="Object.keys(layerProblems).length" class="map-layer-hint" role="status" :title="Object.values(layerProblems).join('\n')"><span>{{ Object.keys(layerProblems).length }} 个图层加载失败</span><button type="button" @click="retryLayers">重试</button></div>
     <div v-if="locateError" class="map-location-hint" role="status">{{ locateError }}</div><button v-if="isRotated" type="button" class="map-north" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button><button type="button" class="map-locate" aria-label="定位当前位置" title="定位当前位置" @click="locateCurrent">◎</button><button type="button" class="map-fit" aria-label="查看全部位置" title="查看全部位置" @click="fitAll">⌖</button></div>
 </template>
 <style>
+.map-layer-hint{position:absolute;left:12px;bottom:44px;max-width:calc(100% - 80px);display:flex;align-items:center;gap:8px;background:var(--surface);padding:4px 9px;border-radius:6px;font-size:12px;color:var(--text-2);z-index:2}.map-layer-hint button{color:var(--brand-600);text-decoration:underline;cursor:pointer}
 .map-vertex-anchor{display:block;width:1px;height:1px;pointer-events:none}
 .map-vertex-popup{display:flex;flex-direction:column;gap:7px;align-items:center;padding:9px 12px;border-radius:10px;background:var(--surface);color:var(--text);box-shadow:0 3px 18px var(--border-strong);min-width:158px;pointer-events:auto;white-space:nowrap}
 .map-vertex-selected{font-weight:600;font-size:12px}

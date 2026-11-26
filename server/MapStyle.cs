@@ -15,6 +15,26 @@ public sealed partial class Store
         return (provider, MapCacheDirectory(provider.StyleDirectory));
     }
 
+    private static bool IsFontDirectory(string value) => value is "font" or "fonts" or "glyphs";
+    private static bool IsSpriteDirectory(string value) => value is "sprite" or "sprites";
+
+    private static string LocalStyleResource(string value, bool sprite)
+    {
+        if (value.StartsWith("//", StringComparison.Ordinal) || value.Contains(':') || value.Contains('\\') ||
+            value.Contains('?') || value.Contains('#') || value.Contains('%'))
+            throw new ApiException(400, "离线样式的字体和精灵图必须使用样式目录内的本地路径。");
+        var local = value.TrimStart('/');
+        while (local.StartsWith("./", StringComparison.Ordinal)) local = local[2..];
+        var parts = local.Split('/');
+        if (parts.Any(part => part is "" or "." or ".."))
+            throw new ApiException(400, "离线样式资源路径无效。");
+        var allowed = sprite
+            ? IsSpriteDirectory(parts[0]) || parts.Length == 1 && parts[0].StartsWith("sprite", StringComparison.Ordinal)
+            : IsFontDirectory(parts[0]);
+        if (!allowed) throw new ApiException(400, "离线字体或精灵图目录无效。");
+        return local;
+    }
+
     private async Task ServeMapStyleJsonAsync(HttpContext context)
     {
         var id = Api.Id(context);
@@ -85,18 +105,29 @@ public sealed partial class Store
                 }
                 else if (property.Name is "glyphs" or "sprite")
                 {
-                    if (property.Value.ValueKind != JsonValueKind.String)
-                        throw new ApiException(400, "离线样式的字体与精灵图必须引用本地路径。");
-                    var value = property.Value.GetString() ?? "";
-                    if (value.StartsWith("//", StringComparison.Ordinal) ||
-                        Uri.TryCreate(value, UriKind.Absolute, out _) ||
-                        value.Contains('\\') || value.Split('/').Any(part => part is "." or ".."))
-                        throw new ApiException(400, "离线样式的字体和精灵图必须使用样式目录内的本地路径。");
-                    var local = value.TrimStart('/');
-                    if (!(local.StartsWith("font/", StringComparison.Ordinal) ||
-                          local.StartsWith("sprite", StringComparison.Ordinal)))
-                        throw new ApiException(400, "离线字体和精灵图必须放在 font/ 或 sprite/ 目录下。");
-                    writer.WriteString(property.Name, prefix + local);
+                    if (property.Name == "sprite" && property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        writer.WritePropertyName("sprite");
+                        writer.WriteStartArray();
+                        foreach (var sprite in property.Value.EnumerateArray())
+                        {
+                            if (sprite.ValueKind != JsonValueKind.Object ||
+                                !sprite.TryGetProperty("id", out var spriteId) || spriteId.ValueKind != JsonValueKind.String ||
+                                !sprite.TryGetProperty("url", out var spriteUrl) || spriteUrl.ValueKind != JsonValueKind.String)
+                                throw new ApiException(400, "离线精灵图列表格式无效。");
+                            writer.WriteStartObject();
+                            writer.WriteString("id", spriteId.GetString());
+                            writer.WriteString("url", prefix + LocalStyleResource(spriteUrl.GetString()!, true));
+                            writer.WriteEndObject();
+                        }
+                        writer.WriteEndArray();
+                    }
+                    else
+                    {
+                        if (property.Value.ValueKind != JsonValueKind.String)
+                            throw new ApiException(400, "离线样式的字体与精灵图必须引用本地路径。");
+                        writer.WriteString(property.Name, prefix + LocalStyleResource(property.Value.GetString()!, property.Name == "sprite"));
+                    }
                 }
                 else property.WriteTo(writer);
             }
@@ -118,8 +149,9 @@ public sealed partial class Store
         if (relative.StartsWith("/", StringComparison.Ordinal) ||
             relative.Contains('\\', StringComparison.Ordinal) ||
             parts.Any(part => part is "" or "." or ".." || part.Contains(':')) ||
-            parts[0] is not ("font" or "sprite") ||
-            extension is not (".pbf" or ".png" or ".webp" or ".json"))
+            !(IsFontDirectory(parts[0]) && extension == ".pbf" ||
+                (IsSpriteDirectory(parts[0]) || parts.Length == 1 && parts[0].StartsWith("sprite", StringComparison.Ordinal)) &&
+                extension is ".png" or ".webp" or ".json"))
         {
             context.Response.StatusCode = 404;
             return;

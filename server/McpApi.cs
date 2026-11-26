@@ -138,7 +138,7 @@ internal sealed class McpApi
             properties[payloadName] = node;
         }
         var keys = new JsonArray();
-        foreach (var name in required) keys.Add(name);
+        foreach (var name in required) keys.Add((JsonNode?)JsonValue.Create(name));
         var schema = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = keys, ["additionalProperties"] = false };
         return Parse(schema.ToJsonString());
     }

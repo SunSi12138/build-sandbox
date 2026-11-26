@@ -1,3 +1,5 @@
+import { gzipSync } from 'node:zlib'
+
 // Minimal valid PMTiles v3 with one unlabelled MVT polygon. Used to verify
 // the real PBF rendering path, not just the archive header or raster tiles.
 function varint(input) {
@@ -38,10 +40,11 @@ export function createMvtPmtilesFixture() {
   ])
   const tile = fieldBytes(3, layer)
   // One directory entry for z=0, x=0, y=0 (Hilbert tile ID 0).
-  const directory = Buffer.concat([varint(1), varint(0), varint(1), varint(tile.length), varint(1)])
-  const metadata = Buffer.from(JSON.stringify({
+  const compressedTile = gzipSync(tile)
+  const directory = gzipSync(Buffer.concat([varint(1), varint(0), varint(1), varint(compressedTile.length), varint(1)]))
+  const metadata = gzipSync(Buffer.from(JSON.stringify({
     vector_layers: [{ id: 'water', fields: {}, minzoom: 0, maxzoom: 0 }],
-  }))
+  })))
   const rootOffset = 127
   const metadataOffset = rootOffset + directory.length
   const tileOffset = metadataOffset + metadata.length
@@ -56,13 +59,13 @@ export function createMvtPmtilesFixture() {
   u64(40, tileOffset)
   u64(48, 0)
   u64(56, tileOffset)
-  u64(64, tile.length)
+  u64(64, compressedTile.length)
   u64(72, 1)
   u64(80, 1)
   u64(88, 1)
   archive[96] = 1 // clustered
-  archive[97] = 1 // no directory compression
-  archive[98] = 1 // no tile compression
+  archive[97] = 2 // Gzip directory and metadata
+  archive[98] = 2 // Gzip vector tile
   archive[99] = 1 // MVT/PBF
   archive[100] = 0
   archive[101] = 0
@@ -73,6 +76,6 @@ export function createMvtPmtilesFixture() {
   archive[118] = 0
   directory.copy(archive, rootOffset)
   metadata.copy(archive, metadataOffset)
-  tile.copy(archive, tileOffset)
-  return { archive, tile }
+  compressedTile.copy(archive, tileOffset)
+  return { archive, tile, tileRange: 'bytes=' + tileOffset + '-' + (tileOffset + compressedTile.length - 1) }
 }
