@@ -17,6 +17,15 @@ public sealed partial class Store
         }
     }
 
+    private string MapLayerPath(MapLayerDto layer) => Path.IsPathFullyQualified(layer.Folder)
+        ? layer.Folder : Path.Combine(RootDir, "tiles", layer.Folder);
+
+    public MapLayerDto[] GetDisplayMapLayers() => GetMapLayers().Select(layer =>
+    {
+        var path = MapLayerPath(layer);
+        return PmTiles.IsArchivePath(path) ? layer with { Archive = PmTiles.Inspect(path) } : layer;
+    }).ToArray();
+
     public MapLayerDto SaveMapLayer(MapLayerDto request)
     {
         if (!Regex.IsMatch(request.Id, "^[a-zA-Z0-9_-]{1,60}$")) throw new ApiException(400, "图层编号不正确。");
@@ -29,7 +38,7 @@ public sealed partial class Store
             try { using var style = JsonDocument.Parse(request.StyleJson); if (style.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException(); }
             catch (JsonException) { throw new ApiException(400, "MVT 样式 JSON 不正确。"); }
         }
-        var value = request with { Name = Text(request.Name, "图层名称", 100, true), Folder = folder, UpdateCache = false, UrlTemplate = "", ApiKey = "", MapKey = "" };
+        var value = request with { Name = Text(request.Name, "图层名称", 100, true), Folder = folder, UpdateCache = false, UrlTemplate = "", ApiKey = "", MapKey = "", Archive = null };
         lock (_gate)
         {
             PrepareWrite();
@@ -86,7 +95,7 @@ public sealed partial class Store
 
             var purposes = ListCommunityRecords("purpose-type", includeArchived:true);
             var uses = ListCommunityRecords("use").Where(x => JsonText(x.Data, "state") != "已结束").GroupBy(x => x.ParentId).ToDictionary(x => x.Key, x => x.ToArray());
-            return new(GetMapLayers(), features.Select(f =>
+            return new(GetDisplayMapLayers(), features.Select(f =>
             {
                 if (f.Kind == "grid") return f with { Color = RequireCommunity(f.Id).Color, Uses = [] };
                 var point = GetPointInternal(f.Id);
@@ -171,19 +180,22 @@ public sealed partial class Store
     public LocalArchiveTile? ReadArchiveTile(string layerId, int z, int x, int y)
     {
         var layer = GetMapLayers().FirstOrDefault(item => item.Id == layerId) ?? throw new ApiException(404, "图层不存在。");
-        if (z < layer.MinZoom || z > layer.MaxZoom || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
-        var path = Path.IsPathFullyQualified(layer.Folder) ? layer.Folder : Path.Combine(RootDir, "tiles", layer.Folder);
-        if (!path.EndsWith(".pmtiles", StringComparison.OrdinalIgnoreCase) && !path.EndsWith(".pbtiles", StringComparison.OrdinalIgnoreCase)) return null;
+        // Archive coordinates and zoom bounds come from its own v3 header.
+        // The browser applies configured display limits; stale settings must
+        // not reject otherwise valid archive tiles at the HTTP boundary.
+        var path = MapLayerPath(layer);
+        if (!PmTiles.IsArchivePath(path)) return null;
         return PmTiles.Read(path, z, x, y);
     }
 
     public string? FindTile(string layerId, int z, int x, int y)
     {
         var layer = GetMapLayers().FirstOrDefault(x => x.Id == layerId) ?? throw new ApiException(404, "图层不存在。");
-        if (z < layer.MinZoom || z > layer.MaxZoom || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
+        var directory = MapLayerPath(layer);
+        if (PmTiles.IsArchivePath(directory) || z < 0 || z > 22 || z < layer.MinZoom || z > layer.MaxZoom || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
         var row = layer.Scheme == "tms" ? (1 << z) - 1 - y : y;
-        var directory = Path.IsPathFullyQualified(layer.Folder) ? layer.Folder : Path.Combine(RootDir, "tiles", layer.Folder);
         var tilePath = Path.Combine(directory, z.ToString(), x.ToString(), row.ToString());
-        return new[] { ".png", ".jpg", ".jpeg", ".webp", ".pbf", ".mvt" }.Select(ext => tilePath + ext).FirstOrDefault(File.Exists);
+        var extensions = layer.TileType == "mvt" ? new[] { ".pbf", ".mvt" } : new[] { ".png", ".jpg", ".jpeg", ".webp", ".avif" };
+        return extensions.Select(ext => tilePath + ext).FirstOrDefault(File.Exists);
     }
 }

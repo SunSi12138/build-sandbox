@@ -15,6 +15,10 @@ import VectorSource from 'ol/source/Vector'
 import XYZ from 'ol/source/XYZ'
 import VectorTileSource from 'ol/source/VectorTile'
 import MVT from 'ol/format/MVT'
+import type ImageTile from 'ol/ImageTile'
+import type VectorTile from 'ol/VectorTile'
+import type RenderFeature from 'ol/render/Feature'
+import TileState from 'ol/TileState'
 import { createMvtStyle } from '~/utils/mvtStyle'
 import { Draw, Modify, Snap, DragRotate, defaults as defaultInteractions } from 'ol/interaction'
 import { fromLonLat, toLonLat } from 'ol/proj'
@@ -25,7 +29,7 @@ import type { GeoShape, MapFeature, MapLayer } from '~/types/community'
 
 const props = withDefaults(defineProps<{ features?: MapFeature[]; layers?: MapLayer[]; editable?: boolean; selectedId?: string; height?: string; immersive?: boolean; highDefinition?: boolean; focusPadding?: number[]; loadDepth?: number; exportFeatures?: MapFeature[] }>(), { features: () => [], layers: () => [], editable: true, height: '65vh' })
 const shape = defineModel<GeoShape | null>({ default: null })
-const emit = defineEmits<{ choose: [feature: MapFeature]; coordinate: [coordinate: number[]]; edit: [feature: MapFeature]; begin: []; ready: []; sketching: [active: boolean] }>()
+const emit = defineEmits<{ choose: [feature: MapFeature]; coordinate: [coordinate: number[]]; edit: [feature: MapFeature]; begin: []; ready: []; sketching: [active: boolean]; reloadLayers: [layers: MapLayer[]] }>()
 const element = useTemplateRef<HTMLElement>('mapElement')
 const mode = ref<'view' | 'Point' | 'Polygon' | 'edit'>('view')
 const snapEnabled = ref(true), sketching = ref(false), vertices = ref(0)
@@ -36,7 +40,35 @@ watch(sketching, value => emit('sketching', value), { flush: 'sync' })
 let map: OLMap | undefined, draw: Draw | undefined, modify: Modify | undefined, snaps: Snap[] = []
 const source = new VectorSource<Feature<Geometry>>()
 const editing = new VectorSource<Feature<Geometry>>()
-const tiles = new Map<string, { layer: TileLayer<XYZ> | VectorTileLayer; signature: string }>()
+type BaseTileLayer = TileLayer<XYZ> | VectorTileLayer
+const tiles = new Map<string, { layer: BaseTileLayer; signature: string }>()
+const tileControllers = new WeakMap<BaseTileLayer, AbortController>()
+const layerProblems = ref<Record<string, string>>({})
+const layerErrors = computed(() => Object.values(layerProblems.value))
+function clearLayerProblem(id: string) {
+  if (!layerProblems.value[id]) return
+  const next = { ...layerProblems.value }; delete next[id]; layerProblems.value = next
+}
+function setLayerProblem(item: MapLayer, message: string) {
+  layerProblems.value = { ...layerProblems.value, [item.id]: item.name + '：' + message }
+}
+function disposeTile(layer: BaseTileLayer) {
+  tileControllers.get(layer)?.abort()
+  layer.dispose()
+}
+async function requestTile(url: string, signal: AbortSignal) {
+  // Retry transient connection/server errors, not genuine missing coverage.
+  for (let attempt = 0; ; attempt++) {
+    if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+    try {
+      const response = await fetch(url, { signal, cache: 'no-cache' })
+      if (response.status < 500 || attempt >= 2) return response
+    } catch (error) {
+      if (signal.aborted || attempt >= 2) throw error
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, 150 * (attempt + 1)))
+  }
+}
 let resizing: ResizeObserver | undefined
 function geometry(value: GeoShape) { return value.type === 'Point' ? new Point(fromLonLat(value.coordinates[0]!)) : value.type === 'MultiPolygon' ? new MultiPolygon((value.areas ?? []).map(area => [area.map(x => fromLonLat(x))])) : new Polygon([value.coordinates.map(x => fromLonLat(x))]) }
 function readShape(g: Geometry): GeoShape {
@@ -61,39 +93,124 @@ function refreshFeatures() {
   source.clear()
   source.addFeatures(props.features.filter(x => !x.disabled).map(item => { const f = new Feature({ geometry: geometry(item.shape), record: item }); f.setId(`${item.kind}:${item.id}`); return f }))
 }
-function tileLayer(item: MapLayer) {
-  const url = `/api/map/tiles/${encodeURIComponent(item.id)}/{z}/{x}/{y}?v=${item.cacheVersion ?? 0}`
+function tileLayer(item: MapLayer, report = false): BaseTileLayer {
+  if (item.archive?.error) throw new Error(item.archive.error)
+  const controller = new AbortController()
+  const { signal } = controller
+  const url = '/api/map/tiles/' + encodeURIComponent(item.id) + '/{z}/{x}/{y}?v=' + encodeURIComponent(item.archive?.version || String(item.cacheVersion ?? 0))
   const zIndex = item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder)
-  return item.tileType === 'mvt'
-    ? new VectorTileLayer({ source: new VectorTileSource({ url, format: new MVT(), minZoom: item.minZoom, maxZoom: item.maxZoom }), style: createMvtStyle(item.styleJson), opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
-    : new TileLayer({ source: new XYZ({ url, minZoom: item.minZoom, maxZoom: item.maxZoom, transition: 0, crossOrigin: 'anonymous' }), opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
+  let minZoom = item.minZoom, maxZoom = item.maxZoom
+  if (item.archive?.tileType) {
+    minZoom = Math.max(minZoom, item.archive.minZoom)
+    maxZoom = Math.min(maxZoom, item.archive.maxZoom)
+    // If stale settings and the actual archive have no common zoom, use
+    // the archive bounds instead of building a permanently empty source.
+    if (minZoom > maxZoom) { minZoom = item.archive.minZoom; maxZoom = item.archive.maxZoom }
+  }
+  const fail = (error: unknown) => {
+    if (report && !signal.aborted) setLayerProblem(item, error instanceof Error ? error.message : String(error))
+  }
+  let layer: BaseTileLayer
+  if ((item.archive?.tileType ?? item.tileType) === 'mvt') {
+    const format = new MVT()
+    const vector = new VectorTileSource({
+      url, format, minZoom, maxZoom,
+      tileLoadFunction: (tile, address) => {
+        const vectorTile = tile as VectorTile<RenderFeature>
+        vectorTile.setLoader((extent, _resolution, projection) => {
+          void requestTile(address, signal).then(async response => {
+            if (response.status === 404) { vectorTile.setState(TileState.ERROR); return }
+            if (!response.ok) throw new Error('瓦片 HTTP ' + response.status)
+            const data = await response.arrayBuffer()
+            if (signal.aborted) return
+            vectorTile.setFeatures(format.readFeatures(data, { extent, featureProjection: projection }))
+            if (report) clearLayerProblem(item.id)
+          }).catch(error => { if (!signal.aborted) { vectorTile.setState(TileState.ERROR); fail(error) } })
+        })
+      },
+    })
+    layer = new VectorTileLayer({ source: vector, style: createMvtStyle(item.styleJson), opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
+  } else {
+    const raster = new XYZ({
+      url, minZoom, maxZoom, transition: 0, crossOrigin: 'anonymous',
+      tileLoadFunction: (tile, address) => {
+        const imageTile = tile as ImageTile
+        void requestTile(address, signal).then(async response => {
+          if (response.status === 404) { imageTile.setState(TileState.ERROR); return }
+          if (!response.ok) throw new Error('瓦片 HTTP ' + response.status)
+          const blob = await response.blob()
+          if (signal.aborted) return
+          const image = imageTile.getImage() as HTMLImageElement
+          const objectUrl = URL.createObjectURL(blob)
+          const cleanup = () => { URL.revokeObjectURL(objectUrl); signal.removeEventListener('abort', cleanup) }
+          signal.addEventListener('abort', cleanup, { once: true })
+          image.addEventListener('load', () => { cleanup(); if (report && !signal.aborted) clearLayerProblem(item.id) }, { once: true })
+          image.addEventListener('error', () => { cleanup(); fail(new Error('图片瓦片无法解码')) }, { once: true })
+          image.src = objectUrl
+        }).catch(error => { if (!signal.aborted) { imageTile.setState(TileState.ERROR); fail(error) } })
+      },
+    })
+    layer = new TileLayer({ source: raster, opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
+  }
+  tileControllers.set(layer, controller)
+  return layer
 }
-function refreshLayers() {
+function refreshLayers(layers: MapLayer[] = props.layers) {
   if (!map) return
-  const validIds = new Set(props.layers.map(layer => layer.id))
+  const validIds = new Set(layers.map(layer => layer.id))
   for (const [id, entry] of tiles) {
     if (validIds.has(id)) continue
-    map.removeLayer(entry.layer)
-    tiles.delete(id)
+    map.removeLayer(entry.layer); disposeTile(entry.layer)
+    tiles.delete(id); clearLayerProblem(id)
   }
-  for (const item of [...props.layers].sort((a, b) => a.sortOrder - b.sortOrder)) {
-    // A visibility toggle must never reconstruct the tile source/cache.
-    // Reconstruct only when the actual source/style configuration changes.
+  for (const item of [...layers].sort((a, b) => a.sortOrder - b.sortOrder)) {
     const signature = JSON.stringify({
-      folder: item.folder, scheme: item.scheme, sortOrder: item.sortOrder, opacity: item.opacity,
-      minZoom: item.minZoom, maxZoom: item.maxZoom, annotation: item.annotation,
+      folder: item.folder, scheme: item.scheme, minZoom: item.minZoom, maxZoom: item.maxZoom,
       tileType: item.tileType, styleJson: item.styleJson, cacheVersion: item.cacheVersion,
-      loadDepth: props.loadDepth ?? 0,
+      archive: item.archive,
     })
     const existing = tiles.get(item.id)
-    if (existing?.signature !== signature) {
-      if (existing) map.removeLayer(existing.layer)
-      const layer = tileLayer(item)
-      layer.setVisible(item.enabled)
-      map.addLayer(layer)
-      tiles.set(item.id, { layer, signature })
-    } else existing.layer.setVisible(item.enabled)
+    try {
+      if (existing?.signature !== signature) {
+        if (existing) { map.removeLayer(existing.layer); disposeTile(existing.layer); tiles.delete(item.id) }
+        if (item.archive?.error) {
+          if (item.enabled) setLayerProblem(item, item.archive.error)
+          else clearLayerProblem(item.id)
+          continue
+        }
+        const layer = tileLayer(item, true)
+        layer.setVisible(item.enabled)
+        map.addLayer(layer)
+        tiles.set(item.id, { layer, signature })
+        clearLayerProblem(item.id)
+      } else {
+        existing.layer.setVisible(item.enabled)
+        existing.layer.setOpacity(item.opacity)
+        existing.layer.setZIndex(item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder))
+        existing.layer.setPreload(props.loadDepth ?? 0)
+        if (!item.enabled) clearLayerProblem(item.id)
+      }
+    } catch (error) { if (item.enabled) setLayerProblem(item, String(error)) }
   }
+}
+async function retryLayers() {
+  if (!map) return
+  try {
+    const latest = await $fetch<MapLayer[]>('/api/map/layers', { retry: 1 })
+    if (!map) return
+    // Keep visibility and working layers; reconstruct failed sources. This
+    // also works in embedded map dialogs whose parent does not handle reload.
+    const current = props.layers.flatMap(item => {
+      const fresh = latest.find(layer => layer.id === item.id)
+      return fresh ? [{ ...fresh, enabled: item.enabled }] : []
+    })
+    for (const [id, entry] of tiles) {
+      if (!layerProblems.value[id]) continue
+      map.removeLayer(entry.layer); disposeTile(entry.layer); tiles.delete(id)
+    }
+    refreshLayers(current)
+    emit('reloadLayers', latest)
+  } catch { /* Keep existing layers and the retry control available. */ }
 }
 function clearInteractions() {
   sketching.value = false; vertices.value = 0
@@ -225,20 +342,22 @@ async function exportImage(options: {
   host.style.cssText = 'position:fixed;left:-100000px;top:0;pointer-events:none'
   document.body.appendChild(host)
   let exportMap: OLMap | undefined
+  const exportTiles: BaseTileLayer[] = []
   let finished = 0
   try {
     // Reuse one map and the same tile sources/feature index for all N² pieces.
     const featureSource = new VectorSource<Feature<Geometry>>()
     featureSource.addFeatures(selectedFeatures.map(item => new Feature({geometry:geometry(item.shape),record:item})))
-    const exportTiles = selectedLayers.map(item => {
+    for (const item of selectedLayers) {
+      if (item.archive?.error) continue
       const layer = tileLayer(item)
+      exportTiles.push(layer)
       const stats = tileLoads.get(item.id)!
       const tileSource = layer.getSource()
       tileSource?.on('tileloadstart', () => {stats.requested++})
       tileSource?.on('tileloadend', () => {stats.success++})
       tileSource?.on('tileloaderror', () => {stats.error++})
-      return layer
-    })
+    }
     const exportView = new View({projection:view.getProjection(),center:mapCenterForPixel(0,0),resolution:resolution/scale,rotation})
     exportMap = new OLMap({
       target:host,pixelRatio:1,controls:[],interactions:[],view:exportView,
@@ -277,6 +396,7 @@ async function exportImage(options: {
   } finally {
     exportMap?.setTarget(undefined)
     exportMap?.dispose()
+    exportTiles.forEach(disposeTile)
     host.remove()
     part.width=0;part.height=0
   }
@@ -301,8 +421,8 @@ function bounds() { if (!map) return; const ext = map.getView().calculateExtent(
 
 defineExpose({ start, cancel, edit, locate, focus, bounds, getExportSize, exportImage })
 watch(() => props.features, refreshFeatures, { deep: true })
-watch(() => props.layers, refreshLayers, { deep: true })
-watch(() => props.loadDepth, refreshLayers)
+watch(() => props.layers, () => refreshLayers(), { deep: true })
+watch(() => props.loadDepth, () => refreshLayers())
 watch(() => props.selectedId, () => source.changed())
 watch(()=>props.highDefinition,async(value,previous)=>{if(!map||value===previous)return;const zoom=map.getView().getZoom()??16;await nextTick();map.updateSize();map.getView().setZoom(zoom+(value?1:-1));source.changed()})
 watch(snapEnabled, () => { snaps.forEach(x => map?.removeInteraction(x)); snaps = []; if (mode.value !== 'view') addSnap() })
@@ -343,7 +463,11 @@ watch(element, target => {
   if (!props.editable && props.features.length === 1) focus(props.features[0]!.shape)
   resizing = new ResizeObserver(() => map?.updateSize()); if (element.value) resizing.observe(element.value)
 }, { flush: 'post' })
-onBeforeUnmount(() => { resizing?.disconnect(); map?.setTarget(undefined); map?.dispose() })
+onBeforeUnmount(() => {
+  resizing?.disconnect()
+  for (const { layer } of tiles.values()) { map?.removeLayer(layer); disposeTile(layer) }
+  tiles.clear(); map?.setTarget(undefined); map?.dispose(); map = undefined
+})
 </script>
 <template>
   <div class="offline-map-wrap" :class="{immersive,hd:highDefinition}">
@@ -359,10 +483,12 @@ onBeforeUnmount(() => { resizing?.disconnect(); map?.setTarget(undefined); map?.
       <span v-if="mode === 'edit'" class="text-sm text-muted">{{ shape?.type === 'MultiPolygon' ? `${shape.areas?.length} 个区域 · ` : '' }}拖动节点调整</span>
     </div>
     <div ref="mapElement" class="offline-map" :style="{ height }" tabindex="0" aria-label="社区地图（Ctrl + 拖动旋转）" />
+    <div v-if="layerErrors.length" class="map-layer-hint" role="status" :title="layerErrors.join('\n')"><span>{{ layerErrors.length }} 个图层加载异常</span><button type="button" @click="retryLayers">重试</button></div>
     <button v-if="isRotated" class="map-north" type="button" aria-label="恢复正北方向" title="恢复正北方向" @click="resetNorth">N ↑</button>
   </div>
 </template>
 <style scoped>
+.map-layer-hint{position:absolute;left:12px;bottom:12px;z-index:5;display:flex;gap:8px;align-items:center;max-width:calc(100% - 80px);padding:6px 10px;background:white;border-radius:8px;font-size:12px;box-shadow:0 2px 10px #17211e24}.map-layer-hint button{color:var(--ui-primary);text-decoration:underline;cursor:pointer}
 .offline-map-wrap{position:relative;background:#e6e9e5;border:1px solid var(--border);border-radius:10px;overflow:hidden}.map-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px;background:white}.offline-map{width:100%;min-height:300px;background:repeating-linear-gradient(45deg,#e5e8e4,#e5e8e4 10px,#e0e4df 10px,#e0e4df 20px)}:deep(.ol-zoom button){width:34px;height:34px;font-size:23px;background:white;color:#17211e}:deep(.ol-control){background:#ffffffaa}
  .map-north{position:absolute;right:14px;bottom:150px;z-index:5;width:36px;height:36px;border-radius:8px;background:white;color:#17211e;border:1px solid #dfe5e0;font-size:13px;font-weight:700;box-shadow:0 3px 15px #17211e24;cursor:pointer}
 .immersive{height:100%;border:0;border-radius:0}.immersive .offline-map{height:100%!important}.immersive .map-tools{position:absolute;z-index:4;top:14px;right:14px;max-width:min(670px,calc(100% - 400px));border-radius:12px;box-shadow:0 3px 18px #17211e24}.immersive :deep(.ol-zoom){left:auto;right:14px;top:auto;bottom:60px}@media(max-width:900px){.immersive .map-tools{top:68px;left:12px;right:auto;max-width:calc(100% - 24px);gap:5px;padding:7px}}

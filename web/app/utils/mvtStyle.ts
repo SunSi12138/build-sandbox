@@ -1,5 +1,5 @@
 import type { FeatureLike } from 'ol/Feature'
-import { Fill, Stroke, Style, Circle, Text } from 'ol/style'
+import { Fill, Stroke, Style, Circle, Text } from 'ol/style.js'
 
 type Paint = Record<string, unknown>
 type StyleEntry = { type?: string; 'source-layer'?: string; paint?: Paint; layout?: Paint }
@@ -23,9 +23,17 @@ export function createMvtStyle(json: string) {
   const style = (feature: FeatureLike): Style[] => {
     const layerName = String(feature.get('layer') ?? '')
     const type = feature.getGeometry()?.getType() ?? ''
-    const matches = rules.filter(rule => !rule['source-layer'] || rule['source-layer'] === layerName)
-    const selected = matches.length ? matches : [{ type: type.includes('Point') ? 'circle' : type.includes('Line') ? 'line' : 'fill', paint: {} }]
-    return selected.flatMap(rule => {
+    const applicable = rules.filter(rule => !rule['source-layer'] || rule['source-layer'] === layerName)
+    if (applicable.length && applicable.every(rule => rule.layout?.visibility === 'none')) return []
+    const matches = applicable.filter(rule => {
+      if (rule.layout?.visibility === 'none') return false
+      return rule.type === 'symbol' || rule.type === 'line' && (type.includes('Line') || type.includes('Polygon')) ||
+        rule.type === 'circle' && type.includes('Point') ||
+        (rule.type === 'fill' || !rule.type) && type.includes('Polygon')
+    })
+    const fallback = { type: type.includes('Point') ? 'circle' : type.includes('Line') ? 'line' : 'fill', paint: {} }
+    const selected = matches.length ? matches : [fallback]
+    const rendered = selected.flatMap(rule => {
       const paint = rule.paint ?? {}, layout = rule.layout ?? {}
       const kind = rule.type ?? 'fill'
       if (kind === 'background') return []
@@ -39,6 +47,14 @@ export function createMvtStyle(json: string) {
       }
       return [new Style({ fill: new Fill({ color: stringValue(paint['fill-color'], '#d9e3e2') }), stroke: new Stroke({ color: stringValue(paint['fill-outline-color'], '#94a3b8'), width: 0.6 }) })]
     })
+    // A symbol-only style with no name (or an unsupported expression) must
+    // not silently erase the underlying geometry.
+    if (!rendered.length) {
+      if (type.includes('Point')) return [new Style({ image: new Circle({ radius: 3, fill: new Fill({ color: '#64748b' }) }) })]
+      if (type.includes('Line')) return [new Style({ stroke: new Stroke({ color: '#64748b', width: 1.5 }) })]
+      return [new Style({ fill: new Fill({ color: '#d9e3e2' }), stroke: new Stroke({ color: '#94a3b8', width: 0.6 }) })]
+    }
+    return rendered
   }
   return (feature: FeatureLike) => style(feature)
 }

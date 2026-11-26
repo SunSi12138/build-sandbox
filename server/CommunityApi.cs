@@ -22,7 +22,7 @@ public static class CommunityApi
         app.MapGet("/api/map/coordinates", coordinates);
         RequestDelegate shape = async context => await Api.Write(context, store.SaveShape((string)context.Request.RouteValues["kind"]!, Api.Id(context), await Api.Read(context, CommunityJsonContext.Default.ShapeWrite)), CommunityJsonContext.Default.MapFeatureDto);
         app.MapPut("/api/map/shapes/{kind}/{id}", shape);
-        RequestDelegate layers = context => Api.Write(context, store.GetMapLayers(), CommunityJsonContext.Default.MapLayerDtoArray);
+        RequestDelegate layers = context => Api.Write(context, store.GetDisplayMapLayers(), CommunityJsonContext.Default.MapLayerDtoArray);
         RequestDelegate saveLayer = async context => await Api.Write(context, store.SaveMapLayer(await Api.Read(context, CommunityJsonContext.Default.MapLayerDto)), CommunityJsonContext.Default.MapLayerDto);
         app.MapGet("/api/map/layers", layers);
         app.MapPost("/api/map/layers", saveLayer);
@@ -42,8 +42,8 @@ public static class CommunityApi
                 return;
             }
             context.Response.Headers.CacheControl = "no-cache";
-            context.Response.ContentType = Path.GetExtension(path) switch { ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".pbf" or ".mvt" => "application/vnd.mapbox-vector-tile", _ => "image/png" };
-            if (Path.GetExtension(path) is ".mvt" or ".pbf")
+            context.Response.ContentType = Path.GetExtension(path).ToLowerInvariant() switch { ".jpg" or ".jpeg" => "image/jpeg", ".webp" => "image/webp", ".avif" => "image/avif", ".pbf" or ".mvt" => "application/vnd.mapbox-vector-tile", _ => "image/png" };
+            if (Path.GetExtension(path).ToLowerInvariant() is ".mvt" or ".pbf")
             {
                 await using var stream = File.OpenRead(path);
                 var signature = new byte[2];

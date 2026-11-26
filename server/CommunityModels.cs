@@ -7,7 +7,10 @@ public sealed record GeoShape(string Type, double[][] Coordinates, double[][][]?
 public sealed record ShapeWrite(GeoShape Shape, int Revision = 0);
 public sealed record MapUseLabel(string Id, string Name, string PurposeName, string Icon);
 public sealed record MapFeatureDto(string Id, string Kind, string Name, string CommunityId, GeoShape Shape, int Revision, int OpenIssues = 0, bool Disabled = false, string TypeId = "", string Color = "#087f70", string[]? PurposeIds = null, MapUseLabel[]? Uses = null);
-public sealed record MapLayerDto(string Id, string Name, string Folder, string Scheme, bool Enabled, bool IsDefault, double Opacity, int MinZoom, int MaxZoom, int SortOrder, string UrlTemplate = "", string ApiKey = "", string Subdomains = "0,1,2,3", bool UpdateCache = false, int CacheVersion = 0, bool Annotation = false, string MapKey = "", string TileType = "raster", string StyleJson = "");
+public sealed record MapLayerDto(string Id, string Name, string Folder, string Scheme, bool Enabled, bool IsDefault, double Opacity, int MinZoom, int MaxZoom, int SortOrder, string UrlTemplate = "", string ApiKey = "", string Subdomains = "0,1,2,3", bool UpdateCache = false, int CacheVersion = 0, bool Annotation = false, string MapKey = "", string TileType = "raster", string StyleJson = "")
+{
+    public MapArchiveInfo? Archive { get; init; }
+}
 public sealed record PurposeField(string Id, string Label, string Type, bool Required, bool Multiline = false);
 public sealed record PlaceDossierWrite(PointWriteRequest Point, CommunityWrite[] Uses);
 public sealed record MapStateDto(MapLayerDto[] Layers, MapFeatureDto[] Features);

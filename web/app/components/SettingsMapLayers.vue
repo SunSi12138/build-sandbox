@@ -35,7 +35,7 @@ onMounted(load)
     <UAlert v-if="error && !editorOpen" :description="error" color="error" />
     <div class="group-list">
       <div v-for="layer in layers" :key="layer.id" class="list-row">
-        <div class="row-body"><p class="font-medium">{{ layer.name }}</p><p class="text-xs text-muted break-all">{{ layer.folder }}</p></div>
+        <div class="row-body"><p class="font-medium">{{ layer.name }}</p><p class="text-xs text-muted break-all">{{ layer.folder }}</p><p v-if="layer.archive?.error" class="text-xs text-error">{{ layer.archive.error }}</p><p v-else-if="layer.archive?.tileType" class="text-xs text-muted">PMTiles · {{ layer.archive.tileType === 'mvt' ? 'MVT 矢量' : '图片' }} · z{{ layer.archive.minZoom }}–{{ layer.archive.maxZoom }}</p></div>
         <UButton icon="i-lucide-pencil" :aria-label="`编辑${layer.name}`" color="neutral" variant="ghost" @click="edit(layer)" />
         <UButton icon="i-lucide-trash-2" :aria-label="`删除${layer.name}`" color="error" variant="ghost" @click="deleting=layer" />
       </div>
@@ -45,7 +45,7 @@ onMounted(load)
         <div class="field-grid">
           <UFormField label="图层名称" required><UInput v-model="draft.name" class="w-full" :disabled="busy" /></UFormField>
           <UFormField label="图层类型"><USelect v-model="draft.tileType" :items="[{label:'卫星/栅格图',value:'raster'},{label:'MVT / PBF',value:'mvt'}]" class="w-full" :disabled="busy" /></UFormField>
-          <UFormField label="本地缓存目录或 PMTiles 文件" class="field-full" required><UInput v-model="draft.folder" class="w-full" :disabled="busy" /></UFormField>
+          <UFormField label="本地缓存目录或 PMTiles 文件" class="field-full" required><UInput v-model="draft.folder" class="w-full" :disabled="busy" @update:model-value="draft.archive=null" /></UFormField>
           <UFormField label="行号"><USelect v-model="draft.scheme" :items="[{label:'XYZ',value:'xyz'},{label:'TMS',value:'tms'}]" class="w-full" /></UFormField>
           <UFormField label="最小级别"><UInput v-model.number="draft.minZoom" type="number" min="0" max="22" class="w-full" /></UFormField>
           <UFormField label="最大级别"><UInput v-model.number="draft.maxZoom" type="number" min="0" max="22" class="w-full" /></UFormField>
@@ -54,7 +54,7 @@ onMounted(load)
         </div>
         <UCheckbox v-model="draft.annotation" label="标注图层" />
         <UCheckbox v-model="draft.enabled" label="默认显示" />
-        <UFormField v-if="draft.tileType==='mvt'" label="MVT 自定义样式（JSON）"><UTextarea v-model="draft.styleJson" :rows="7" class="w-full font-mono" /></UFormField>
+        <UFormField v-if="(draft.archive?.tileType ?? draft.tileType)==='mvt'" label="MVT 自定义样式（JSON）"><UTextarea v-model="draft.styleJson" :rows="7" class="w-full font-mono" /></UFormField>
         <UAlert v-if="error" :description="error" color="error" />
       </div></template>
       <template #footer><UButton label="取消" color="neutral" variant="outline" :disabled="busy" @click="editorOpen=false" /><UButton label="保存" :disabled="busy||!draft?.name.trim()||!draft?.folder.trim()" :loading="busy" @click="save" /></template>
