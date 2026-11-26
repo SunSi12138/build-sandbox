@@ -216,7 +216,10 @@ internal static class Startup
             json.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
             json.SerializerOptions.TypeInfoResolverChain.Insert(1, StartupJsonContext.Default);
         });
+        var mcp = new McpApi(store);
+        mcp.Register(builder.Services);
         var app = builder.Build();
+        mcp.Map(app);
         app.Use(async (HttpContext context, RequestDelegate next) =>
         {
             context.Response.Headers.XContentTypeOptions = "nosniff";

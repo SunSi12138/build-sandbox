@@ -1133,10 +1133,94 @@ class ApiSmoke:
             "SELECT sql FROM sqlite_master WHERE name='map_providers'")[0][0],
             "PMTiles support must not change the database schema")
 
+    def test_mcp(self) -> None:
+        def rpc(method, params=None, modern=True, extra_headers=None, expected=200):
+            version = "2026-07-28" if modern else "2025-11-25"
+            arguments = dict(params or {})
+            headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": version}
+            if modern:
+                headers["Mcp-Method"] = method
+                if method == "tools/call":
+                    headers["Mcp-Name"] = arguments["name"]
+                arguments["_meta"] = {"io.modelcontextprotocol/protocolVersion": version,
+                    "io.modelcontextprotocol/clientInfo": {"name": "hbtool-smoke", "version": "1.0"},
+                    "io.modelcontextprotocol/clientCapabilities": {}}
+            headers.update(extra_headers or {})
+            request = urllib.request.Request(self.origin + "/mcp", data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": arguments}).encode(), headers=headers, method="POST")
+            try:
+                response = self.opener.open(request, timeout=20)
+            except urllib.error.HTTPError as error:
+                response = error
+            with response:
+                require(response.status == expected, f"MCP {method}: {response.status} != {expected}")
+                if expected != 200:
+                    return None
+                text = response.read().decode("utf-8")
+                if "text/event-stream" in response.headers.get("Content-Type", ""):
+                    messages = [json.loads(line[5:].strip()) for line in text.splitlines() if line.startswith("data:") and line[5:].strip()]
+                    value = next(message for message in messages if message.get("id") == 1)
+                else:
+                    value = json.loads(text)
+            require("error" not in value, f"MCP {method}: {value}")
+            return value["result"]
+
+        rpc("tools/list", extra_headers={"Origin": "https://untrusted.example"}, expected=403)
+        rpc("tools/list", extra_headers={"Host": "untrusted.example"}, expected=403)
+        discovery = rpc("server/discover")
+        require("tools" in discovery["capabilities"], "Modern MCP discovery missing tools")
+        legacy = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "legacy-smoke", "version": "1"}}, modern=False)
+        require(legacy["protocolVersion"] == "2025-11-25", "Legacy negotiation failed")
+        tools = rpc("tools/list")["tools"]
+        by_name = {tool["name"]: tool for tool in tools}
+        required = {"get_bootstrap", "list_points", "get_issue", "create_inspection", "update_issue_action", "record_feedback", "review_issue", "set_point_relations", "upload_photo", "read_photo", "upload_attachment", "export_inspection_record"}
+        require(required <= set(by_name), "MCP missing business tools")
+        require(by_name["get_bootstrap"]["annotations"]["readOnlyHint"] and by_name["delete_point"]["annotations"]["destructiveHint"], "MCP hints incorrect")
+        require(by_name["create_point"]["inputSchema"]["properties"]["body"]["properties"]["name"]["type"] == "string", "MCP DTO schema unavailable")
+
+        def call(name, args=None, error=False):
+            result = rpc("tools/call", {"name": name, "arguments": args or {}})
+            require(bool(result.get("isError")) == error, f"MCP {name}: {result}")
+            return result
+
+        bootstrap = call("get_bootstrap")["structuredContent"]
+        require(bootstrap["today"] == day(self.today), "MCP bootstrap incorrect")
+        point = call("create_point", {"body": {"name": "MCP 临时验收", "communityId": bootstrap["communities"][0]["id"], "typeId": bootstrap["pointTypes"][0]["id"], "address": "测试地址"}})["structuredContent"]
+        point_id = point["id"]
+        require(any(item["id"] == point_id for item in call("list_points", {"query": {"q": "MCP 临时验收"}})["structuredContent"]["items"]), "MCP created point missing")
+        photo = call("upload_photo", {"phase": "point", "base64": base64.b64encode(JPEG).decode()})["structuredContent"]
+        call("attach_point_photos", {"id": point_id, "body": {"photoIds": [photo["id"]]}})
+        require(call("read_photo", {"id": photo["id"]})["content"][0]["type"] == "image", "MCP photo not image content")
+        require(self.json("GET", "/api/points/" + point_id)["photos"][0]["id"] == photo["id"], "MCP photo association not persisted")
+        call("delete_point", {"id": point_id, "confirm": False}, error=True)
+        require(call("get_point", {"id": point_id})["structuredContent"]["point"]["id"] == point_id, "Unconfirmed delete removed record")
+        matter = call("create_matter", {"body": {"title": "MCP 事项验收", "source": "public", "receivedDate": day(self.today), "content": "临时测试"}})["structuredContent"]
+        call("set_point_relations", {"id": point_id, "body": {"matterIds": [matter["id"]]}})
+        require(call("get_matter", {"id": matter["id"]})["structuredContent"]["matter"]["pointId"] == point_id, "MCP point relation failed")
+        site = call("upload_photo", {"phase": "site", "base64": base64.b64encode(JPEG).decode()})["structuredContent"]
+        inspection = call("create_inspection", {"body": {"pointId": point_id, "date": day(self.today), "inspector": "MCP 验收员", "result": "issues",
+            "issues": [{"issueTypeId": bootstrap["issueTypes"][0]["id"], "description": "临时问题", "requirement": "整改", "deadline": day(self.today), "responsibleUnit": "验收单位", "photoIds": [site["id"]]}]}})["structuredContent"]
+        inspection_id, issue_id = inspection["inspection"]["id"], inspection["issues"][0]["id"]
+        feedback = call("record_feedback", {"id": issue_id, "body": {"date": day(self.today), "notes": "已整改"}})["structuredContent"]
+        action_id = feedback["actions"][0]["id"]
+        call("update_issue_action", {"id": issue_id, "actionId": action_id, "body": {"date": day(self.today), "notes": "修订的整改反馈"}})
+        require(call("get_issue", {"id": issue_id})["structuredContent"]["issue"]["feedbackNotes"] == "修订的整改反馈", "MCP action editing failed")
+        reviewed = call("review_issue", {"id": issue_id, "body": {"date": day(self.today), "conclusion": "复查通过"}})["structuredContent"]
+        require(reviewed["issue"]["status"] == "closed", "MCP review failed")
+        export = call("export_rectification_record", {"id": inspection_id})
+        require(any(content["type"] == "resource" for content in export["content"]), "MCP Word export did not return a resource")
+        call("return_issue", {"id": issue_id, "body": {"reason": "验收退回"}})
+        require(self.json("GET", "/api/issues/" + issue_id)["issue"]["status"] == "pending", "MCP return failed")
+        call("delete_inspection", {"id": inspection_id, "confirm": True})
+        call("set_point_relations", {"id": point_id, "body": {"matterIds": []}})
+        call("delete_matter", {"id": matter["id"], "confirm": True})
+        call("delete_point", {"id": point_id, "confirm": True})
+        self.json("GET", "/api/points/" + point_id, expected=404)
+
     def run(self) -> None:
         self.start(seed=True)
         for name, action in (
             ("startup, persistence location, settings and static-cache policy", self.test_startup_and_settings),
+            ("modern and legacy MCP discovery, local access, schema, write and media", self.test_mcp),
             ("offline PMTiles archive ranges and schema compatibility", self.test_pmtiles_archive),
             ("dictionary and point CRUD, filters and reference protection", self.test_dictionaries_and_points),
             ("normal/multi-issue inspections, JPEG upload and transactional photo association", self.test_inspections_and_photos),

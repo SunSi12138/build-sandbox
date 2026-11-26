@@ -70,4 +70,10 @@ namespace StreetEcoTool;
 [JsonSerializable(typeof(AttachmentUpdateRequest))]
 [JsonSerializable(typeof(PageDto<MatterDto>), TypeInfoPropertyName = "MatterPage")]
 [JsonSerializable(typeof(RecordRelationsRequest))]
+[JsonSerializable(typeof(PointQuery))]
+[JsonSerializable(typeof(InspectionQuery))]
+[JsonSerializable(typeof(IssueQuery))]
+[JsonSerializable(typeof(ActivityQuery))]
+[JsonSerializable(typeof(MatterQuery))]
+[JsonSerializable(typeof(CampaignQuery))]
 public partial class AppJsonContext : JsonSerializerContext;

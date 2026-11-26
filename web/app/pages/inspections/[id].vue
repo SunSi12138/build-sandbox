@@ -36,8 +36,7 @@ const back = computed(() => {
     ? value
     : '/inspections'
 })
-const expanded = reactive<Record<string, boolean>>({}),
-  historyOpen = reactive<Record<string, boolean>>({})
+const expanded = reactive<Record<string, boolean>>({})
 const batchOpen = ref(false),
   batchMode = ref<'feedback' | 'review'>('feedback'),
   selectedIssue = ref(''),
@@ -595,41 +594,36 @@ watch(() => route.query.issue, revealIssue)
                 </div>
               </dl>
               <RecordRelations kind="issue" :id="issue.id" :matters="issue.matters" @changed="load" />
-              <IssuePhotoGroups :photos="issueDetails.get(issue.id)?.photos ?? []" />
-              <UCollapsible v-model:open="historyOpen[issue.id]"
-                ><UButton
-                  label="办理记录"
-                  :trailing-icon="
-                    historyOpen[issue.id] ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'
-                  "
-                  color="neutral"
-                  variant="link"
-                  class="px-0"
-                /><template #content
-                  ><div v-if="issueDetails.get(issue.id)?.actions.length" class="action-timeline">
-                    <div v-for="action in issueDetails.get(issue.id)?.actions" :key="action.id">
-                      <div class="flex flex-wrap items-center justify-between gap-2">
-                        <p class="text-xs text-muted">
-                          {{ action.date }} ·
-                          {{ action.kind === 'feedback' ? '反馈' : action.kind === 'review' ? '复查' : '退回' }}
-                        </p>
-                        <UButton
-                          v-if="action.kind === 'feedback' || action.kind === 'review'"
-                          :label="action.kind === 'feedback' ? '编辑反馈' : '编辑复查'"
-                          color="neutral"
-                          variant="link"
-                          size="xs"
-                          :data-testid="`edit-issue-action-${action.id}`"
-                          @click="openActionEdit(issue.id, action)"
-                        />
-                      </div>
-                      <p class="whitespace-pre-wrap text-sm">{{ action.notes }}</p>
-                      <IssuePhotos v-if="action.photos.length" :photos="action.photos" />
+              <section class="issue-history" data-testid="issue-timeline">
+                <h3 class="section-title mb-2">办理记录</h3>
+                <ol class="issue-timeline">
+                  <li class="issue-timeline-entry" data-kind="site">
+                    <div class="issue-timeline-head">
+                      <div class="min-w-0"><h4 class="text-sm font-medium">发现问题</h4><p class="text-xs text-muted">{{ issue.inspectionDate }}</p></div>
+                      <UButton label="编辑问题" color="neutral" variant="link" size="sm"
+                        :data-testid="`edit-issue-${issue.id}`" @click="openIssueEdit(issue)" />
                     </div>
-                  </div>
-                  <p v-else class="text-xs text-muted">暂无办理记录</p></template
-                ></UCollapsible
-              >
+                    <IssuePhotos v-if="issueDetails.get(issue.id)?.photos.some(photo => photo.phase === 'site')"
+                      :photos="issueDetails.get(issue.id)?.photos.filter(photo => photo.phase === 'site') ?? []" label="整改前" />
+                  </li>
+                  <li v-for="action in issueDetails.get(issue.id)?.actions ?? []" :key="action.id"
+                    class="issue-timeline-entry" :data-kind="action.kind">
+                    <div class="issue-timeline-head">
+                      <div class="min-w-0"><h4 class="text-sm font-medium">{{ action.kind === 'feedback' ? '整改反馈' : action.kind === 'review' ? '复查闭环' : '退回待整改' }}</h4>
+                        <p class="text-xs text-muted">{{ action.date }}</p></div>
+                      <UButton v-if="action.kind === 'feedback' || action.kind === 'review'"
+                        :label="action.kind === 'feedback' ? '编辑反馈' : '编辑复查'"
+                        color="neutral" variant="link" size="sm"
+                        :data-testid="`edit-issue-action-${action.id}`" @click="openActionEdit(issue.id, action)" />
+                    </div>
+                    <p class="whitespace-pre-wrap break-words text-sm">{{ action.notes }}</p>
+                    <IssuePhotos v-if="action.photos.length" :photos="action.photos"
+                      :label="action.kind === 'feedback' ? '整改后' : '复查'" />
+                  </li>
+                </ol>
+                <IssuePhotoGroups v-if="issueDetails.get(issue.id)?.photos.some(photo => photo.phase !== 'site' && !photo.actionId)"
+                  :photos="issueDetails.get(issue.id)?.photos.filter(photo => photo.phase !== 'site' && !photo.actionId) ?? []" />
+              </section>
               <div class="flex flex-wrap gap-2">
                 <UButton
                   v-if="issue.status === 'pending'"
@@ -649,12 +643,6 @@ watch(() => route.query.issue, revealIssue)
                   color="neutral"
                   variant="outline"
                   @click="openReturn(issue)"
-                /><UButton
-                  label="编辑问题"
-                  color="neutral"
-                  variant="link"
-                  :data-testid="`edit-issue-${issue.id}`"
-                  @click="openIssueEdit(issue)"
                 />
               </div>
             </div>
