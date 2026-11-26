@@ -1,6 +1,6 @@
 # MCP 接入
 
-hbtool 启动后提供 Streamable HTTP MCP 端点 `http://127.0.0.1:5180/mcp`（端口随启动设置变化）。使用官方 MCP C# SDK 2.4.0，支持 2026-07-28 版协议及旧版初始化流程。无需启动第二个程序或直接访问数据库。
+在「工具设置 → MCP 设置」启用 MCP 后，hbtool 提供 Streamable HTTP MCP 端点 `http://127.0.0.1:5180/mcp`（端口随启动设置变化）。使用官方 MCP C# SDK 2.4.0，支持 2026-07-28 版协议及旧版初始化流程。无需启动第二个程序或直接访问数据库。
 
 支持 Streamable HTTP 的客户端可以添加：
 
@@ -17,12 +17,16 @@ hbtool 启动后提供 Streamable HTTP MCP 端点 `http://127.0.0.1:5180/mcp`（
 
 各 AI 客户端的配置格式可能不同。Codex CLI 可使用 `codex mcp add hbtool --url http://127.0.0.1:5180/mcp`。必须在运行 hbtool 的电脑上连接；不开放局域网、互联网或浏览器跨站调用。
 
-环境变量（启动程序前设置，重启生效）：
+## 权限设置
 
-- `HBTOOL_MCP_MODE=write`（默认）：查询和业务写入，删除需要工具参数 `confirm: true`，并先取得用户明确同意。
-- `HBTOOL_MCP_MODE=read`：仅查询和导出，不注册写入工具。
-- `HBTOOL_MCP_MODE=off`：关闭 MCP。
-- `HBTOOL_MCP_TOKEN`：可选随机访问令牌，配置后客户端须发送 `Authorization: Bearer <token>`；请勿提交令牌到仓库。此限制仅作用于 MCP，不改变既有网页 API 的访问规则。
+在「工具设置 → MCP 设置」中选择权限并保存，立即生效，不需要环境变量或重启程序。
+
+- 关闭（默认）：拒绝 MCP 请求。
+- 只读：仅查询和导出；即使 AI 缓存了旧工具列表，也无法调用写入工具。
+- 读写：查询及业务写入，删除须传入 `confirm: true` 并先取得用户明确同意。
+- 访问令牌：可选，点击生成后保存，新令牌只显示一次，可复制给客户端；客户端发送 `Authorization: Bearer <token>`。重新生成或清除后旧令牌失效。
+
+MCP 配置保存在原有 `appsettings.json` 的 `mcp` 配置段（令牌仅保存 SHA-256 哈希），监听地址、端口及其他配置保持不变。现有业务数据库和备份不受影响。MCP 只允许本机客户端连接；若仅绑定指定局域网网卡，请先在首页访问设置中启用本机监听。
 
 ## 工具使用
 

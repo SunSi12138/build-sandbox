@@ -1164,12 +1164,31 @@ class ApiSmoke:
             require("error" not in value, f"MCP {method}: {value}")
             return value["result"]
 
+        settings_path = self.install / "appsettings.json"
+        before = self.fingerprint()
+        existing = json.loads(settings_path.read_text(encoding="utf-8-sig")) if settings_path.exists() else {}
+        existing["mcpSmokeUnknown"] = {"keep": True}
+        settings_path.write_text(json.dumps(existing), encoding="utf-8")
+        config = self.json("GET", "/api/system/mcp")
+        require(config["mode"] == "off" and config["canConfigure"] and config["available"], "Fresh MCP must be disabled")
+        rpc("tools/list", expected=404)
+        self.json("PUT", "/api/system/mcp", {"mode": "invalid"}, expected=400)
+        saved = self.json("PUT", "/api/system/mcp", {"mode": "read"})
+        require(saved["settings"]["mode"] == "read", "Read-only MCP setting not applied")
+        updated = json.loads(settings_path.read_text(encoding="utf-8"))
+        require(all(updated.get(key) == value for key, value in existing.items()), "MCP config overwrote existing settings")
+        require(self.fingerprint() == before, "MCP permission changed business data")
         rpc("tools/list", extra_headers={"Origin": "https://untrusted.example"}, expected=403)
         rpc("tools/list", extra_headers={"Host": "untrusted.example"}, expected=403)
         discovery = rpc("server/discover")
         require("tools" in discovery["capabilities"], "Modern MCP discovery missing tools")
         legacy = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "legacy-smoke", "version": "1"}}, modern=False)
         require(legacy["protocolVersion"] == "2025-11-25", "Legacy negotiation failed")
+        readonly = rpc("tools/list")["tools"]
+        require(readonly and all(tool["annotations"]["readOnlyHint"] for tool in readonly), "Read-only discovery exposed writes")
+        blocked = rpc("tools/call", {"name": "create_point", "arguments": {"body": {}}})
+        require(blocked.get("isError"), "Cached write tool bypassed read-only mode")
+        self.json("PUT", "/api/system/mcp", {"mode": "write"})
         tools = rpc("tools/list")["tools"]
         by_name = {tool["name"]: tool for tool in tools}
         required = {"get_bootstrap", "list_points", "get_issue", "create_inspection", "update_issue_action", "record_feedback", "review_issue", "set_point_relations", "upload_photo", "read_photo", "upload_attachment", "export_inspection_record"}
@@ -1215,6 +1234,26 @@ class ApiSmoke:
         call("delete_matter", {"id": matter["id"], "confirm": True})
         call("delete_point", {"id": point_id, "confirm": True})
         self.json("GET", "/api/points/" + point_id, expected=404)
+        # Generate a token, verify persistence and live revocation without a host restart.
+        issued = self.json("PUT", "/api/system/mcp", {"mode": "read", "tokenAction": "generate"})
+        token = issued["token"]
+        require(len(token) == 64 and issued["settings"]["hasToken"], "Token generation failed")
+        config = json.loads(settings_path.read_text(encoding="utf-8"))
+        require(token not in settings_path.read_text(encoding="utf-8") and config["mcp"]["tokenHash"].lower() == hashlib.sha256(token.encode()).hexdigest(), "Raw MCP token was persisted")
+        require("token" not in self.json("GET", "/api/system/mcp"), "Settings GET leaked token")
+        rpc("tools/list", expected=401)
+        auth = {"Authorization": "Bearer " + token}
+        require(rpc("tools/list", extra_headers=auth)["tools"], "New MCP token rejected")
+        self.stop()
+        self.start()
+        require(self.json("GET", "/api/system/mcp")["mode"] == "read", "MCP permission did not survive restart")
+        require(rpc("tools/list", extra_headers=auth)["tools"], "MCP token did not survive restart")
+        replacement = self.json("PUT", "/api/system/mcp", {"mode": "write", "tokenAction": "generate"})["token"]
+        require(replacement != token, "Token rotation reused secret")
+        rpc("tools/list", extra_headers=auth, expected=401)
+        require(rpc("tools/list", extra_headers={"Authorization": "Bearer " + replacement})["tools"], "Rotated token rejected")
+        self.json("PUT", "/api/system/mcp", {"mode": "off", "tokenAction": "clear"})
+        rpc("tools/list", expected=404)
 
     def run(self) -> None:
         self.start(seed=True)

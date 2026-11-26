@@ -216,7 +216,8 @@ internal static class Startup
             json.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
             json.SerializerOptions.TypeInfoResolverChain.Insert(1, StartupJsonContext.Default);
         });
-        var mcp = new McpApi(store);
+        var mcpSettings = new McpSettingsService(baseDirectory, listening);
+        var mcp = new McpApi(store, mcpSettings);
         mcp.Register(builder.Services);
         var app = builder.Build();
         mcp.Map(app);
@@ -275,6 +276,7 @@ internal static class Startup
             context.Response.OnCompleted(() => { listening.SignalChange(); return Task.CompletedTask; });
             await Api.Write(context, result, StartupJsonContext.Default.ListenResponse);
         };
+        mcpSettings.Map(app);
         app.MapGet("/api/system", systemInfo);
         app.MapPut("/api/system/listen", changeListen);
         RequestDelegate missingApi = async context =>

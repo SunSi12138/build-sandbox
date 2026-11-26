@@ -19,6 +19,7 @@ const tabs = [
   { value: 'dictionaries', label: '社区与分类' },
   { value: 'tags', label: '标签管理' },
   { value: 'maps', label: '地图管理' },
+  { value: 'mcp', label: 'MCP 设置' },
   { value: 'backup', label: '备份与恢复' }
 ]
 const active = ref<string | number>(tabs.some(t => t.value === route.query.tab) ? String(route.query.tab) : 'basic')
@@ -135,6 +136,7 @@ onMounted(() => { void fetchSettings() })
       </div>
       <SettingsTags v-else-if="active === 'tags'" />
       <SettingsMaps v-else-if="active === 'maps'" />
+      <SettingsMcp v-else-if="active === 'mcp'" />
       <SettingsBackups v-else-if="active === 'backup'" @restored="afterRestore" />
     </template>
   </div>

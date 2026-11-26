@@ -172,7 +172,24 @@ internal sealed class ListeningService
         catch (NetworkInformationException) { return []; }
     }
 
-    internal static void SaveConfiguration(string baseDirectory, int port, string[] listen)
+    internal static void SaveConfiguration(string baseDirectory, int port, string[] listen) =>
+        UpdateConfiguration(baseDirectory, ["port", "listen"], writer =>
+        {
+            writer.WriteNumber("port", port);
+            writer.WriteStartArray("listen");
+            foreach (var address in listen) writer.WriteStringValue(address);
+            writer.WriteEndArray();
+        });
+
+    private static readonly object ConfigurationGate = new();
+
+    // Serialize all read-modify-write operations on the shared installation config.
+    internal static void UpdateConfiguration(string baseDirectory, string[] keys, Action<Utf8JsonWriter> write)
+    {
+        lock (ConfigurationGate) UpdateConfigurationCore(baseDirectory, keys, write);
+    }
+
+    private static void UpdateConfigurationCore(string baseDirectory, string[] keys, Action<Utf8JsonWriter> write)
     {
         var path = Path.Combine(baseDirectory, "appsettings.json");
         var temp = Path.Combine(baseDirectory, "temp");
@@ -200,11 +217,8 @@ internal sealed class ListeningService
                     writer.WriteStartObject();
                     if (existing is not null)
                         foreach (var property in existing.RootElement.EnumerateObject())
-                            if (!property.Name.Equals("port", StringComparison.OrdinalIgnoreCase) && !property.Name.Equals("listen", StringComparison.OrdinalIgnoreCase)) property.WriteTo(writer);
-                    writer.WriteNumber("port", port);
-                    writer.WriteStartArray("listen");
-                    foreach (var address in listen) writer.WriteStringValue(address);
-                    writer.WriteEndArray();
+                            if (!keys.Contains(property.Name, StringComparer.OrdinalIgnoreCase)) property.WriteTo(writer);
+                    write(writer);
                     writer.WriteEndObject();
                 }
                 output.Flush(flushToDisk: true);

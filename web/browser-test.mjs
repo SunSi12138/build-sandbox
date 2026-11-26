@@ -350,6 +350,36 @@ try {
     await page.setViewportSize({ width: 375, height: 812 })
   })
 
+  await test('MCP settings page saves permissions and generates a one-time token', async () => {
+    // The MCP administration endpoint rejects arbitrary host names, so test it
+    // on the real loopback origin, not the synthetic insecure browser-test host.
+    const local = await browser.newContext({ viewport: { width: 375, height: 812 }, locale: 'zh-CN', reducedMotion: 'reduce' })
+    const settingsPage = await local.newPage()
+    try {
+      await settingsPage.goto(directOrigin + '/#/settings?tab=mcp', { waitUntil: 'networkidle' })
+      const panel = settingsPage.getByTestId('mcp-settings')
+      await panel.waitFor()
+      await settingsPage.getByTestId('mcp-mode').click()
+      await settingsPage.getByRole('option', { name: '只读（查询、导出）', exact: true }).click()
+      await settingsPage.getByTestId('mcp-generate').click()
+      const response = settingsPage.waitForResponse(r => new URL(r.url()).pathname === '/api/system/mcp' && r.request().method() === 'PUT' && r.status() === 200)
+      await settingsPage.getByTestId('mcp-save').click()
+      const saved = await (await response).json()
+      assert.equal(saved.settings.mode, 'read')
+      assert.equal(saved.token.length, 64)
+      await settingsPage.getByTestId('mcp-generated-token').waitFor()
+      await settingsPage.reload({ waitUntil: 'networkidle' })
+      await panel.waitFor()
+      assert.equal(await settingsPage.getByTestId('mcp-generated-token').count(), 0)
+      assert.equal((await api('/system/mcp')).hasToken, true)
+      const dimensions = await settingsPage.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }))
+      assert(dimensions.scrollWidth <= dimensions.width + 1)
+    } finally {
+      await api('/system/mcp', { method: 'PUT', body: { mode: 'off', tokenAction: 'clear' } })
+      await local.close()
+    }
+  })
+
   await test('Home issue reminders retain mixed inspection states and matching problem counts', async () => {
     const dashboard = await api('/dashboard')
     assert(dashboard.awaitingReview.count > 0, 'Demo fixture must include a problem awaiting review')
