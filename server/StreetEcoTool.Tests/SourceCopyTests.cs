@@ -34,6 +34,14 @@ public sealed class SourceCopyTests
         Assert.Contains("layerOpen", map, StringComparison.Ordinal);
         Assert.Contains("switchMode('list')", map, StringComparison.Ordinal);
         Assert.Contains("导出地图", map, StringComparison.Ordinal);
+        Assert.Contains("影像渲染深度", map, StringComparison.Ordinal);
+        Assert.DoesNotContain("highDefinition", map, StringComparison.Ordinal);
+        var canvas = File.ReadAllText(Path.Combine(app, "components", "OfflineMap.client.vue"));
+        Assert.Contains("controls: []", canvas, StringComparison.Ordinal);
+        Assert.Contains("configureDeepRaster", canvas, StringComparison.Ordinal);
+        Assert.Contains("rememberMapView", canvas, StringComparison.Ordinal);
+        Assert.DoesNotContain("highDefinition", canvas, StringComparison.Ordinal);
+        Assert.DoesNotContain("immersive.hd", canvas, StringComparison.Ordinal);
         Assert.DoesNotContain("min-h-12", File.ReadAllText(Path.Combine(app, "app.config.ts")), StringComparison.Ordinal);
     }
 

@@ -11,7 +11,7 @@ export function createMvtStyle(json: string) {
   let rules: StyleEntry[] = []
   try {
     const parsed = JSON.parse(json || '{}') as { layers?: StyleEntry[]; [key: string]: unknown }
-    if (Array.isArray(parsed.layers)) rules = parsed.layers
+    if (Array.isArray(parsed.layers)) rules = parsed.layers.filter(rule => rule && typeof rule === 'object' && !Array.isArray(rule))
     else rules = Object.entries(parsed).filter(([, item]) => item && typeof item === 'object').map(([name, item]) => {
       const props = item as Record<string, unknown>
       return { 'source-layer': name, type: stringValue(props.type, 'fill'), paint: {
@@ -31,7 +31,7 @@ export function createMvtStyle(json: string) {
         rule.type === 'circle' && type.includes('Point') ||
         (rule.type === 'fill' || !rule.type) && type.includes('Polygon')
     })
-    const fallback = { type: type.includes('Point') ? 'circle' : type.includes('Line') ? 'line' : 'fill', paint: {} }
+    const fallback: StyleEntry = { type: type.includes('Point') ? 'circle' : type.includes('Line') ? 'line' : 'fill', paint: {} }
     const selected = matches.length ? matches : [fallback]
     const rendered = selected.flatMap(rule => {
       const paint = rule.paint ?? {}, layout = rule.layout ?? {}

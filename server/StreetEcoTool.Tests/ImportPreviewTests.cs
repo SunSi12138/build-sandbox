@@ -11,7 +11,8 @@ public sealed class ImportPreviewTests
     {
         using var env = new V2Environment();
         using var store = env.Open();
-        var grid = store.GetCommunities()[0];
+        // Fresh installations intentionally have no predefined grids.
+        var grid = store.SaveCommunity(null, new("导入测试网格", "导入测试网格"));
         var types = store.GetPointTypes();
         var defaultType = types.First(x => x.Name == "永久建筑");
         var csv = Encoding.UTF8.GetBytes("名称,网格,地址\n测试商铺," + grid.Name + ",十字路口5号\n");

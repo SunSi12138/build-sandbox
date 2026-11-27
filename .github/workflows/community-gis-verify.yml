@@ -31,7 +31,7 @@ jobs:
         working-directory: web
       - run: npm run typecheck
         working-directory: web
-      - run: node --experimental-strip-types --test mvt-style.test.mjs
+      - run: node --experimental-strip-types --test mvt-style.test.mjs map-rendering.test.mjs
         working-directory: web
       - run: npm run generate
         working-directory: web

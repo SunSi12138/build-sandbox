@@ -35,7 +35,7 @@ public sealed class PmTilesTests
         return result.ToArray();
     }
 
-    private static byte[] Directory(ulong tileId, ulong run, int length, int compression) =>
+    private static byte[] EncodeDirectory(ulong tileId, ulong run, int length, int compression) =>
         Compress([.. VarInt(1), .. VarInt(tileId), .. VarInt(run), .. VarInt((ulong)length), .. VarInt(1)], compression);
 
     private static void WriteArchive(string path, byte[] tile, int compression, bool leaf = true, int tileType = 1)
@@ -43,8 +43,8 @@ public sealed class PmTilesTests
         // z1/x0/y1 = Hilbert tile ID 2. Include a leaf pointer in the root
         // to verify the bounded index cache works for both directory levels.
         var data = Compress(tile, compression);
-        var leafDirectory = leaf ? Directory(2, 1, data.Length, compression) : [];
-        var root = Directory(2, leaf ? 0UL : 1UL, leaf ? leafDirectory.Length : data.Length, compression);
+        var leafDirectory = leaf ? EncodeDirectory(2, 1, data.Length, compression) : [];
+        var root = EncodeDirectory(2, leaf ? 0UL : 1UL, leaf ? leafDirectory.Length : data.Length, compression);
         var metadata = Compress("{}"u8.ToArray(), compression);
         var header = new byte[127];
         "PMTiles"u8.CopyTo(header);

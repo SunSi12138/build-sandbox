@@ -23,11 +23,11 @@ import { createMvtStyle } from '~/utils/mvtStyle'
 import { Draw, Modify, Snap, DragRotate, defaults as defaultInteractions } from 'ol/interaction'
 import { fromLonLat, toLonLat } from 'ol/proj'
 import { Fill, Stroke, Style, Circle, Text } from 'ol/style'
-import { defaults as defaultControls } from 'ol/control'
+import { configureDeepRaster, rasterPreload, readMapView, type SavedMapView } from '~/utils/mapRendering'
 import 'ol/ol.css'
 import type { GeoShape, MapFeature, MapLayer } from '~/types/community'
 
-const props = withDefaults(defineProps<{ features?: MapFeature[]; layers?: MapLayer[]; editable?: boolean; selectedId?: string; height?: string; immersive?: boolean; highDefinition?: boolean; focusPadding?: number[]; loadDepth?: number; exportFeatures?: MapFeature[] }>(), { features: () => [], layers: () => [], editable: true, height: '65vh' })
+const props = withDefaults(defineProps<{ features?: MapFeature[]; layers?: MapLayer[]; editable?: boolean; selectedId?: string; height?: string; immersive?: boolean; focusPadding?: number[]; loadDepth?: number; exportFeatures?: MapFeature[] }>(), { features: () => [], layers: () => [], editable: true, height: '65vh' })
 const shape = defineModel<GeoShape | null>({ default: null })
 const emit = defineEmits<{ choose: [feature: MapFeature]; coordinate: [coordinate: number[]]; edit: [feature: MapFeature]; begin: []; ready: []; sketching: [active: boolean]; reloadLayers: [layers: MapLayer[]] }>()
 const element = useTemplateRef<HTMLElement>('mapElement')
@@ -36,6 +36,26 @@ const snapEnabled = ref(true), sketching = ref(false), vertices = ref(0)
 const rotation = ref(0)
 const isRotated = computed(() => Math.abs(Math.sin(rotation.value / 2)) > 0.01)
 function resetNorth() { map?.getView().animate({ rotation: 0, duration: 250 }) }
+const mapViewKey = 'community-gis.map-view.v1'
+function initialMapView(): SavedMapView {
+  if (props.immersive) {
+    try {
+      const saved = readMapView(localStorage.getItem(mapViewKey))
+      if (saved) return saved
+    } catch { /* Local storage is optional. */ }
+  }
+  return { longitude: 88.893426, latitude: 29.274331, zoom: 16 }
+}
+function rememberMapView() {
+  if (!props.immersive || !map) return
+  const view = map.getView(), center = view.getCenter(), zoom = view.getZoom()
+  if (!center || zoom === undefined) return
+  const [longitude, latitude] = toLonLat(center)
+  try {
+    const value = JSON.stringify({ longitude, latitude, zoom })
+    if (readMapView(value)) localStorage.setItem(mapViewKey, value)
+  } catch { /* Local storage is optional. */ }
+}
 watch(sketching, value => emit('sketching', value), { flush: 'sync' })
 let map: OLMap | undefined, draw: Draw | undefined, modify: Modify | undefined, snaps: Snap[] = []
 const source = new VectorSource<Feature<Geometry>>()
@@ -79,11 +99,10 @@ function readShape(g: Geometry): GeoShape {
 }
 function featureStyle(feature: { get: (key: string) => unknown }) {
   const item = feature.get('record') as MapFeature | undefined
-  const scale = props.highDefinition ? 2 : 1
   const color=item?.color||(item?.kind==='grid'?'#64748b':'#087f70')
   const selected=props.selectedId===item?.id
-  const base=new Style({zIndex:item?.kind==='grid'?0:10,fill:new Fill({color:`${color}${item?.kind==='grid'?'15':'30'}`}),stroke:new Stroke({color,width:(selected?4:2)*scale,lineDash:item?.kind==='grid'?[6*scale,5*scale]:undefined}),image:new Circle({radius:(selected?7:5)*scale,fill:new Fill({color}),stroke:new Stroke({color:'#fff',width:2*scale})})})
-  const text=(value:string,offsetY:number,bold=false)=>new Style({zIndex:item?.kind==='grid'?1:11,text:new Text({text:value,font:`${bold?'600 ':''}${14*scale}px Microsoft YaHei,Segoe UI Emoji,sans-serif`,offsetY:offsetY*scale,fill:new Fill({color:'#17211e'}),stroke:new Stroke({color:'#fff',width:4*scale}),overflow:true,textAlign:'center'})})
+  const base=new Style({zIndex:item?.kind==='grid'?0:10,fill:new Fill({color:`${color}${item?.kind==='grid'?'15':'30'}`}),stroke:new Stroke({color,width:selected?4:2,lineDash:item?.kind==='grid'?[6,5]:undefined}),image:new Circle({radius:selected?7:5,fill:new Fill({color}),stroke:new Stroke({color:'#fff',width:2})})})
+  const text=(value:string,offsetY:number,bold=false)=>new Style({zIndex:item?.kind==='grid'?1:11,text:new Text({text:value,font:`${bold?'600 ':''}14px Microsoft YaHei,Segoe UI Emoji,sans-serif`,offsetY,fill:new Fill({color:'#17211e'}),stroke:new Stroke({color:'#fff',width:4}),overflow:true,textAlign:'center'})})
   if(item?.kind==='grid'){const extent=geometry(item.shape).getExtent();const label=text(item.name,12,true);label.setGeometry(new Point([(extent[0]!+extent[2]!)/2,extent[3]!]));return [base,label]}
   const labels=[text(item?.name??'',-18,true)]
   for(const [index,use] of (item?.uses??[]).entries())labels.push(text(`${use.icon} ${use.purposeName}${use.name===use.purposeName?'':' · '+use.name}`,8+index*23))
@@ -129,7 +148,7 @@ function tileLayer(item: MapLayer, report = false): BaseTileLayer {
         })
       },
     })
-    layer = new VectorTileLayer({ source: vector, style: createMvtStyle(item.styleJson), opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
+    layer = new VectorTileLayer({ source: vector, style: createMvtStyle(item.styleJson), opacity: item.opacity, zIndex, preload: 1 })
   } else {
     const raster = new XYZ({
       url, minZoom, maxZoom, transition: 0, crossOrigin: 'anonymous',
@@ -150,7 +169,13 @@ function tileLayer(item: MapLayer, report = false): BaseTileLayer {
         }).catch(error => { if (!signal.aborted) { imageTile.setState(TileState.ERROR); fail(error) } })
       },
     })
-    layer = new TileLayer({ source: raster, opacity: item.opacity, zIndex, preload: props.loadDepth ?? 0 })
+    if (report) configureDeepRaster(raster, {
+      getDepth: () => props.loadDepth ?? 0,
+      getResolution: () => map?.getView().getResolution(),
+      getPixelRatio: () => map?.getPixelRatio() ?? 1,
+    })
+    layer = new TileLayer({ source: raster, opacity: item.opacity, zIndex,
+      preload: report ? rasterPreload(props.loadDepth ?? 0) : 0 })
   }
   tileControllers.set(layer, controller)
   return layer
@@ -187,7 +212,7 @@ function refreshLayers(layers: MapLayer[] = props.layers) {
         existing.layer.setVisible(item.enabled)
         existing.layer.setOpacity(item.opacity)
         existing.layer.setZIndex(item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder))
-        existing.layer.setPreload(props.loadDepth ?? 0)
+        if (existing.layer instanceof TileLayer) existing.layer.setPreload(rasterPreload(props.loadDepth ?? 0))
         if (!item.enabled) clearLayerProblem(item.id)
       }
     } catch (error) { if (item.enabled) setLayerProblem(item, String(error)) }
@@ -248,7 +273,7 @@ function startEdit() {
 function cancel() { clearInteractions(); editing.clear(); shape.value = null; mode.value = 'view' }
 function edit(value: GeoShape) { const copy = structuredClone(toRaw(value)); cancel(); shape.value = copy; editing.addFeature(new Feature(geometry(copy))); startEdit() }
 function locate(lon: number, lat: number) { map?.getView().animate({ center: fromLonLat([lon, lat]), zoom: Math.max(map.getView().getZoom() ?? 16, 17), duration: 250 }) }
-function focus(value: GeoShape) { if (!map) return; map.getView().fit(geometry(value).getExtent(), { padding: (props.focusPadding ?? [60,60,60,60]).map(v=>v*(props.highDefinition?2:1)), maxZoom: 18, duration: 200 }) }
+function focus(value: GeoShape) { if (!map) return; map.getView().fit(geometry(value).getExtent(), { padding: props.focusPadding ?? [60,60,60,60], maxZoom: 18, duration: 200 }) }
 
 function getExportSize(): [number, number] {
   const size = map?.getSize() ?? [0, 0]
@@ -422,9 +447,11 @@ function bounds() { if (!map) return; const ext = map.getView().calculateExtent(
 defineExpose({ start, cancel, edit, locate, focus, bounds, getExportSize, exportImage })
 watch(() => props.features, refreshFeatures, { deep: true })
 watch(() => props.layers, () => refreshLayers(), { deep: true })
-watch(() => props.loadDepth, () => refreshLayers())
+watch(() => props.loadDepth, () => {
+  refreshLayers()
+  map?.render()
+})
 watch(() => props.selectedId, () => source.changed())
-watch(()=>props.highDefinition,async(value,previous)=>{if(!map||value===previous)return;const zoom=map.getView().getZoom()??16;await nextTick();map.updateSize();map.getView().setZoom(zoom+(value?1:-1));source.changed()})
 watch(snapEnabled, () => { snaps.forEach(x => map?.removeInteraction(x)); snaps = []; if (mode.value !== 'view') addSnap() })
 watch(element, target => {
   if (!target || map) return
@@ -432,10 +459,11 @@ watch(element, target => {
     fill: new Fill({ color: '#f59e0b30' }), stroke: new Stroke({ color: '#d97706', width: 3 }),
     image: new Circle({ radius: 7, fill: new Fill({ color: '#d97706' }), stroke: new Stroke({ color: '#fff', width: 2 }) })
   })
+  const initial = initialMapView()
   map = new OLMap({
     target,
-    view: new View({ center: fromLonLat([88.893426,29.274331]), zoom: 16, minZoom: 3, maxZoom: 22 }),
-    controls: defaultControls({ attribution: false, rotate: false }),
+    view: new View({ center: fromLonLat([initial.longitude, initial.latitude]), zoom: initial.zoom, minZoom: 3, maxZoom: 22 }),
+    controls: [],
     interactions: defaultInteractions({ altShiftDragRotate: false }).extend([new DragRotate({
       condition: event => event.originalEvent instanceof PointerEvent &&
         event.originalEvent.pointerType === 'mouse' && event.originalEvent.button === 0 &&
@@ -445,6 +473,7 @@ watch(element, target => {
     layers: [new VectorLayer({ source, style: featureStyle, zIndex: 100 }), new VectorLayer({ source: editing, zIndex: 101, style: editStyle })]
   })
   map.getView().on('change:rotation', () => { rotation.value = map?.getView().getRotation() ?? 0 })
+  map.on('moveend', rememberMapView)
   map.on('singleclick', event => {
     if (mode.value !== 'view') return
     const f = map!.forEachFeatureAtPixel(event.pixel, f => f.get('record') ? f : undefined, { hitTolerance: 8 })
@@ -464,13 +493,14 @@ watch(element, target => {
   resizing = new ResizeObserver(() => map?.updateSize()); if (element.value) resizing.observe(element.value)
 }, { flush: 'post' })
 onBeforeUnmount(() => {
+  rememberMapView()
   resizing?.disconnect()
   for (const { layer } of tiles.values()) { map?.removeLayer(layer); disposeTile(layer) }
   tiles.clear(); map?.setTarget(undefined); map?.dispose(); map = undefined
 })
 </script>
 <template>
-  <div class="offline-map-wrap" :class="{immersive,hd:highDefinition}">
+  <div class="offline-map-wrap" :class="{immersive}">
     <div v-if="editable" class="map-tools">
       <UButton label="标点" icon="i-lucide-map-pin" :variant="mode === 'Point' ? 'solid' : 'outline'" :disabled="mode==='Point'" @click="start('Point')" />
       <UButton label="画区域" icon="i-lucide-square" :variant="mode === 'Polygon' ? 'solid' : 'outline'" :disabled="mode==='Polygon'" @click="start('Polygon')" />
@@ -489,8 +519,7 @@ onBeforeUnmount(() => {
 </template>
 <style scoped>
 .map-layer-hint{position:absolute;left:12px;bottom:12px;z-index:5;display:flex;gap:8px;align-items:center;max-width:calc(100% - 80px);padding:6px 10px;background:white;border-radius:8px;font-size:12px;box-shadow:0 2px 10px #17211e24}.map-layer-hint button{color:var(--ui-primary);text-decoration:underline;cursor:pointer}
-.offline-map-wrap{position:relative;background:#e6e9e5;border:1px solid var(--border);border-radius:10px;overflow:hidden}.map-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px;background:white}.offline-map{width:100%;min-height:300px;background:repeating-linear-gradient(45deg,#e5e8e4,#e5e8e4 10px,#e0e4df 10px,#e0e4df 20px)}:deep(.ol-zoom button){width:34px;height:34px;font-size:23px;background:white;color:#17211e}:deep(.ol-control){background:#ffffffaa}
- .map-north{position:absolute;right:14px;bottom:150px;z-index:5;width:36px;height:36px;border-radius:8px;background:white;color:#17211e;border:1px solid #dfe5e0;font-size:13px;font-weight:700;box-shadow:0 3px 15px #17211e24;cursor:pointer}
-.immersive{height:100%;border:0;border-radius:0}.immersive .offline-map{height:100%!important}.immersive .map-tools{position:absolute;z-index:4;top:14px;right:14px;max-width:min(670px,calc(100% - 400px));border-radius:12px;box-shadow:0 3px 18px #17211e24}.immersive :deep(.ol-zoom){left:auto;right:14px;top:auto;bottom:60px}@media(max-width:900px){.immersive .map-tools{top:68px;left:12px;right:auto;max-width:calc(100% - 24px);gap:5px;padding:7px}}
-.immersive.hd .offline-map{width:200%;height:200%!important;transform:scale(.5);transform-origin:0 0}.immersive.hd :deep(.ol-zoom){transform:scale(2);transform-origin:bottom right;right:28px;bottom:120px}
+.offline-map-wrap{position:relative;background:#e6e9e5;border:1px solid var(--border);border-radius:10px;overflow:hidden}.map-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px;background:white}.offline-map{width:100%;min-height:300px;background:repeating-linear-gradient(45deg,#e5e8e4,#e5e8e4 10px,#e0e4df 10px,#e0e4df 20px)}
+ .map-north{position:absolute;right:14px;bottom:60px;z-index:5;width:36px;height:36px;border-radius:8px;background:white;color:#17211e;border:1px solid #dfe5e0;font-size:13px;font-weight:700;box-shadow:0 3px 15px #17211e24;cursor:pointer}
+.immersive{height:100%;border:0;border-radius:0}.immersive .offline-map{height:100%!important}.immersive .map-tools{position:absolute;z-index:4;top:14px;right:14px;max-width:min(670px,calc(100% - 400px));border-radius:12px;box-shadow:0 3px 18px #17211e24}@media(max-width:900px){.immersive .map-tools{top:68px;left:12px;right:auto;max-width:calc(100% - 24px);gap:5px;padding:7px}}
 </style>
