@@ -12,7 +12,7 @@ public sealed partial class Store
             using var command = Command("SELECT id,name,folder,scheme,enabled,is_default,opacity,min_zoom,max_zoom,sort_order,url_template,api_key,subdomains,update_cache,cache_version,annotation,map_key,tile_type,style_json FROM map_layers ORDER BY sort_order,id;");
             using var rows = command.ExecuteReader();
             var items = new List<MapLayerDto>();
-            while (rows.Read()) items.Add(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9), rows.GetString(10), rows.GetString(11), rows.GetString(12), rows.GetInt32(13) != 0, rows.GetInt32(14), rows.GetInt32(15) != 0, rows.GetString(16), rows.GetString(17), rows.GetString(18)));
+            while (rows.Read()) items.Add(DecodeMapStyle(new(rows.GetString(0), rows.GetString(1), rows.GetString(2), rows.GetString(3), rows.GetInt32(4) != 0, rows.GetInt32(5) != 0, rows.GetDouble(6), rows.GetInt32(7), rows.GetInt32(8), rows.GetInt32(9), rows.GetString(10), rows.GetString(11), rows.GetString(12), rows.GetInt32(13) != 0, rows.GetInt32(14), rows.GetInt32(15) != 0, rows.GetString(16), rows.GetString(17), rows.GetString(18))));
             return [.. items];
         }
     }
@@ -23,7 +23,10 @@ public sealed partial class Store
     public MapLayerDto[] GetDisplayMapLayers() => GetMapLayers().Select(layer =>
     {
         var path = MapLayerPath(layer);
-        return PmTiles.IsArchivePath(path) ? layer with { Archive = PmTiles.Inspect(path) } : layer;
+        var archive = PmTiles.IsArchivePath(path) ? PmTiles.Inspect(path) : null;
+        var vector = (archive?.TileType ?? layer.TileType) == "mvt";
+        var style = vector && (layer.StyleDirectory.Length > 0 || OfflineMapStyle.IsFullStyle(layer.StyleJson));
+        return layer with { Archive = archive, StyleUrl = style ? $"/api/map/style/{Uri.EscapeDataString(layer.Id)}/style.json" : null };
     }).ToArray();
 
     public MapLayerDto SaveMapLayer(MapLayerDto request)
@@ -38,7 +41,14 @@ public sealed partial class Store
             try { using var style = JsonDocument.Parse(request.StyleJson); if (style.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException(); }
             catch (JsonException) { throw new ApiException(400, "MVT 样式 JSON 不正确。"); }
         }
-        var value = request with { Name = Text(request.Name, "图层名称", 100, true), Folder = folder, UpdateCache = false, UrlTemplate = "", ApiKey = "", MapKey = "", Archive = null };
+        var styleDirectory = Text(request.StyleDirectory, "矢量样式目录", 1024);
+        if (styleDirectory.Length > 0)
+        {
+            try { _ = ResolveStyleDirectory(styleDirectory); }
+            catch (Exception error) when (error is ArgumentException or NotSupportedException or IOException)
+            { throw new ApiException(400, "矢量样式目录路径不正确。"); }
+        }
+        var value = request with { Name = Text(request.Name, "图层名称", 100, true), Folder = folder, UpdateCache = false, UrlTemplate = "", ApiKey = "", MapKey = "", Archive = null, StyleDirectory = styleDirectory, StyleUrl = null };
         lock (_gate)
         {
             PrepareWrite();
@@ -57,7 +67,7 @@ public sealed partial class Store
                   url_template=excluded.url_template,api_key=excluded.api_key,subdomains=excluded.subdomains,update_cache=excluded.update_cache,annotation=excluded.annotation,map_key=excluded.map_key,tile_type=excluded.tile_type,style_json=excluded.style_json;
                 """, transaction, ("$id", value.Id), ("$name", value.Name), ("$folder", value.Folder), ("$scheme", value.Scheme),
                 ("$enabled", value.Enabled ? 1 : 0), ("$default", value.IsDefault ? 1 : 0), ("$opacity", value.Opacity), ("$min", value.MinZoom), ("$max", value.MaxZoom), ("$order", value.SortOrder),
-                ("$url", value.UrlTemplate), ("$key", value.ApiKey), ("$subdomains", value.Subdomains), ("$update", value.UpdateCache ? 1 : 0), ("$annotation", value.Annotation ? 1 : 0), ("$mk", value.MapKey), ("$tileType", value.TileType), ("$styleJson", value.StyleJson))) command.ExecuteNonQuery();
+                ("$url", value.UrlTemplate), ("$key", value.ApiKey), ("$subdomains", value.Subdomains), ("$update", value.UpdateCache ? 1 : 0), ("$annotation", value.Annotation ? 1 : 0), ("$mk", value.MapKey), ("$tileType", value.TileType), ("$styleJson", EncodeMapStyle(value)))) command.ExecuteNonQuery();
             transaction.Commit(); return value;
         }
     }
@@ -177,7 +187,7 @@ public sealed partial class Store
         return (abC*abD<0 && cdA*cdB<0) || (abC==0 && On(a,b,c)) || (abD==0 && On(a,b,d)) || (cdA==0 && On(c,d,a)) || (cdB==0 && On(c,d,b));
     }
 
-    public LocalArchiveTile? ReadArchiveTile(string layerId, int z, int x, int y)
+    public LocalArchiveTile? ReadArchiveTile(string layerId, int z, int x, int y, string? accepted = null)
     {
         var layer = GetMapLayers().FirstOrDefault(item => item.Id == layerId) ?? throw new ApiException(404, "图层不存在。");
         // Archive coordinates and zoom bounds come from its own v3 header.
@@ -185,7 +195,7 @@ public sealed partial class Store
         // not reject otherwise valid archive tiles at the HTTP boundary.
         var path = MapLayerPath(layer);
         if (!PmTiles.IsArchivePath(path)) return null;
-        return PmTiles.Read(path, z, x, y);
+        return PmTiles.Read(path, z, x, y, accepted);
     }
 
     public string? FindTile(string layerId, int z, int x, int y)

@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.Globalization;
 
 namespace StreetEcoTool;
 
@@ -91,6 +92,8 @@ public static class PmTiles
         return hi;
     }
     private static ulong U64(byte[] data, int offset) => BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(offset, 8));
+    private static ulong AddOffset(ulong first, ulong second) => second > ulong.MaxValue - first
+        ? throw new ApiException(400, "PMTiles 索引偏移不正确。") : first + second;
 
     private static byte[] ReadAt(FileStream stream, ulong offset, ulong length)
     {
@@ -163,7 +166,8 @@ public static class PmTiles
             var encoded = VarInt(bytes, ref position);
             var offset = encoded == 0 && i > 0 ? end : encoded == 0 ? throw new ApiException(400, "PMTiles 索引偏移不正确。") : encoded - 1;
             items[i] = items[i] with { Offset = offset };
-            end = checked(offset + items[i].Length);
+            if (items[i].Length == 0 || items[i].Length > ulong.MaxValue - offset) throw new ApiException(400, "PMTiles 索引偏移不正确。");
+            end = offset + items[i].Length;
         }
         return items;
     }
@@ -184,7 +188,48 @@ public static class PmTiles
         return (((1UL << (2 * z)) - 1) / 3) + distance;
     }
 
-    public static LocalArchiveTile? Read(string path, int z, int x, int y)
+    // Explicit q=0 overrides a wildcard. Identity is the conservative fallback
+    // when a browser (especially over local HTTP) does not advertise Brotli.
+    internal static bool AcceptsEncoding(string? accepted, string coding)
+    {
+        double? wildcard = null;
+        double? explicitQuality = null;
+        foreach (var entry in (accepted ?? "").Split(','))
+        {
+            var parts = entry.Split(';', StringSplitOptions.TrimEntries);
+            if (parts.Length == 0 || parts[0].Length == 0) continue;
+            var quality = 1d;
+            foreach (var parameter in parts.Skip(1))
+                if (parameter.StartsWith("q=", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!double.TryParse(parameter.AsSpan(2), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out quality) ||
+                        !double.IsFinite(quality) || quality < 0 || quality > 1) quality = 0;
+                }
+            if (parts[0].Equals(coding, StringComparison.OrdinalIgnoreCase)) explicitQuality = quality;
+            else if (parts[0] == "*") wildcard = quality;
+        }
+        return (explicitQuality ?? wildcard ?? 0) > 0;
+    }
+
+    internal static LocalArchiveTile EncodeForClient(byte[] data, string contentType, int compression, string? accepted)
+    {
+        var encoding = compression switch { 2 => "gzip", 3 => "br", _ => null };
+        return encoding is not null && AcceptsEncoding(accepted, encoding)
+            ? new(data, contentType, encoding)
+            : new(Decompress(data, compression), contentType, null);
+    }
+
+    public static async Task WriteTileAsync(HttpContext context, LocalArchiveTile tile)
+    {
+        context.Response.ContentType = tile.ContentType;
+        context.Response.Headers.CacheControl = "no-cache";
+        context.Response.Headers.Vary = "Accept-Encoding";
+        if (tile.ContentEncoding is not null) context.Response.Headers.ContentEncoding = tile.ContentEncoding;
+        context.Response.ContentLength = tile.Data.Length;
+        await context.Response.Body.WriteAsync(tile.Data, context.RequestAborted);
+    }
+
+    public static LocalArchiveTile? Read(string path, int z, int x, int y, string? accepted = null)
     {
         if (z < 0 || z > 22 || x < 0 || y < 0 || x >= (1 << z) || y >= (1 << z)) return null;
         var file = new FileInfo(path);
@@ -218,12 +263,10 @@ public static class PmTiles
                     5 => "image/avif",
                     _ => "application/octet-stream",
                 };
-                var data = ReadAt(stream, checked(dataOffset + match.Offset), match.Length);
-                // Decode locally so older/insecure LAN browsers do not depend on
-                // negotiating archive-specific Content-Encoding (notably Brotli).
-                return new(Decompress(data, tileCompression), contentType, null);
+                var data = ReadAt(stream, AddOffset(dataOffset, match.Offset), match.Length);
+                return EncodeForClient(data, contentType, tileCompression, accepted);
             }
-            entries = ReadDirectory(stream, file, checked(leafOffset + match.Offset), match.Length, compression);
+            entries = ReadDirectory(stream, file, AddOffset(leafOffset, match.Offset), match.Length, compression);
         }
         throw new ApiException(400, "PMTiles 索引嵌套层数过多。");
     }

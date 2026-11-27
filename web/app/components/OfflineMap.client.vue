@@ -18,6 +18,7 @@ import MVT from 'ol/format/MVT'
 import type ImageTile from 'ol/ImageTile'
 import type VectorTile from 'ol/VectorTile'
 import type RenderFeature from 'ol/render/Feature'
+import type { MapLibreLayer } from '@geoblocks/ol-maplibre-layer'
 import TileState from 'ol/TileState'
 import { createMvtStyle } from '~/utils/mvtStyle'
 import { Draw, Modify, Snap, DragRotate, defaults as defaultInteractions } from 'ol/interaction'
@@ -60,8 +61,10 @@ watch(sketching, value => emit('sketching', value), { flush: 'sync' })
 let map: OLMap | undefined, draw: Draw | undefined, modify: Modify | undefined, snaps: Snap[] = []
 const source = new VectorSource<Feature<Geometry>>()
 const editing = new VectorSource<Feature<Geometry>>()
-type BaseTileLayer = TileLayer<XYZ> | VectorTileLayer
-const tiles = new Map<string, { layer: BaseTileLayer; signature: string }>()
+type NativeTileLayer = TileLayer<XYZ> | VectorTileLayer
+type BaseTileLayer = NativeTileLayer | MapLibreLayer
+type LayerEntry = { layer: BaseTileLayer; signature: string; item: MapLayer; styleAbort?: AbortController; candidate?: MapLibreLayer; styleState?: 'loading' | 'ready' | 'failed'; styleTimer?: ReturnType<typeof setTimeout> }
+const tiles = new Map<string, LayerEntry>()
 const tileControllers = new WeakMap<BaseTileLayer, AbortController>()
 const layerProblems = ref<Record<string, string>>({})
 const layerErrors = computed(() => Object.values(layerProblems.value))
@@ -75,6 +78,69 @@ function setLayerProblem(item: MapLayer, message: string) {
 function disposeTile(layer: BaseTileLayer) {
   tileControllers.get(layer)?.abort()
   layer.dispose()
+}
+function removeBaseLayer(layer: BaseTileLayer, owner = map) {
+  try { owner?.removeLayer(layer) } finally { disposeTile(layer) }
+}
+function cancelStyled(entry: LayerEntry) {
+  entry.styleAbort?.abort()
+  clearTimeout(entry.styleTimer)
+  entry.styleAbort = undefined; entry.styleTimer = undefined
+  if (entry.candidate) {
+    const candidate = entry.candidate; entry.candidate = undefined
+    removeBaseLayer(candidate)
+  }
+  if (entry.styleState === 'loading') entry.styleState = undefined
+}
+function disposeEntry(entry: LayerEntry) {
+  cancelStyled(entry)
+  removeBaseLayer(entry.layer)
+}
+const layerZIndex = (item: MapLayer) => item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder)
+function applyLayerSettings(layer: BaseTileLayer, item: MapLayer) {
+  layer.setVisible(item.enabled); layer.setOpacity(item.opacity); layer.setZIndex(layerZIndex(item))
+}
+async function upgradeStyle(entry: LayerEntry) {
+  if (!entry.item.styleUrl || !entry.item.enabled || entry.styleState || !map) return
+  const id = entry.item.id, owner = map
+  const request = new AbortController()
+  entry.styleAbort = request; entry.styleState = 'loading'
+  const active = () => !request.signal.aborted && tiles.get(id) === entry && map === owner
+  const fallback = () => {
+    if (!active()) return
+    entry.styleState = 'failed'
+    cancelStyled(entry)
+  }
+  try {
+    const { externalVectorStyle } = await import('~/utils/mapStyle.client')
+    const { layer } = await externalVectorStyle(entry.item.styleUrl, request.signal)
+    if (!active()) { disposeTile(layer); return }
+    entry.candidate = layer
+    applyLayerSettings(layer, entry.item)
+    owner.addLayer(layer)
+    const gl = layer.mapLibreMap
+    if (!gl) { fallback(); return }
+    gl.once('load', () => {
+      if (!active() || entry.candidate !== layer) return
+      clearTimeout(entry.styleTimer); entry.styleTimer = undefined
+      const basic = entry.layer
+      entry.layer = layer; entry.candidate = undefined; entry.styleState = 'ready'
+      entry.styleAbort = undefined
+      removeBaseLayer(basic, owner)
+      owner.render()
+    })
+    gl.on('error', event => {
+      // Sparse tile coverage is normal; missing style assets or a failed
+      // renderer fall back to the native vector layer, not an empty map.
+      const error = event.error as Error & { status?: number; url?: string }
+      if (error.status === 404 && error.url?.includes('/api/map/tiles/')) return
+      if (entry.styleState === 'loading') queueMicrotask(fallback)
+    })
+    entry.styleTimer = setTimeout(fallback, 15000)
+    owner.render()
+  } catch {
+    fallback()
+  }
 }
 async function requestTile(url: string, signal: AbortSignal) {
   // Retry transient connection/server errors, not genuine missing coverage.
@@ -112,12 +178,12 @@ function refreshFeatures() {
   source.clear()
   source.addFeatures(props.features.filter(x => !x.disabled).map(item => { const f = new Feature({ geometry: geometry(item.shape), record: item }); f.setId(`${item.kind}:${item.id}`); return f }))
 }
-function tileLayer(item: MapLayer, report = false): BaseTileLayer {
+function tileLayer(item: MapLayer, report = false): NativeTileLayer {
   if (item.archive?.error) throw new Error(item.archive.error)
   const controller = new AbortController()
   const { signal } = controller
   const url = '/api/map/tiles/' + encodeURIComponent(item.id) + '/{z}/{x}/{y}?v=' + encodeURIComponent(item.archive?.version || String(item.cacheVersion ?? 0))
-  const zIndex = item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder)
+  const zIndex = layerZIndex(item)
   let minZoom = item.minZoom, maxZoom = item.maxZoom
   if (item.archive?.tileType) {
     minZoom = Math.max(minZoom, item.archive.minZoom)
@@ -129,7 +195,7 @@ function tileLayer(item: MapLayer, report = false): BaseTileLayer {
   const fail = (error: unknown) => {
     if (report && !signal.aborted) setLayerProblem(item, error instanceof Error ? error.message : String(error))
   }
-  let layer: BaseTileLayer
+  let layer: NativeTileLayer
   if ((item.archive?.tileType ?? item.tileType) === 'mvt') {
     const format = new MVT()
     const vector = new VectorTileSource({
@@ -185,19 +251,19 @@ function refreshLayers(layers: MapLayer[] = props.layers) {
   const validIds = new Set(layers.map(layer => layer.id))
   for (const [id, entry] of tiles) {
     if (validIds.has(id)) continue
-    map.removeLayer(entry.layer); disposeTile(entry.layer)
+    disposeEntry(entry)
     tiles.delete(id); clearLayerProblem(id)
   }
   for (const item of [...layers].sort((a, b) => a.sortOrder - b.sortOrder)) {
     const signature = JSON.stringify({
       folder: item.folder, scheme: item.scheme, minZoom: item.minZoom, maxZoom: item.maxZoom,
       tileType: item.tileType, styleJson: item.styleJson, cacheVersion: item.cacheVersion,
-      archive: item.archive,
+      archive: item.archive, styleDirectory: item.styleDirectory, styleUrl: item.styleUrl,
     })
     const existing = tiles.get(item.id)
     try {
       if (existing?.signature !== signature) {
-        if (existing) { map.removeLayer(existing.layer); disposeTile(existing.layer); tiles.delete(item.id) }
+        if (existing) { disposeEntry(existing); tiles.delete(item.id) }
         if (item.archive?.error) {
           if (item.enabled) setLayerProblem(item, item.archive.error)
           else clearLayerProblem(item.id)
@@ -206,14 +272,18 @@ function refreshLayers(layers: MapLayer[] = props.layers) {
         const layer = tileLayer(item, true)
         layer.setVisible(item.enabled)
         map.addLayer(layer)
-        tiles.set(item.id, { layer, signature })
+        const entry: LayerEntry = { layer, signature, item }
+        tiles.set(item.id, entry)
         clearLayerProblem(item.id)
+        void upgradeStyle(entry)
       } else {
-        existing.layer.setVisible(item.enabled)
-        existing.layer.setOpacity(item.opacity)
-        existing.layer.setZIndex(item.annotation ? 1000 + item.sortOrder : Math.min(90, item.sortOrder))
+        existing.item = item
+        applyLayerSettings(existing.layer, item)
+        if (existing.candidate) applyLayerSettings(existing.candidate, item)
         if (existing.layer instanceof TileLayer) existing.layer.setPreload(rasterPreload(props.loadDepth ?? 0))
-        if (!item.enabled) clearLayerProblem(item.id)
+        if (!item.enabled) {
+          cancelStyled(existing); clearLayerProblem(item.id)
+        } else void upgradeStyle(existing)
       }
     } catch (error) { if (item.enabled) setLayerProblem(item, String(error)) }
   }
@@ -230,8 +300,8 @@ async function retryLayers() {
       return fresh ? [{ ...fresh, enabled: item.enabled }] : []
     })
     for (const [id, entry] of tiles) {
-      if (!layerProblems.value[id]) continue
-      map.removeLayer(entry.layer); disposeTile(entry.layer); tiles.delete(id)
+      if (!layerProblems.value[id] && entry.styleState !== 'failed') continue
+      disposeEntry(entry); tiles.delete(id)
     }
     refreshLayers(current)
     emit('reloadLayers', latest)
@@ -284,7 +354,7 @@ function composite(target: HTMLCanvasElement, host: HTMLElement) {
   if (!context) throw new Error('无法创建地图渲染画布')
   context.fillStyle = '#e6e9e5'
   context.fillRect(0, 0, target.width, target.height)
-  const canvases = host.querySelectorAll<HTMLCanvasElement>('.ol-layer canvas, canvas.ol-layer')
+  const canvases = host.querySelectorAll<HTMLCanvasElement>('.ol-layer canvas, canvas.ol-layer, .maplibregl-canvas')
   for (const canvas of canvases) {
     if (!canvas.width || !canvas.height) continue
     const opacity = canvas.parentElement?.style.opacity || canvas.style.opacity || '1'
@@ -368,26 +438,69 @@ async function exportImage(options: {
   document.body.appendChild(host)
   let exportMap: OLMap | undefined
   const exportTiles: BaseTileLayer[] = []
+  const styledExports = new Map<MapLibreLayer, MapLayer>()
+  const exportStyleAbort = new AbortController()
+  const cancelStyles = () => exportStyleAbort.abort()
+  options.signal?.addEventListener('abort', cancelStyles, { once: true })
   let finished = 0
+  const addNativeExportLayer = (item: MapLayer) => {
+    const layer = tileLayer(item)
+    exportTiles.push(layer)
+    const stats = tileLoads.get(item.id)!
+    const tileSource = layer.getSource()
+    tileSource?.on('tileloadstart', () => {stats.requested++})
+    tileSource?.on('tileloadend', () => {stats.success++})
+    tileSource?.on('tileloaderror', () => {stats.error++})
+    exportMap!.addLayer(layer)
+  }
+  async function waitStyled(layer: MapLibreLayer) {
+    const gl = layer.mapLibreMap
+    if (!gl) throw new Error('矢量样式无法初始化')
+    const deadline = Date.now() + 20000
+    while (Date.now() < deadline) {
+      checkCanceled()
+      if (gl.loaded() && gl.areTilesLoaded()) { gl.redraw(); return }
+      await new Promise<void>(resolve => setTimeout(resolve, 60))
+    }
+    throw new Error('矢量样式渲染超时')
+  }
   try {
     // Reuse one map and the same tile sources/feature index for all N² pieces.
     const featureSource = new VectorSource<Feature<Geometry>>()
     featureSource.addFeatures(selectedFeatures.map(item => new Feature({geometry:geometry(item.shape),record:item})))
-    for (const item of selectedLayers) {
-      if (item.archive?.error) continue
-      const layer = tileLayer(item)
-      exportTiles.push(layer)
-      const stats = tileLoads.get(item.id)!
-      const tileSource = layer.getSource()
-      tileSource?.on('tileloadstart', () => {stats.requested++})
-      tileSource?.on('tileloadend', () => {stats.success++})
-      tileSource?.on('tileloaderror', () => {stats.error++})
-    }
+    host.style.width = partWidth + 'px'
+    host.style.height = partHeight + 'px'
     const exportView = new View({projection:view.getProjection(),center:mapCenterForPixel(0,0),resolution:resolution/scale,rotation})
     exportMap = new OLMap({
       target:host,pixelRatio:1,controls:[],interactions:[],view:exportView,
-      layers:[...exportTiles,new VectorLayer({source:featureSource,style:featureStyle,zIndex:100,declutter:false})],
+      layers:[new VectorLayer({source:featureSource,style:featureStyle,zIndex:100,declutter:false})],
     })
+    for (const item of selectedLayers) {
+      if (item.archive?.error) continue
+      checkCanceled()
+      if (item.styleUrl && (item.archive?.tileType ?? item.tileType) === 'mvt') {
+        let layer: MapLibreLayer | undefined
+        try {
+          const { externalVectorStyle } = await import('~/utils/mapStyle.client')
+          layer = (await externalVectorStyle(item.styleUrl, exportStyleAbort.signal, true)).layer
+          layer.setZIndex(layerZIndex(item)); layer.setOpacity(item.opacity)
+          exportMap.addLayer(layer)
+          const gl = layer.mapLibreMap
+          if (!gl) throw new Error('矢量样式无法初始化')
+          const stats = tileLoads.get(item.id)!
+          gl.on('sourcedataloading', event => { if (event.coord) stats.requested++ })
+          gl.on('sourcedata', event => { if (event.coord && event.tile?.state === 'loaded') stats.success++ })
+          gl.on('error', () => { stats.error++ })
+          styledExports.set(layer, item); exportTiles.push(layer)
+          continue
+        } catch {
+          if (layer) removeBaseLayer(layer, exportMap)
+          checkCanceled()
+          tileLoads.get(item.id)!.error++
+        }
+      }
+      addNativeExportLayer(item)
+    }
     for(let row=0;row<partitions;row++){
       for(let column=0;column<partitions;column++){
         checkCanceled()
@@ -410,6 +523,30 @@ async function exportImage(options: {
           activeMap.renderSync()
         })
         checkCanceled()
+        // OL rendercomplete does not include the WebGL tile pipeline. Wait
+        // for styled maps too, and retain the buffer for canvas composition.
+        const styleResults = await Promise.allSettled([...styledExports.keys()].map(waitStyled))
+        const styled = [...styledExports.entries()]
+        let downgraded = false
+        for (let i = 0; i < styleResults.length; i++) {
+          if (styleResults[i]?.status !== 'rejected') continue
+          checkCanceled()
+          const [layer, item] = styled[i]!
+          styledExports.delete(layer)
+          exportTiles.splice(exportTiles.indexOf(layer), 1)
+          removeBaseLayer(layer, exportMap)
+          tileLoads.get(item.id)!.error++
+          addNativeExportLayer(item)
+          downgraded = true
+        }
+        if (downgraded) {
+          await new Promise<void>((resolve, reject) => {
+            const key = activeMap.once('rendercomplete', () => { clearTimeout(timer); resolve() })
+            const timer = setTimeout(() => { unByKey(key); reject(new Error('地图渲染超时')) }, 30000)
+            activeMap.renderSync()
+          })
+        }
+        checkCanceled()
         part.width=widthPart+2*bleed;part.height=heightPart+2*bleed
         composite(part,host)
         context.drawImage(part,bleed,bleed,widthPart,heightPart,x,y,widthPart,heightPart)
@@ -419,9 +556,11 @@ async function exportImage(options: {
       }
     }
   } finally {
+    cancelStyles()
+    options.signal?.removeEventListener('abort', cancelStyles)
+    for (const layer of exportTiles) removeBaseLayer(layer, exportMap)
     exportMap?.setTarget(undefined)
     exportMap?.dispose()
-    exportTiles.forEach(disposeTile)
     host.remove()
     part.width=0;part.height=0
   }
@@ -495,7 +634,7 @@ watch(element, target => {
 onBeforeUnmount(() => {
   rememberMapView()
   resizing?.disconnect()
-  for (const { layer } of tiles.values()) { map?.removeLayer(layer); disposeTile(layer) }
+  for (const entry of tiles.values()) disposeEntry(entry)
   tiles.clear(); map?.setTarget(undefined); map?.dispose(); map = undefined
 })
 </script>

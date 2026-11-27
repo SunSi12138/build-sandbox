@@ -8,7 +8,7 @@ const draft = ref<MapLayer | null>(null)
 const newLayer = (): MapLayer => ({
   id: clientId('layer-'), name: '', folder: '', scheme: 'xyz',
   enabled: true, isDefault: false, opacity: 1, minZoom: 0, maxZoom: 20,
-  sortOrder: 0, annotation: false, tileType: 'raster', styleJson: '',
+  sortOrder: 0, annotation: false, tileType: 'raster', styleJson: '', styleDirectory: '',
   urlTemplate: '', apiKey: '', subdomains: '', updateCache: false, mapKey: '', cacheVersion: 0,
 })
 async function load() { try { layers.value = await $fetch('/api/map/layers') } catch (cause) { error.value = errorMessage(cause) } }
@@ -35,7 +35,7 @@ onMounted(load)
     <UAlert v-if="error && !editorOpen" :description="error" color="error" />
     <div class="group-list">
       <div v-for="layer in layers" :key="layer.id" class="list-row">
-        <div class="row-body"><p class="font-medium">{{ layer.name }}</p><p class="text-xs text-muted break-all">{{ layer.folder }}</p><p v-if="layer.archive?.error" class="text-xs text-error">{{ layer.archive.error }}</p><p v-else-if="layer.archive?.tileType" class="text-xs text-muted">PMTiles · {{ layer.archive.tileType === 'mvt' ? 'MVT 矢量' : '图片' }} · z{{ layer.archive.minZoom }}–{{ layer.archive.maxZoom }}</p></div>
+        <div class="row-body"><p class="font-medium">{{ layer.name }}</p><p class="text-xs text-muted break-all">{{ layer.folder }}</p><p v-if="layer.styleDirectory" class="text-xs text-muted break-all">{{ layer.styleDirectory }}</p><p v-if="layer.archive?.error" class="text-xs text-error">{{ layer.archive.error }}</p><p v-else-if="layer.archive?.tileType" class="text-xs text-muted">PMTiles · {{ layer.archive.tileType === 'mvt' ? 'MVT 矢量' : '图片' }} · z{{ layer.archive.minZoom }}–{{ layer.archive.maxZoom }}</p></div>
         <UButton icon="i-lucide-pencil" :aria-label="`编辑${layer.name}`" color="neutral" variant="ghost" @click="edit(layer)" />
         <UButton icon="i-lucide-trash-2" :aria-label="`删除${layer.name}`" color="error" variant="ghost" @click="deleting=layer" />
       </div>
@@ -54,7 +54,10 @@ onMounted(load)
         </div>
         <UCheckbox v-model="draft.annotation" label="标注图层" />
         <UCheckbox v-model="draft.enabled" label="默认显示" />
-        <UFormField v-if="(draft.archive?.tileType ?? draft.tileType)==='mvt'" label="MVT 自定义样式（JSON）"><UTextarea v-model="draft.styleJson" :rows="7" class="w-full font-mono" /></UFormField>
+        <template v-if="(draft.archive?.tileType ?? draft.tileType)==='mvt' || /\.(pmtiles|pbtiles)$/i.test(draft.folder)">
+          <UFormField label="矢量样式目录"><UInput v-model="draft.styleDirectory" class="w-full" placeholder="包含 style.json、字体和精灵图的目录" :disabled="busy" /><p class="mt-1 text-xs text-muted">可填写相对 tiles 目录的路径或绝对路径。</p></UFormField>
+          <UFormField label="MVT 自定义样式（JSON）"><UTextarea v-model="draft.styleJson" :rows="7" class="w-full font-mono" /><p class="mt-1 text-xs text-muted">兼容已有简单样式及完整 MapLibre 样式；优先使用样式目录。</p></UFormField>
+        </template>
         <UAlert v-if="error" :description="error" color="error" />
       </div></template>
       <template #footer><UButton label="取消" color="neutral" variant="outline" :disabled="busy" @click="editorOpen=false" /><UButton label="保存" :disabled="busy||!draft?.name.trim()||!draft?.folder.trim()" :loading="busy" @click="save" /></template>

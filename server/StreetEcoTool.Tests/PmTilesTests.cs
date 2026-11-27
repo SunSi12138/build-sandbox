@@ -95,6 +95,17 @@ public sealed class PmTilesTests
         Assert.Equal(tile, actual!.Data);
         Assert.Equal("application/vnd.mapbox-vector-tile", actual.ContentType);
         Assert.Null(actual.ContentEncoding);
+        if (compression != 1)
+        {
+            var coding = compression == 2 ? "gzip" : "br";
+            var encoded = store.ReadArchiveTile(saved.Id, 1, 0, 1, coding);
+            Assert.NotNull(encoded);
+            Assert.Equal(coding, encoded!.ContentEncoding);
+            Assert.Equal(Compress(tile, compression), encoded.Data);
+            var denied = store.ReadArchiveTile(saved.Id, 1, 0, 1, coding + ";q=0, *;q=1");
+            Assert.Equal(tile, denied!.Data);
+            Assert.Null(denied.ContentEncoding);
+        }
         Assert.Null(store.ReadArchiveTile(saved.Id, 1, 0, 0));
         Assert.Null(store.ReadArchiveTile(saved.Id, 2, 0, 1));
         Assert.Null(store.FindTile(saved.Id, 1, 0, 1));

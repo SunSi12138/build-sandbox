@@ -25,6 +25,7 @@ public static class CommunityApi
         RequestDelegate layers = context => Api.Write(context, store.GetDisplayMapLayers(), CommunityJsonContext.Default.MapLayerDtoArray);
         RequestDelegate saveLayer = async context => await Api.Write(context, store.SaveMapLayer(await Api.Read(context, CommunityJsonContext.Default.MapLayerDto)), CommunityJsonContext.Default.MapLayerDto);
         app.MapGet("/api/map/layers", layers);
+        store.MapOfflineStyleApi(app);
         app.MapPost("/api/map/layers", saveLayer);
         app.MapDelete("/api/map/layers/{id}", context => { Api.RequireDeleteConfirmation(context); store.DeleteMapLayer(Api.Id(context)); context.Response.StatusCode = 204; return Task.CompletedTask; });
         RequestDelegate tile = async context =>
@@ -33,12 +34,9 @@ public static class CommunityApi
             var path = store.FindTile((string)context.Request.RouteValues["layer"]!, z, x, y);
             if (path is null)
             {
-                var archive = store.ReadArchiveTile((string)context.Request.RouteValues["layer"]!, z, x, y);
+                var archive = store.ReadArchiveTile((string)context.Request.RouteValues["layer"]!, z, x, y, context.Request.Headers.AcceptEncoding.ToString());
                 if (archive is null) { context.Response.StatusCode = 404; return; }
-                context.Response.Headers.CacheControl = "no-cache";
-                context.Response.ContentType = archive.ContentType;
-                if (archive.ContentEncoding is not null) context.Response.Headers.ContentEncoding = archive.ContentEncoding;
-                await context.Response.Body.WriteAsync(archive.Data, context.RequestAborted);
+                await PmTiles.WriteTileAsync(context, archive);
                 return;
             }
             context.Response.Headers.CacheControl = "no-cache";
