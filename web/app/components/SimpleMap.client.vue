@@ -16,9 +16,8 @@ import type RenderFeature from 'ol/render/Feature'
 import type BaseLayer from 'ol/layer/Base'
 import XYZ from 'ol/source/XYZ'
 import { createXYZ } from 'ol/tilegrid'
-import type ImageTile from 'ol/ImageTile'
 import TileState from 'ol/TileState'
-import { PMTiles, TileType, type Header } from 'pmtiles'
+type MapArchive = { tileType: 'mvt' | 'raster' | null; minZoom: number; maxZoom: number; version: string; error?: string | null }
 import Draw from 'ol/interaction/Draw'
 import Modify from 'ol/interaction/Modify'
 import DragRotate from 'ol/interaction/DragRotate'
@@ -326,10 +325,10 @@ onMounted(() => {
   const pixelRatio = () => map?.getPixelRatio() ?? 1
   const defaultVectorStyle = new Style({
     fill: new Fill({ color: 'rgba(40,123,164,0.22)' }),
-    stroke: new Stroke({ color: '#477f98', width: 1.3 }),
-    image: new CircleStyle({ radius: 3, fill: new Fill({ color: '#477f98' }) }),
+    stroke: new Stroke({ color: mapColors.vectorStroke, width: 1.3 }),
+    image: new CircleStyle({ radius: 3, fill: new Fill({ color: mapColors.vectorStroke }) }),
   })
-  function basicVectorLayer(url: string, signal: AbortSignal, archive?: PMTiles, header?: Header) {
+  function basicVectorLayer(url: string, signal: AbortSignal, header?: MapArchive) {
     const format = new MVT()
     const source = new VectorTileSource({
       format,
@@ -341,7 +340,6 @@ onMounted(() => {
           const coordinate = vectorTile.getTileCoord()
           const [z, x, y] = coordinate
           const load = async () => {
-            if (archive) return (await archive.getZxy(z!, x!, y!, signal))?.data
             const response = await fetch(url.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), { signal })
             if (response.status === 404) return undefined
             if (!response.ok) throw new Error('Vector tile HTTP ' + response.status)
@@ -362,7 +360,7 @@ onMounted(() => {
       return new Style({
         image: defaultVectorStyle.getImage() ?? undefined,
         text: new Text({ text: name, font: '12px sans-serif', offsetY: -10,
-          fill: new Fill({ color: '#23495c' }), stroke: new Stroke({ color: '#fff', width: 3 }) }),
+          fill: new Fill({ color: mapColors.vectorLabel }), stroke: new Stroke({ color: mapColors.halo, width: 3 }) }),
       })
     }, declutter: true })
   }
@@ -399,13 +397,13 @@ onMounted(() => {
       }
     }
     async function vectorLayer(id: string, url: string, styleUrl: string | null | undefined,
-      order: number, archive?: PMTiles, header?: Header) {
-      const fallback = () => install(basicVectorLayer(url, signal, archive, header), order)
+      order: number, header?: MapArchive) {
+      const fallback = () => install(basicVectorLayer(url, signal, header), order)
       if (!styleUrl) { fallback(); return }
       let styled: Awaited<ReturnType<typeof import('~/utils/mapStyle.client')['externalVectorStyle']>> | undefined
       try {
         const { externalVectorStyle } = await import('~/utils/mapStyle.client')
-        styled = await externalVectorStyle(styleUrl, signal, archive && header ? { archive, header } : undefined)
+        styled = await externalVectorStyle(styleUrl, signal)
         if (!active()) { styled.release(); styled.layer.dispose(); return }
         const item = styled
         if (!install(item.layer, order)) { item.release(); return }
@@ -437,84 +435,23 @@ onMounted(() => {
       }
     }
     try {
-      const layers = await $fetch<{ id: string; name?: string; kind?: 'raster' | 'mvt' | 'pmtiles'; preload?: number; styleUrl?: string | null }[]>('/api/map/layers', { signal, retry: 1 })
+      const layers = await $fetch<{ id: string; name?: string; kind?: 'raster' | 'mvt' | 'pmtiles'; preload?: number; styleUrl?: string | null; archive?: MapArchive | null }[]>('/api/map/layers', { signal, retry: 1 })
       if (!active()) return
       await Promise.allSettled(layers.map(async (layer, index) => {
-        const url = '/api/map/tiles/' + encodeURIComponent(layer.id) + '/{z}/{x}/{y}?cache=server'
+        const url = '/api/map/tiles/' + encodeURIComponent(layer.id) + '/{z}/{x}/{y}?cache=server&v=' + encodeURIComponent(layer.archive?.version ?? '')
         const order = index - layers.length
         const depth = Number.isInteger(layer.preload) ? Math.max(0, Math.min(3, layer.preload!)) : 0
         try {
-          if (layer.kind === 'pmtiles') {
-            const archiveUrl = '/api/map/archive/' + encodeURIComponent(layer.id)
-            let archive = new PMTiles(archiveUrl)
-            let header: Header
-            try { header = await archive.getHeader() }
-            catch (error) {
-              if (!active()) return
-              // PMTiles caches a rejected header promise. Retry using a fresh
-              // instance, not the same permanently rejected cache.
-              archive = new PMTiles(archiveUrl)
-              header = await archive.getHeader()
-            }
-            if (!active()) return
-            const maxZoom = Math.min(header.maxZoom, MAX_TILE_ZOOM)
-            if (header.tileType === TileType.Mvt) {
-              await vectorLayer(layer.id, url, layer.styleUrl, order, archive, header)
-              if (depth) {
-                const grid = createXYZ({ maxZoom })
-                registerPrefetch({
-                  depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0,
-                  getExtent: currentMapExtent, tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
-                  fetchTile: (z, x, y, prefetchSignal) => archive.getZxy(z, x, y, prefetchSignal),
-                })
-              }
-              return
-            }
-            const contentType = header.tileType === TileType.Png ? 'image/png'
-              : header.tileType === TileType.Jpeg ? 'image/jpeg'
-              : header.tileType === TileType.Webp ? 'image/webp' : header.tileType === 5 ? 'image/avif' : null
-            if (!contentType) throw new Error('Unsupported PMTiles tile type: ' + header.tileType)
-            const source = new XYZ({
-              minZoom: Math.min(header.minZoom, maxZoom), maxZoom,
-              tileUrlFunction: coordinate => coordinate ? coordinate.join('/') : undefined,
-              tileLoadFunction: tile => {
-                const imageTile = tile as ImageTile
-                const coordinate = imageTile.getTileCoord()
-                if (!coordinate) { imageTile.setState(TileState.EMPTY); return }
-                void archive.getZxy(coordinate[0]!, coordinate[1]!, coordinate[2]!, signal).then(result => {
-                  if (signal.aborted) return
-                  if (!result) { imageTile.setState(TileState.EMPTY); return }
-                  const image = imageTile.getImage() as HTMLImageElement
-                  const imageUrl = URL.createObjectURL(new Blob([result.data], { type: contentType }))
-                  const cleanup = () => URL.revokeObjectURL(imageUrl)
-                  image.addEventListener('load', cleanup, { once: true })
-                  image.addEventListener('error', cleanup, { once: true })
-                  image.src = imageUrl
-                }).catch(() => { if (!signal.aborted) imageTile.setState(TileState.ERROR) })
-              },
-            })
-            installDeepRasterTiles(source, { depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio })
+          const archive = layer.archive ?? undefined
+          if (layer.kind === 'pmtiles' && (!archive || archive.error || !archive.tileType))
+            throw new Error(archive?.error ?? 'PMTiles 元数据不可用')
+          const maxZoom = archive?.maxZoom ?? MAX_TILE_ZOOM
+          if ((archive?.tileType ?? layer.kind) === 'mvt') {
+            await vectorLayer(layer.id, url, layer.styleUrl, order, archive)
             if (depth) {
-              const grid = source.getTileGrid()
-              if (grid) registerPrefetch({
-                depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
-                tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
-                fetchTile: async (z, x, y, prefetchSignal) => {
-                  if (prefetchSignal.aborted || !active()) return
-                  const tile = source.getTile(z, x, y, pixelRatio(), target!.getView().getProjection())
-                  if (tile.getState() === TileState.IDLE) tile.load()
-                },
-              })
-            }
-            install(new TileLayer({ source, preload: DEFAULT_TILE_PRELOAD }), order)
-            return
-          }
-          if (layer.kind === 'mvt') {
-            await vectorLayer(layer.id, url, layer.styleUrl, order)
-            if (depth) {
-              const grid = createXYZ({ maxZoom: MAX_TILE_ZOOM })
+              const grid = createXYZ({ minZoom: archive?.minZoom ?? 0, maxZoom })
               registerPrefetch({
-                depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0, getExtent: currentMapExtent,
+                depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getRenderedDepth: () => 0, getExtent: currentMapExtent,
                 tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
                 fetchTile: async (z, x, y, prefetchSignal) => {
                   const response = await fetch(url.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), { cache: 'force-cache', signal: prefetchSignal })
@@ -525,12 +462,12 @@ onMounted(() => {
             }
             return
           }
-          const source = new XYZ({ url, maxZoom: MAX_TILE_ZOOM })
-          installDeepRasterTiles(source, { depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio })
+          const source = new XYZ({ url, minZoom: archive?.minZoom ?? 0, maxZoom })
+          installDeepRasterTiles(source, { depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio })
           if (depth) {
             const grid = source.getTileGrid()
             if (grid) registerPrefetch({
-              depth, maxZoom: MAX_TILE_ZOOM, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
+              depth, maxZoom, getZoom: zoom, getPixelRatio: pixelRatio, getExtent: currentMapExtent,
               tileRange: (extent, z) => grid.getTileRangeForExtentAndZ(extent, z),
               fetchTile: async (z, x, y, prefetchSignal) => {
                 const response = await fetch(url.replace('{z}', String(z)).replace('{x}', String(x)).replace('{y}', String(y)), { cache: 'force-cache', signal: prefetchSignal })

@@ -32,4 +32,4 @@ export function navigationCoordinate(shape?: GeoShape | null): [number, number] 
 }
 export function shapeLabel(shape?: GeoShape | null) { return !shape ? '未标记位置' : shape.type === 'Point' ? '已标记位置' : '已标记区域' }
 
-export const mapColors = {"danger": "#dc2626", "warning": "#d97706", "normal": "#16796f", "disabled": "#64748b", "editing": "#0d9488", "halo": "#fff", "label": "#162f2c"} as const
+export const mapColors = {"danger": "#dc2626", "warning": "#d97706", "normal": "#16796f", "disabled": "#64748b", "editing": "#0d9488", "halo": "#fff", "label": "#162f2c", "vectorStroke": "#477f98", "vectorLabel": "#23495c"} as const

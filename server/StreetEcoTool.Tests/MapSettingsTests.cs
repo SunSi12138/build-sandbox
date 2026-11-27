@@ -99,6 +99,9 @@ public sealed class MapSettingsTests
         var header = new byte[16384];
         "PMTiles"u8.CopyTo(header);
         header[7] = 3;
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(header.AsSpan(8, 8), 127);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(header.AsSpan(16, 8), 1);
+        header[97] = 1; header[98] = 1; header[99] = 1;
         await File.WriteAllBytesAsync(file, header);
         var ready = await store.CheckMapLayerAsync(pmtiles.Id, CancellationToken.None);
         Assert.Equal("cached", ready.Status);

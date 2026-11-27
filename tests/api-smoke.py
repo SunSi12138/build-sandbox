@@ -1108,6 +1108,17 @@ class ApiSmoke:
         data = bytearray(16384)
         data[:7] = b"PMTiles"
         data[7] = 3
+        import gzip
+        import struct
+        tile = bytes([0x1a, 2, 0x78, 2])
+        compressed = gzip.compress(tile)
+        directory = bytes([1, 0, 1, len(compressed), 1])
+        data[127:127 + len(directory)] = directory
+        offset = 127 + len(directory)
+        data[offset:offset + len(compressed)] = compressed
+        struct.pack_into("<QQ", data, 8, 127, len(directory))
+        struct.pack_into("<QQ", data, 56, offset, len(compressed))
+        data[97:102] = bytes([1, 2, 1, 0, 0])
         archive.write_bytes(data)
         checked = self.json("GET", "/api/map/settings/" + layer_id + "/check")
         require(checked["status"] == "cached" and checked["hasCache"], "Local PMTiles header was not recognized")
@@ -1125,7 +1136,13 @@ class ApiSmoke:
             raise SmokeFailure("Oversized PMTiles range must be refused")
         except urllib.error.HTTPError as error:
             require(error.code == 416, "Oversized PMTiles range must return HTTP 416")
-        self.request("GET", "/api/map/tiles/" + layer_id + "/0/0/0", expected=404)
+        tile_path = "/api/map/tiles/" + layer_id + "/0/0/0"
+        with self.opener.open(urllib.request.Request(self.origin + tile_path, headers={"Accept-Encoding": "gzip"}), timeout=10) as response:
+            require(response.status == 200 and response.headers.get("Content-Encoding") == "gzip", "Archive must pass accepted compression through")
+            require(response.headers.get("Vary") == "Accept-Encoding" and response.read() == compressed, "Compressed archive tile changed")
+        with self.opener.open(urllib.request.Request(self.origin + tile_path, headers={"Accept-Encoding": "gzip;q=0, *;q=1"}), timeout=10) as response:
+            require(response.headers.get("Content-Encoding") is None and response.read() == tile, "Rejected coding must decode to identity")
+        self.request("GET", "/api/map/tiles/" + layer_id + "/1/0/0", expected=404)
         self.json("DELETE", "/api/map/settings/" + layer_id + "?confirm=true", expected=204)
         require(archive.exists(), "Deleting a PMTiles layer must not delete its local archive")
         archive.unlink()

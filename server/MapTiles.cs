@@ -10,7 +10,7 @@ namespace StreetEcoTool;
 // Preload is a legacy API/storage name kept for existing databases.
 // It now represents high-resolution depth; OpenLayers preload is fixed at 1.
 public sealed record TileProvider(string Id, string Folder, string Scheme = "xyz", string UrlTemplate = "", string ApiKey = "", string MapKey = "", string Subdomains = "0,1,2,3,4,5,6,7", string Name = "", bool ForceRefresh = false, bool Enabled = true, int SortOrder = 0, string Format = "raster", int Preload = 0, string StyleDirectory = "", bool HasStyle = false);
-public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0, string? StyleUrl = null, string? Name = null);
+public sealed record MapLayerDto(string Id, string Kind = "raster", int Preload = 0, string? StyleUrl = null, string? Name = null, MapArchiveInfo? Archive = null);
 public sealed record MapOrderRequest(string[] Ids);
 public sealed record MapEnabledRequest(bool? Enabled);
 public sealed record MapSettingsDto(TileProvider[] Providers, TileProvider[] Defaults, string CacheRoot);
@@ -229,24 +229,11 @@ public sealed partial class Store
             RequireChanged(command.ExecuteNonQuery(), "地图图层");
         }
     }
-    public MapLayerDto[] GetMapLayers()
-    {
-        lock (_gate)
-        {
-            using var command = Command("SELECT id,url_template,name FROM map_providers WHERE enabled=1 ORDER BY sort_order DESC,rowid DESC;");
-            using var rows = command.ExecuteReader(); var layers = new List<MapLayerDto>();
-            while (rows.Read())
-            {
-                var (url, preload, styleDirectory) = UnwrapStoredMapUrl(rows.GetString(1));
-                layers.Add(new(rows.GetString(0),
-                    url.StartsWith(PmtilesUrlPrefix, StringComparison.Ordinal) ? "pmtiles" :
-                    url.StartsWith(MvtUrlPrefix, StringComparison.Ordinal) ? "mvt" : "raster", preload,
-                    styleDirectory.Length > 0 && File.Exists(Path.Combine(MapCacheDirectory(styleDirectory), "style.json"))
-                        ? $"/api/map/style/{Uri.EscapeDataString(rows.GetString(0))}/style.json" : null, rows.GetString(2)));
-            }
-            return layers.ToArray();
-        }
-    }
+    public MapLayerDto[] GetMapLayers() => GetMapSettings().Providers.Where(provider => provider.Enabled).Reverse().Select(provider =>
+        new MapLayerDto(provider.Id, provider.Format, provider.Preload,
+            provider.HasStyle ? $"/api/map/style/{Uri.EscapeDataString(provider.Id)}/style.json" : null, provider.Name,
+            IsPmtiles(provider) ? PmTiles.Inspect(MapCacheDirectory(provider.Folder)) : null)).ToArray();
+
     // Availability checks are explicit, read-only diagnostics. In offline mode
     // they only inspect the configured cache directory, never attempt network IO.
     private static (int Z, int X, int Row)? SampleCachedMapTile(string directory, string[] extensions)
@@ -271,7 +258,8 @@ public sealed partial class Store
     {
         TileProvider provider;
         lock (_gate) provider = GetMapProvider(id);
-        if (IsPmtiles(provider)) return await CheckPmtilesAsync(provider, cancellationToken);
+        if (IsPmtiles(provider)) return CheckPmtiles(provider);
+        await Task.CompletedTask;
         // Inspect local files only; legacy online URL and keys are ignored.
         try
         {
@@ -286,41 +274,24 @@ public sealed partial class Store
         }
     }
 
-    private async Task<MapLayerCheckDto> CheckPmtilesAsync(TileProvider provider, CancellationToken token)
+    private MapLayerCheckDto CheckPmtiles(TileProvider provider)
     {
         var local = MapCacheDirectory(provider.Folder);
-        try
-        {
-            if (!File.Exists(local))
-                return new("empty", "尚未找到本地 PMTiles 文件。可将归档复制到设置的路径。", false, false);
-            await using var input = File.OpenRead(local);
-            var header = new byte[127];
-            var read = 0;
-            while (read < header.Length)
-            {
-                var count = await input.ReadAsync(header.AsMemory(read), token);
-                if (count == 0) break;
-                read += count;
-            }
-            if (read != 127 || !ValidPmtilesHeader(header))
-                return new("unavailable", "本地文件不是有效的 PMTiles v3 归档。", false, false);
-            var type = header[99] switch
-            {
-                1 => "MVT/PBF 矢量",
-                2 => "PNG 图片",
-                3 => "JPG 图片",
-                4 => "WebP 图片",
-                5 => "AVIF 图片",
-                _ => "未知图块类型"
-            };
-            if (header[97] > 2 || header[98] > 2)
-                return new("unavailable", $"PMTiles 压缩格式暂不支持（目录 {header[97]}，图块 {header[98]}），请转换为无压缩或 Gzip。", true, false);
-            var style = header[99] == 1
-                ? provider.HasStyle ? "，使用本地矢量样式" : "，使用基础矢量样式" : "";
-            return new("cached", $"本地 PMTiles v3 归档可读取。图块类型：{type}，缩放级别：{header[100]}–{header[101]}{style}。未逐一检查图块。", true, false);
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        { return new("error", "无法读取 PMTiles 文件，请检查路径与权限。", false, false); }
+        if (!File.Exists(local))
+            return new("empty", "尚未找到本地 PMTiles 文件。可将归档复制到设置的路径。", false, false);
+        var info = PmTiles.Inspect(local);
+        if (info.Error is not null) return new("unavailable", info.Error, false, false);
+        var type = info.TileType == "mvt" ? "MVT/PBF 矢量" : "图片";
+        var style = info.TileType == "mvt" ? provider.HasStyle ? "，使用本地矢量样式" : "，使用基础矢量样式" : "";
+        return new("cached", $"本地 PMTiles v3 归档可读取。图块类型：{type}，缩放级别：{info.MinZoom}–{info.MaxZoom}{style}。未逐一检查图块。", true, false);
+    }
+
+    public LocalArchiveTile? ReadArchiveTile(string layer, int z, int x, int y, string? accepted = null)
+    {
+        TileProvider provider;
+        lock (_gate) provider = GetMapProvider(layer);
+        return provider.Enabled && IsPmtiles(provider)
+            ? PmTiles.Read(MapCacheDirectory(provider.Folder), z, x, y, accepted) : null;
     }
 
     private async Task ServePmtilesArchiveAsync(HttpContext context)
@@ -386,8 +357,18 @@ public sealed partial class Store
         app.MapPut("/api/map/settings/{id}", save);
         RequestDelegate tile = async context =>
         {
-            var file = GetMapTile((string)context.Request.RouteValues["layer"]!, int.Parse((string)context.Request.RouteValues["z"]!, CultureInfo.InvariantCulture), int.Parse((string)context.Request.RouteValues["x"]!, CultureInfo.InvariantCulture), int.Parse((string)context.Request.RouteValues["y"]!, CultureInfo.InvariantCulture));
-            if (file is null) { context.Response.StatusCode = 404; return; }
+            var layer = (string)context.Request.RouteValues["layer"]!;
+            var z = int.Parse((string)context.Request.RouteValues["z"]!, CultureInfo.InvariantCulture);
+            var x = int.Parse((string)context.Request.RouteValues["x"]!, CultureInfo.InvariantCulture);
+            var y = int.Parse((string)context.Request.RouteValues["y"]!, CultureInfo.InvariantCulture);
+            var file = GetMapTile(layer, z, x, y);
+            if (file is null)
+            {
+                var tile = ReadArchiveTile(layer, z, x, y, context.Request.Headers.AcceptEncoding.ToString());
+                if (tile is null) { context.Response.StatusCode = 404; return; }
+                await PmTiles.WriteTileAsync(context, tile);
+                return;
+            }
             context.Response.ContentType = Path.GetExtension(file) switch { ".jpg" => "image/jpeg", ".webp" => "image/webp", ".pbf" or ".mvt" => "application/vnd.mapbox-vector-tile", _ => "image/png" };
             // Locally imported PBFs are sometimes gzip-compressed. Let the browser transparently decode them.
             if (file.EndsWith(".pbf", StringComparison.OrdinalIgnoreCase) || file.EndsWith(".mvt", StringComparison.OrdinalIgnoreCase))
